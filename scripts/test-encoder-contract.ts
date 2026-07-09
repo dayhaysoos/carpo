@@ -357,12 +357,21 @@ print("Section encode bounds test passed")
 
 function testStreamCopyGate() {
   const script = `
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, ${JSON.stringify(path.join(root, "container"))})
-from encoder import _can_stream_copy_encode, probe_media_height, probe_media_start_time
+from encoder import (
+    ENCODE_DURATION_TOLERANCE_SECONDS,
+    _can_stream_copy_encode,
+    encode_clip,
+    probe_media_duration,
+    probe_media_height,
+    probe_media_start_time,
+)
 
 source = Path("source.mp4")
 
@@ -371,6 +380,12 @@ with patch("encoder.probe_media_height", return_value=240), \\
     assert _can_stream_copy_encode(
         source, 0, 2.5, caption_filters=None, max_output_height=1080
     )
+
+with patch("encoder.probe_media_height", return_value=240), \\
+     patch("encoder.probe_media_duration", return_value=3.2):
+    assert _can_stream_copy_encode(
+        source, 0, 3.0, caption_filters=None, max_output_height=1080
+    ), "slightly long source within tolerance must stream-copy"
 
 with patch("encoder.probe_media_height", return_value=240), \\
      patch("encoder.probe_media_duration", return_value=2.54):
@@ -396,6 +411,51 @@ with patch("encoder.probe_media_stream_value", return_value=8):
 zero_height_result = MagicMock(returncode=0, stdout="0\\n")
 with patch("encoder.subprocess.run", return_value=zero_height_result):
     assert probe_media_height(source) is None, "zero height probe must be rejected"
+
+requested_duration = 3.0
+with tempfile.TemporaryDirectory() as tmpdir:
+    workdir = Path(tmpdir)
+    long_source = workdir / "long-source.mp4"
+    output_mp4 = workdir / "trimmed.mp4"
+    output_thumb = workdir / "trimmed.jpg"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=3.2:size=320x240:rate=30",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            long_source,
+        ],
+        check=True,
+    )
+    source_duration = probe_media_duration(long_source)
+    assert source_duration is not None
+    assert source_duration > requested_duration
+    assert (
+        abs(source_duration - requested_duration)
+        <= ENCODE_DURATION_TOLERANCE_SECONDS
+    )
+    encode_clip(
+        long_source,
+        0,
+        requested_duration,
+        output_mp4,
+        output_thumb,
+    )
+    output_duration = probe_media_duration(output_mp4)
+    assert output_duration is not None
+    assert abs(output_duration - requested_duration) <= ENCODE_DURATION_TOLERANCE_SECONDS
+    assert output_duration < source_duration - 0.1, (
+        "stream-copy must trim slightly long source to requested window"
+    )
 
 print("Stream-copy gate test passed")
 `;

@@ -1158,6 +1158,8 @@ def encode_clip(
             "-y",
             "-i",
             str(source),
+            "-t",
+            str(duration),
             "-c",
             "copy",
             "-movflags",
