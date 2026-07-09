@@ -161,6 +161,12 @@ const STALE_JOB_ERROR_MESSAGE =
   "Job timed out — no progress update received. Artifacts may be preserved for recovery.";
 
 export async function sweepStaleClips(db: D1Database): Promise<number> {
+  // Rows parked by the helper workflow (pending/expired/recovering while
+  // queued, or claimed while downloading) have their own watchdogs and
+  // recovery paths; excluding them keeps the generic ceiling from failing
+  // them before helper recovery runs. Rows where the container is actually
+  // working (helper_state NULL/'fulfilled', or 'recovering' past 'queued')
+  // stay subject to this backstop.
   const result = await db
     .prepare(
       `UPDATE clips
@@ -169,7 +175,12 @@ export async function sweepStaleClips(db: D1Database): Promise<number> {
            error_message = ?,
            updated_at = datetime('now')
        WHERE status IN ('queued', 'downloading', 'encoding', 'uploading')
-         AND updated_at < datetime('now', ?)`,
+         AND updated_at < datetime('now', ?)
+         AND NOT (
+           status = 'queued'
+           AND helper_state IN ('pending', 'expired', 'recovering')
+         )
+         AND NOT (status = 'downloading' AND helper_state = 'claimed')`,
     )
     .bind(
       STALE_JOB_ERROR_MESSAGE,

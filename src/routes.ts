@@ -212,8 +212,8 @@ async function handleListClips(
   );
   const offset = Math.max(parseInt(url.searchParams.get("offset") ?? "", 10) || 0, 0);
 
-  await sweepStaleClips(env.DB);
   await sweepAndRecoverHelperClips(env, url.origin, ctx);
+  await sweepStaleClips(env.DB);
   const { clips, total } = await listClips(env.DB, limit, offset);
   const prefix = env.R2_PUBLIC_PREFIX;
 
