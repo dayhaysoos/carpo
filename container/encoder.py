@@ -28,8 +28,16 @@ MAX_CALLBACK_ATTEMPTS = 5
 MAX_INTERMEDIATE_CALLBACK_ATTEMPTS = 3
 INITIAL_CALLBACK_BACKOFF_SECONDS = 0.5
 DOWNLOAD_TIMEOUT_SECONDS = 600
-YOUTUBE_DOWNLOAD_TIMEOUT_SECONDS = 45
 YOUTUBE_SOCKET_TIMEOUT_SECONDS = 15
+YOUTUBE_STALL_TIMEOUT_SECONDS = int(
+    os.environ.get("YOUTUBE_STALL_TIMEOUT_SECONDS", "45"),
+)
+YOUTUBE_DOWNLOAD_MAX_SECONDS = int(
+    os.environ.get("YOUTUBE_DOWNLOAD_MAX_SECONDS", "600"),
+)
+YOUTUBE_STDERR_MAX_LINES = 200
+YOUTUBE_SECTION_PADDING_SECONDS = 3
+YOUTUBE_USE_DOWNLOAD_SECTIONS = True
 ENCODE_TIMEOUT_SECONDS = 600
 UPLOAD_TIMEOUT_SECONDS = 600
 VIDEO_CONTAINER_EXTENSIONS = ("mp4", "mkv", "webm")
@@ -41,6 +49,10 @@ DEJAVU_FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 KNOWN_FILTER_TYPES = frozenset({"caption"})
 YOUTUBE_BLOCKED_MESSAGE = (
     "YouTube is blocking downloads from this server. "
+    "Try uploading the video file instead."
+)
+YOUTUBE_STALL_MESSAGE = (
+    "YouTube appears to be blocking/stalling downloads from this server. "
     "Try uploading the video file instead."
 )
 
@@ -320,28 +332,100 @@ def classify_ytdlp_error(output: str) -> str:
     return "Failed to download YouTube video."
 
 
+def _append_capped_line(lines: list[str], line: str, max_lines: int) -> None:
+    lines.append(line)
+    overflow = len(lines) - max_lines
+    if overflow > 0:
+        del lines[:overflow]
+
+
+def _ytdlp_command_with_newline(command: list[str]) -> list[str]:
+    if "--newline" in command:
+        return command
+    return [command[0], "--newline", *command[1:]]
+
+
 def run_ytdlp(command: list[str], workdir: Path) -> None:
+    command = _ytdlp_command_with_newline(command)
     log(f"running: {' '.join(command)}")
-    try:
-        completed = subprocess.run(
-            command,
-            cwd=str(workdir),
-            capture_output=True,
-            text=True,
-            timeout=YOUTUBE_DOWNLOAD_TIMEOUT_SECONDS,
-        )
-    except subprocess.TimeoutExpired as exc:
+
+    proc = subprocess.Popen(
+        command,
+        cwd=str(workdir),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+    )
+
+    stderr_lines: list[str] = []
+    activity_lock = threading.Lock()
+    last_activity = time.monotonic()
+    started = time.monotonic()
+
+    def mark_activity() -> None:
+        nonlocal last_activity
+        with activity_lock:
+            last_activity = time.monotonic()
+
+    def read_stream(stream: Any, *, is_stderr: bool) -> None:
+        if stream is None:
+            return
+        for line in stream:
+            if is_stderr:
+                _append_capped_line(
+                    stderr_lines,
+                    line.rstrip("\n"),
+                    YOUTUBE_STDERR_MAX_LINES,
+                )
+            if line.strip():
+                mark_activity()
+
+    stdout_thread = threading.Thread(
+        target=read_stream,
+        args=(proc.stdout,),
+        kwargs={"is_stderr": False},
+        daemon=True,
+    )
+    stderr_thread = threading.Thread(
+        target=read_stream,
+        args=(proc.stderr,),
+        kwargs={"is_stderr": True},
+        daemon=True,
+    )
+    stdout_thread.start()
+    stderr_thread.start()
+
+    stall_killed = False
+    overall_timeout = False
+
+    while proc.poll() is None:
+        now = time.monotonic()
+        with activity_lock:
+            idle_seconds = now - last_activity
+        if idle_seconds > YOUTUBE_STALL_TIMEOUT_SECONDS:
+            stall_killed = True
+            proc.kill()
+            break
+        if now - started > YOUTUBE_DOWNLOAD_MAX_SECONDS:
+            overall_timeout = True
+            proc.kill()
+            break
+        time.sleep(0.25)
+
+    proc.wait()
+    stdout_thread.join(timeout=2)
+    stderr_thread.join(timeout=2)
+
+    if stall_killed:
+        raise RuntimeError(YOUTUBE_STALL_MESSAGE)
+    if overall_timeout:
         raise RuntimeError(
             "YouTube download timed out. "
             "Try uploading the video file instead.",
-        ) from exc
-    if completed.returncode != 0:
-        output = "\n".join(
-            part.strip()
-            for part in (completed.stderr, completed.stdout)
-            if part and part.strip()
         )
-        raise RuntimeError(classify_ytdlp_error(output))
+    if proc.returncode != 0:
+        raise RuntimeError(classify_ytdlp_error("\n".join(stderr_lines)))
 
 
 def select_source_file(candidates: list[Path]) -> Path:
@@ -404,41 +488,69 @@ def download_upload(
     return destination
 
 
-def download_youtube(url: str, workdir: Path) -> Path:
+def youtube_section_bounds(trim_start: float, trim_end: float) -> tuple[float, float]:
+    section_start = max(0.0, trim_start - YOUTUBE_SECTION_PADDING_SECONDS)
+    section_end = trim_end + YOUTUBE_SECTION_PADDING_SECONDS
+    return section_start, section_end
+
+
+def download_youtube(
+    url: str,
+    workdir: Path,
+    *,
+    trim_start: float,
+    trim_end: float,
+) -> tuple[Path, float, float]:
+    """Download a YouTube source and return encode trim bounds relative to the file."""
     output_template = str(workdir / "source.%(ext)s")
-    run_ytdlp(
+    section_start = 0.0
+    command = [
+        "yt-dlp",
+        "--no-playlist",
+        "--retries",
+        "1",
+        "--fragment-retries",
+        "1",
+        "--extractor-retries",
+        "1",
+        "--file-access-retries",
+        "1",
+        "--socket-timeout",
+        str(YOUTUBE_SOCKET_TIMEOUT_SECONDS),
+        "--merge-output-format",
+        "mp4",
+        "-f",
+        "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+    ]
+    if YOUTUBE_USE_DOWNLOAD_SECTIONS:
+        section_start, section_end = youtube_section_bounds(trim_start, trim_end)
+        command.extend(
+            [
+                "--download-sections",
+                f"*{section_start}-{section_end}",
+            ],
+        )
+    command.extend(
         [
-            "yt-dlp",
-            "--no-playlist",
-            "--retries",
-            "1",
-            "--fragment-retries",
-            "1",
-            "--extractor-retries",
-            "1",
-            "--file-access-retries",
-            "1",
-            "--socket-timeout",
-            str(YOUTUBE_SOCKET_TIMEOUT_SECONDS),
-            "--merge-output-format",
-            "mp4",
-            "-f",
-            "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
             "-o",
             output_template,
             url,
         ],
-        workdir,
     )
+    run_ytdlp(command, workdir)
 
     merged = workdir / "source.mp4"
     if merged.exists():
-        return merged
+        source_path = merged
+    else:
+        candidates = list(workdir.glob("source.*"))
+        if not candidates:
+            raise RuntimeError("yt-dlp did not produce a source file")
+        source_path = select_source_file(candidates)
 
-    candidates = list(workdir.glob("source.*"))
-    if not candidates:
-        raise RuntimeError("yt-dlp did not produce a source file")
-    return select_source_file(candidates)
+    encode_trim_start = trim_start - section_start
+    encode_trim_end = trim_end - section_start
+    return source_path, encode_trim_start, encode_trim_end
 
 
 def build_video_filter_chain(filters: list[Any], workdir: Path) -> str | None:
@@ -764,8 +876,15 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
             source = job["source"]
             source_type = source["type"]
 
+            encode_trim_start = trim_start
+            encode_trim_end = trim_end
             if source_type == "youtube":
-                source_path = download_youtube(source["url"], workdir)
+                source_path, encode_trim_start, encode_trim_end = download_youtube(
+                    source["url"],
+                    workdir,
+                    trim_start=trim_start,
+                    trim_end=trim_end,
+                )
             elif source_type == "file":
                 source_path = Path(source["path"])
             elif source_type == "upload":
@@ -795,8 +914,8 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
             output_thumb = workdir / "thumbnail.jpg"
             encode_clip(
                 source_path,
-                trim_start,
-                trim_end,
+                encode_trim_start,
+                encode_trim_end,
                 output_mp4,
                 output_thumb,
                 filters=job.get("filters") or [],
