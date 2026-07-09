@@ -118,6 +118,52 @@ function waitForHealth(port: number, attempts = 30) {
   throw new Error("Encoder container did not become healthy");
 }
 
+function testSourceFileSelection() {
+  const selectionDir = path.join(outputDir, "source-selection");
+  fs.rmSync(selectionDir, { recursive: true, force: true });
+  fs.mkdirSync(selectionDir, { recursive: true });
+
+  const script = `
+import sys
+from pathlib import Path
+
+sys.path.insert(0, ${JSON.stringify(path.join(root, "container"))})
+from encoder import select_source_file
+
+work = Path(${JSON.stringify(selectionDir)})
+
+(work / "source.m4a").write_bytes(b"audio-only")
+(work / "source.webm").write_bytes(b"webm-video")
+(work / "source.mkv").write_bytes(b"mkv-video")
+
+picked = select_source_file(list(work.glob("source.*")))
+assert picked.suffix == ".mkv", picked
+
+work2 = work / "mp4-priority"
+work2.mkdir()
+(work2 / "source.m4a").write_bytes(b"audio-only")
+(work2 / "source.mp4").write_bytes(b"mp4-video")
+
+picked_mp4 = select_source_file(list(work2.glob("source.*")))
+assert picked_mp4.suffix == ".mp4", picked_mp4
+
+audio_only = work / "audio-only"
+audio_only.mkdir()
+(audio_only / "source.m4a").write_bytes(b"audio-only")
+
+try:
+    select_source_file(list(audio_only.glob("source.*")))
+except RuntimeError as exc:
+    assert "no video container" in str(exc)
+else:
+    raise SystemExit("expected RuntimeError for audio-only candidates")
+
+print("Source file selection test passed")
+`;
+
+  run("python3", ["-c", script]);
+}
+
 function runEncoderContract(fixturePath: string) {
   fs.rmSync(outputDir, { recursive: true, force: true });
   fs.mkdirSync(outputDir, { recursive: true });
@@ -238,6 +284,7 @@ function main() {
   assertDockerAvailable();
   assertFfmpegAvailable();
   const fixturePath = ensureFixtureVideo();
+  testSourceFileSelection();
   buildImage();
   runEncoderContract(fixturePath);
 }

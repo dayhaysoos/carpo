@@ -23,7 +23,9 @@ HOST = "0.0.0.0"
 PORT = int(os.environ.get("PORT", "8080"))
 JOB_SECRET_HEADER = "X-Carpo-Job-Secret"
 MAX_CALLBACK_ATTEMPTS = 5
+MAX_INTERMEDIATE_CALLBACK_ATTEMPTS = 3
 INITIAL_CALLBACK_BACKOFF_SECONDS = 0.5
+VIDEO_CONTAINER_EXTENSIONS = ("mp4", "mkv", "webm")
 
 
 def log(message: str) -> None:
@@ -37,7 +39,8 @@ def post_status(
     *,
     secret: str | None = None,
     required: bool = False,
-) -> None:
+    max_attempts: int = MAX_CALLBACK_ATTEMPTS,
+) -> bool:
     payload: dict[str, Any] = {"status": status}
     if error_message is not None:
         payload["errorMessage"] = error_message
@@ -48,7 +51,7 @@ def post_status(
         headers[JOB_SECRET_HEADER] = secret
 
     last_error: urllib.error.URLError | None = None
-    for attempt in range(MAX_CALLBACK_ATTEMPTS):
+    for attempt in range(max_attempts):
         request = urllib.request.Request(
             callback_url,
             data=data,
@@ -58,21 +61,89 @@ def post_status(
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 response.read()
-            return
+            return True
         except urllib.error.URLError as exc:
             last_error = exc
             log(
                 f"status callback failed ({status}) attempt {attempt + 1}: {exc}",
             )
-            if attempt < MAX_CALLBACK_ATTEMPTS - 1:
+            if attempt < max_attempts - 1:
                 time.sleep(INITIAL_CALLBACK_BACKOFF_SECONDS * (2**attempt))
 
     if required:
         message = str(last_error) if last_error else "unknown callback error"
         raise RuntimeError(
             f"Required status callback ({status}) failed after "
-            f"{MAX_CALLBACK_ATTEMPTS} attempts: {message}",
+            f"{max_attempts} attempts: {message}",
         )
+    return False
+
+
+class ProgressCallbackTracker:
+    """Tracks encoder progress callbacks.
+
+    Intermediate updates are best-effort with retries. If one ultimately fails,
+    the next successful callback carries the then-current state so polling
+    clients catch up without blocking the encode. Terminal callbacks remain
+    required and still bound worst-case staleness.
+    """
+
+    def __init__(self) -> None:
+        self.current_state: str | None = None
+        self._needs_resync = False
+
+    def post(
+        self,
+        callback_url: str,
+        status: str,
+        *,
+        secret: str | None = None,
+        required: bool = False,
+        error_message: str | None = None,
+    ) -> None:
+        self.current_state = status
+        delivered = post_status(
+            callback_url,
+            status,
+            error_message,
+            secret=secret,
+            required=required,
+            max_attempts=(
+                MAX_CALLBACK_ATTEMPTS
+                if required
+                else MAX_INTERMEDIATE_CALLBACK_ATTEMPTS
+            ),
+        )
+        if delivered:
+            self._needs_resync = False
+            return
+
+        if required:
+            return
+
+        self._needs_resync = True
+        log(
+            f"intermediate callback ({status}) dropped; "
+            f"will piggyback {self.current_state} on next success",
+        )
+
+    def post_resync_if_needed(
+        self,
+        callback_url: str,
+        *,
+        secret: str | None = None,
+    ) -> None:
+        if not self._needs_resync or self.current_state is None:
+            return
+
+        delivered = post_status(
+            callback_url,
+            self.current_state,
+            secret=secret,
+            max_attempts=MAX_INTERMEDIATE_CALLBACK_ATTEMPTS,
+        )
+        if delivered:
+            self._needs_resync = False
 
 
 def validate_job(job: dict[str, Any]) -> str | None:
@@ -123,12 +194,36 @@ def run_command(command: list[str], cwd: Path | None = None) -> None:
         raise RuntimeError(stderr or f"command failed: {' '.join(command)}")
 
 
+def select_source_file(candidates: list[Path]) -> Path:
+    video_files = [
+        path
+        for path in candidates
+        if path.suffix.lstrip(".").lower() in VIDEO_CONTAINER_EXTENSIONS
+    ]
+    if not video_files:
+        names = ", ".join(path.name for path in candidates)
+        raise RuntimeError(
+            f"yt-dlp produced no video container file (found: {names})",
+        )
+
+    def preference_key(path: Path) -> int:
+        ext = path.suffix.lstrip(".").lower()
+        try:
+            return VIDEO_CONTAINER_EXTENSIONS.index(ext)
+        except ValueError:
+            return len(VIDEO_CONTAINER_EXTENSIONS)
+
+    return min(video_files, key=preference_key)
+
+
 def download_youtube(url: str, workdir: Path) -> Path:
     output_template = str(workdir / "source.%(ext)s")
     run_command(
         [
             "yt-dlp",
             "--no-playlist",
+            "--merge-output-format",
+            "mp4",
             "-f",
             "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
             "-o",
@@ -138,10 +233,14 @@ def download_youtube(url: str, workdir: Path) -> Path:
         cwd=workdir,
     )
 
-    candidates = sorted(workdir.glob("source.*"))
+    merged = workdir / "source.mp4"
+    if merged.exists():
+        return merged
+
+    candidates = list(workdir.glob("source.*"))
     if not candidates:
         raise RuntimeError("yt-dlp did not produce a source file")
-    return candidates[0]
+    return select_source_file(candidates)
 
 
 def encode_clip(source: Path, trim_start: float, trim_end: float, output_mp4: Path, output_thumb: Path) -> None:
@@ -247,6 +346,7 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
     callback_secret = job.get("callbackSecret")
     trim_start = float(job["trimStart"])
     trim_end = float(job["trimEnd"])
+    progress = ProgressCallbackTracker()
 
     with tempfile.TemporaryDirectory(prefix="carpo-encode-") as tmp:
         workdir = Path(tmp)
@@ -254,7 +354,7 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
 
         try:
             if callback_url:
-                post_status(
+                progress.post(
                     callback_url,
                     "downloading",
                     secret=callback_secret,
@@ -273,7 +373,11 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
                 raise RuntimeError(f"Unsupported source type: {source_type}")
 
             if callback_url:
-                post_status(
+                progress.post_resync_if_needed(
+                    callback_url,
+                    secret=callback_secret,
+                )
+                progress.post(
                     callback_url,
                     "encoding",
                     secret=callback_secret,
@@ -284,7 +388,11 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
             encode_clip(source_path, trim_start, trim_end, output_mp4, output_thumb)
 
             if callback_url:
-                post_status(
+                progress.post_resync_if_needed(
+                    callback_url,
+                    secret=callback_secret,
+                )
+                progress.post(
                     callback_url,
                     "uploading",
                     secret=callback_secret,
@@ -301,7 +409,11 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
                 )
 
             if callback_url:
-                post_status(
+                progress.post_resync_if_needed(
+                    callback_url,
+                    secret=callback_secret,
+                )
+                progress.post(
                     callback_url,
                     "complete",
                     secret=callback_secret,
@@ -313,12 +425,12 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
             message = str(exc) or "Encoding failed"
             if callback_url:
                 try:
-                    post_status(
+                    progress.post(
                         callback_url,
                         "failed",
-                        message,
                         secret=callback_secret,
                         required=True,
+                        error_message=message,
                     )
                 except RuntimeError:
                     pass

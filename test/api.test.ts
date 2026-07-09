@@ -293,6 +293,80 @@ describe("failed job artifact cleanup", () => {
   });
 });
 
+describe("terminal status stickiness", () => {
+  it("does not downgrade a complete clip to failed", async () => {
+    const { clipId, secret } = await createYoutubeClip("sticky complete");
+    const keys = outputKeysForClip(clipId);
+    const fakeMp4 = new Uint8Array([0x00, 0x00, 0x00, 0x1c]);
+    const fakeJpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+
+    const complete = await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [JOB_SECRET_HEADER]: secret,
+        },
+        body: JSON.stringify({ status: "complete" }),
+      },
+    );
+    expect(complete.status).toBe(200);
+
+    await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/artifacts/mp4`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "video/mp4",
+          [JOB_SECRET_HEADER]: secret,
+        },
+        body: fakeMp4,
+      },
+    );
+    await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/artifacts/thumbnail`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "image/jpeg",
+          [JOB_SECRET_HEADER]: secret,
+        },
+        body: fakeJpeg,
+      },
+    );
+
+    const beforeFailure = await getClipById(env.DB, clipId);
+    expect(beforeFailure?.status).toBe("complete");
+    expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).not.toBeNull();
+
+    const fail = await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [JOB_SECRET_HEADER]: secret,
+        },
+        body: JSON.stringify({
+          status: "failed",
+          errorMessage: "post-complete failure should be ignored",
+        }),
+      },
+    );
+    expect(fail.status).toBe(200);
+    const failBody = (await fail.json()) as { status: string; errorMessage: string | null };
+    expect(failBody.status).toBe("complete");
+    expect(failBody.errorMessage).toBeNull();
+
+    const afterFailure = await getClipById(env.DB, clipId);
+    expect(afterFailure?.status).toBe("complete");
+    expect(afterFailure?.error_message).toBeNull();
+    expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).not.toBeNull();
+    expect(await env.CLIPS_BUCKET.get(keys.thumbnailKey)).not.toBeNull();
+  });
+});
+
 describe("clip job lifecycle", () => {
   it("advances through lifecycle states and completes with R2 artifacts", async () => {
     const createResponse = await workerFetch("http://example.com/api/clips", {

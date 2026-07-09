@@ -11,6 +11,11 @@ import type { Env } from "./env";
 import type { ClipStatus, CreateClipRequest, EncoderJobSpec } from "./types";
 
 const ACTIVITY_RENEWAL_MS = 30_000;
+const TERMINAL_STATUSES = new Set<ClipStatus>(["complete", "failed"]);
+
+function isTerminalStatus(status: ClipStatus): boolean {
+  return TERMINAL_STATUSES.has(status);
+}
 
 export async function dispatchEncodingJob(
   env: Env,
@@ -99,6 +104,11 @@ export async function failClip(
   clipId: string,
   errorMessage: string,
 ): Promise<void> {
+  const record = await getClipById(env.DB, clipId);
+  if (!record || isTerminalStatus(record.status)) {
+    return;
+  }
+
   await deleteClipArtifacts(env.CLIPS_BUCKET, clipId);
   await markClipFailed(env.DB, clipId, errorMessage);
 }
@@ -109,6 +119,11 @@ export async function applyStatusUpdate(
   status: ClipStatus,
   errorMessage?: string | null,
 ): Promise<void> {
+  const record = await getClipById(env.DB, clipId);
+  if (!record || isTerminalStatus(record.status)) {
+    return;
+  }
+
   if (status === "complete") {
     const keys = outputKeysForClip(clipId);
     await markClipComplete(env.DB, clipId, keys.mp4Key, keys.thumbnailKey);
