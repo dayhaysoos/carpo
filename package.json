@@ -1,0 +1,26 @@
+{
+  "name": "carpo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:api": "vitest run test/api.test.ts",
+    "test:encoder": "node --experimental-strip-types scripts/test-encoder-contract.ts",
+    "db:migrate:local": "wrangler d1 migrations apply carpo --local"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "^0.0.30"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.18.2",
+    "@cloudflare/workers-types": "^4.20250708.0",
+    "@types/node": "^22.15.17",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.0",
+    "wrangler": "^4.37.0"
+  }
+}

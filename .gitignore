@@ -1,0 +1,12 @@
+node_modules/
+.wrangler/
+dist/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+test-output/
+fixtures/*.mp4
+fixtures/*.jpg
+fixtures/*.png
