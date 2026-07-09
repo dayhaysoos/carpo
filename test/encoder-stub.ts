@@ -80,13 +80,21 @@ export class EncoderStub extends DurableObject<Env> {
       return new Response(null, { status: 204 });
     }
 
+    if (url.pathname === "/__carpo/gif-run") {
+      const job = (await request.json()) as GifEncoderJobSpec;
+      return this.handleGifRun(job);
+    }
+
     if (url.pathname !== "/run") {
       return new Response("not found", { status: 404 });
     }
 
     const job = (await request.json()) as EncoderJobSpec | GifEncoderJobSpec;
     if ("jobType" in job && job.jobType === "gif") {
-      return this.handleGifRun(job);
+      return Response.json(
+        { status: "failed", errorMessage: "GIF jobs must use /__carpo/gif-run" },
+        { status: 400 },
+      );
     }
 
     const encodeJob = job as EncoderJobSpec;

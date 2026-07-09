@@ -66,6 +66,18 @@ export class EncoderContainer extends Container<Env> {
       return new Response(null, { status: 204 });
     }
 
+    if (url.pathname === "/__carpo/gif-run" && request.method === "POST") {
+      try {
+        const job = (await request.json()) as RunJobSpec;
+        return this.handleGifRun(job);
+      } catch {
+        return Response.json(
+          { status: "failed", errorMessage: "Invalid GIF job payload" },
+          { status: 400 },
+        );
+      }
+    }
+
     if (url.pathname === "/run" && request.method === "POST") {
       return this.handleRun(request);
     }

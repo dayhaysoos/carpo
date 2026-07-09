@@ -350,7 +350,7 @@ export async function dispatchGifExportJob(
         outputs: { gifKey },
       };
 
-      const response = await container.fetch("http://encoder/run", {
+      const response = await container.fetch("http://encoder/__carpo/gif-run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(jobSpec),
