@@ -381,6 +381,123 @@ describe("terminal status stickiness", () => {
     expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).not.toBeNull();
     expect(await env.CLIPS_BUCKET.get(keys.thumbnailKey)).not.toBeNull();
   });
+
+  it("recovers an ambiguous-failed clip when a late complete callback arrives", async () => {
+    const response = await workerFetch("http://example.com/api/clips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "ambiguous recovery",
+        source: {
+          type: "youtube",
+          url: STUB_AMBIGUOUS_FAILURE_URL,
+        },
+        trimStart: 1,
+        trimEnd: 5,
+        filters: [],
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    const created = (await response.json()) as { id: string };
+    const clipId = created.id;
+    const keys = outputKeysForClip(clipId);
+
+    let failedRecord: Awaited<ReturnType<typeof getClipById>> = null;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      failedRecord = await getClipById(env.DB, clipId);
+      if (failedRecord?.status === "failed") {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    expect(failedRecord?.status).toBe("failed");
+    expect(failedRecord?.failure_mode).toBe("ambiguous");
+    expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).not.toBeNull();
+    expect(await env.CLIPS_BUCKET.get(keys.thumbnailKey)).not.toBeNull();
+
+    const complete = await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [JOB_SECRET_HEADER]: failedRecord!.callback_secret,
+        },
+        body: JSON.stringify({ status: "complete" }),
+      },
+    );
+    expect(complete.status).toBe(200);
+    const completeBody = (await complete.json()) as {
+      status: string;
+      errorMessage: string | null;
+      outputs: { mp4: string | null; thumbnail: string | null };
+    };
+    expect(completeBody.status).toBe("complete");
+    expect(completeBody.errorMessage).toBeNull();
+    expect(completeBody.outputs.mp4).toBe(`/artifacts/${keys.mp4Key}`);
+    expect(completeBody.outputs.thumbnail).toBe(`/artifacts/${keys.thumbnailKey}`);
+
+    const recovered = await getClipById(env.DB, clipId);
+    expect(recovered?.status).toBe("complete");
+    expect(recovered?.failure_mode).toBeNull();
+    expect(recovered?.output_mp4_key).toBe(keys.mp4Key);
+    expect(recovered?.output_thumbnail_key).toBe(keys.thumbnailKey);
+  });
+
+  it("keeps a confirmed-failed clip failed when a late complete callback arrives", async () => {
+    const { clipId, secret } = await createYoutubeClip("confirmed sticky failed");
+    const keys = outputKeysForClip(clipId);
+
+    const fail = await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [JOB_SECRET_HEADER]: secret,
+        },
+        body: JSON.stringify({
+          status: "failed",
+          errorMessage: "encoder reported failure",
+        }),
+      },
+    );
+    expect(fail.status).toBe(200);
+
+    const failedRecord = await getClipById(env.DB, clipId);
+    expect(failedRecord?.status).toBe("failed");
+    expect(failedRecord?.failure_mode).toBe("confirmed");
+
+    const complete = await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [JOB_SECRET_HEADER]: secret,
+        },
+        body: JSON.stringify({ status: "complete" }),
+      },
+    );
+    expect(complete.status).toBe(200);
+    const completeBody = (await complete.json()) as {
+      status: string;
+      errorMessage: string;
+      outputs: { mp4: string | null; thumbnail: string | null };
+    };
+    expect(completeBody.status).toBe("failed");
+    expect(completeBody.errorMessage).toBe("encoder reported failure");
+    expect(completeBody.outputs.mp4).toBeNull();
+    expect(completeBody.outputs.thumbnail).toBeNull();
+
+    const afterComplete = await getClipById(env.DB, clipId);
+    expect(afterComplete?.status).toBe("failed");
+    expect(afterComplete?.failure_mode).toBe("confirmed");
+    expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).toBeNull();
+    expect(await env.CLIPS_BUCKET.get(keys.thumbnailKey)).toBeNull();
+  });
 });
 
 describe("authoritative /run response handling", () => {

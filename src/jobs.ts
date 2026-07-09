@@ -8,13 +8,21 @@ import {
   updateClipStatus,
 } from "./db";
 import type { Env } from "./env";
-import type { ClipStatus, CreateClipRequest, EncoderJobSpec } from "./types";
+import type { ClipStatus, CreateClipRequest, EncoderJobSpec, FailureMode } from "./types";
 
 const ACTIVITY_RENEWAL_MS = 30_000;
-const TERMINAL_STATUSES = new Set<ClipStatus>(["complete", "failed"]);
 
-function isTerminalStatus(status: ClipStatus): boolean {
-  return TERMINAL_STATUSES.has(status);
+function isStickyTerminal(
+  status: ClipStatus,
+  failureMode: FailureMode | null,
+): boolean {
+  if (status === "complete") {
+    return true;
+  }
+  if (status === "failed" && failureMode === "confirmed") {
+    return true;
+  }
+  return false;
 }
 
 interface EncoderRunResult {
@@ -61,7 +69,7 @@ export async function dispatchEncodingJob(
 
   try {
     await container.fetch("http://encoder/__carpo/start", { method: "POST" });
-    await markContainerJobRunning(container, true);
+    await markContainerJobRunningSafe(container, true);
     const keepAlive = startActivityRenewal(container);
 
     try {
@@ -110,7 +118,7 @@ export async function dispatchEncodingJob(
       await markClipComplete(env.DB, clipId, mp4Key, thumbnailKey);
     } finally {
       clearInterval(keepAlive);
-      await markContainerJobRunning(container, false);
+      await markContainerJobRunningSafe(container, false);
     }
   } catch (error) {
     const message =
@@ -126,12 +134,12 @@ export async function failClip(
   errorMessage: string,
 ): Promise<void> {
   const record = await getClipById(env.DB, clipId);
-  if (!record || isTerminalStatus(record.status)) {
+  if (!record || isStickyTerminal(record.status, record.failure_mode)) {
     return;
   }
 
   await deleteClipArtifacts(env.CLIPS_BUCKET, clipId);
-  await markClipFailed(env.DB, clipId, errorMessage);
+  await markClipFailed(env.DB, clipId, errorMessage, "confirmed");
 }
 
 async function failClipAmbiguous(
@@ -140,13 +148,13 @@ async function failClipAmbiguous(
   errorMessage: string,
 ): Promise<void> {
   const record = await getClipById(env.DB, clipId);
-  if (!record || isTerminalStatus(record.status)) {
+  if (!record || isStickyTerminal(record.status, record.failure_mode)) {
     return;
   }
 
   // /run outcome unknown (transport error or unreadable body). Do not delete
   // artifacts that may have been uploaded before the worker lost contact.
-  await markClipFailed(env.DB, clipId, errorMessage);
+  await markClipFailed(env.DB, clipId, errorMessage, "ambiguous");
 }
 
 function parseEncoderRunResult(
@@ -167,7 +175,22 @@ export async function applyStatusUpdate(
   errorMessage?: string | null,
 ): Promise<void> {
   const record = await getClipById(env.DB, clipId);
-  if (!record || isTerminalStatus(record.status)) {
+  if (!record) {
+    return;
+  }
+
+  // Terminal state machine: complete and confirmed-failed are sticky. A late
+  // complete callback may recover an ambiguous-failed clip when the encoder
+  // finished after the worker lost the /run response.
+  if (isStickyTerminal(record.status, record.failure_mode)) {
+    return;
+  }
+  if (record.status === "failed" && record.failure_mode === "ambiguous") {
+    if (status !== "complete") {
+      return;
+    }
+    const keys = outputKeysForClip(clipId);
+    await markClipComplete(env.DB, clipId, keys.mp4Key, keys.thumbnailKey);
     return;
   }
 
@@ -194,6 +217,20 @@ async function markContainerJobRunning(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ running }),
   });
+}
+
+async function markContainerJobRunningSafe(
+  container: DurableObjectStub,
+  running: boolean,
+): Promise<void> {
+  try {
+    await markContainerJobRunning(container, running);
+  } catch (error) {
+    console.error(
+      `Failed to mark container job running=${running}:`,
+      error instanceof Error ? error.message : error,
+    );
+  }
 }
 
 function startActivityRenewal(

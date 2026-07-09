@@ -11,6 +11,8 @@ export const CLIP_STATUSES = [
 
 export type ClipStatus = (typeof CLIP_STATUSES)[number];
 
+export type FailureMode = "confirmed" | "ambiguous";
+
 export type SourceType = "youtube" | "upload";
 
 export type FilterSpec = Record<string, unknown>;
@@ -47,6 +49,7 @@ export interface ClipRecord {
   filters_json: string;
   status: ClipStatus;
   error_message: string | null;
+  failure_mode: FailureMode | null;
   output_mp4_key: string | null;
   output_thumbnail_key: string | null;
   callback_secret: string;

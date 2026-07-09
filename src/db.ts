@@ -1,4 +1,9 @@
-import type { ClipRecord, ClipStatus, CreateClipRequest } from "./types";
+import type {
+  ClipRecord,
+  ClipStatus,
+  CreateClipRequest,
+  FailureMode,
+} from "./types";
 import { generateCallbackSecret } from "./auth";
 
 export async function insertClip(
@@ -58,7 +63,10 @@ export async function updateClipStatus(
   await db
     .prepare(
       `UPDATE clips
-       SET status = ?, error_message = ?, updated_at = datetime('now')
+       SET status = ?,
+           error_message = ?,
+           failure_mode = NULL,
+           updated_at = datetime('now')
        WHERE id = ?`,
     )
     .bind(status, errorMessage, id)
@@ -76,6 +84,7 @@ export async function markClipComplete(
       `UPDATE clips
        SET status = 'complete',
            error_message = NULL,
+           failure_mode = NULL,
            output_mp4_key = ?,
            output_thumbnail_key = ?,
            updated_at = datetime('now')
@@ -89,8 +98,19 @@ export async function markClipFailed(
   db: D1Database,
   id: string,
   errorMessage: string,
+  failureMode: FailureMode = "confirmed",
 ): Promise<void> {
-  await updateClipStatus(db, id, "failed", errorMessage);
+  await db
+    .prepare(
+      `UPDATE clips
+       SET status = 'failed',
+           error_message = ?,
+           failure_mode = ?,
+           updated_at = datetime('now')
+       WHERE id = ?`,
+    )
+    .bind(errorMessage, failureMode, id)
+    .run();
 }
 
 export async function deleteClipArtifacts(
