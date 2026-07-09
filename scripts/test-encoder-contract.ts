@@ -232,11 +232,18 @@ function runEncoderContract(fixturePath: string) {
     const result = JSON.parse(encode.stdout) as {
       status: string;
       errorMessage?: string;
+      outputs?: {
+        mp4Key: string;
+        thumbnailKey: string;
+      };
     };
     if (result.status !== "complete") {
       throw new Error(
         `Encoder returned failure: ${result.errorMessage ?? "unknown error"}`,
       );
+    }
+    if (!result.outputs?.mp4Key || !result.outputs?.thumbnailKey) {
+      throw new Error("Encoder /run response missing artifact keys");
     }
 
     const mp4Path = path.join(outputDir, "clip.mp4");

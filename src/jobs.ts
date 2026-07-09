@@ -17,6 +17,15 @@ function isTerminalStatus(status: ClipStatus): boolean {
   return TERMINAL_STATUSES.has(status);
 }
 
+interface EncoderRunResult {
+  status?: string;
+  errorMessage?: string;
+  outputs?: {
+    mp4Key?: string;
+    thumbnailKey?: string;
+  };
+}
+
 export async function dispatchEncodingJob(
   env: Env,
   clipId: string,
@@ -64,14 +73,26 @@ export async function dispatchEncodingJob(
 
       if (!response.ok) {
         const detail = await response.text();
-        await failClip(env, clipId, `Encoder rejected job: ${detail}`);
+        const parsed = parseEncoderRunResult(detail);
+        if (parsed?.status === "failed") {
+          await failClip(
+            env,
+            clipId,
+            parsed.errorMessage ?? "Encoding failed",
+          );
+          return;
+        }
+
+        // Non-JSON or non-failed /run responses are ambiguous; artifacts may exist.
+        await failClipAmbiguous(
+          env,
+          clipId,
+          `Encoder rejected job: ${detail}`,
+        );
         return;
       }
 
-      const result = (await response.json()) as {
-        status?: string;
-        errorMessage?: string;
-      };
+      const result = (await response.json()) as EncoderRunResult;
 
       if (result.status === "failed") {
         await failClip(
@@ -82,12 +103,11 @@ export async function dispatchEncodingJob(
         return;
       }
 
-      await markClipComplete(
-        env.DB,
-        clipId,
-        outputKeys.mp4Key,
-        outputKeys.thumbnailKey,
-      );
+      // Authoritative completion: trust the successful /run body over callbacks.
+      const mp4Key = result.outputs?.mp4Key ?? outputKeys.mp4Key;
+      const thumbnailKey =
+        result.outputs?.thumbnailKey ?? outputKeys.thumbnailKey;
+      await markClipComplete(env.DB, clipId, mp4Key, thumbnailKey);
     } finally {
       clearInterval(keepAlive);
       await markContainerJobRunning(container, false);
@@ -95,7 +115,8 @@ export async function dispatchEncodingJob(
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Unknown encoding error";
-    await failClip(env, clipId, message);
+    // Transport/parse failures after a long /run are ambiguous; keep artifacts.
+    await failClipAmbiguous(env, clipId, message);
   }
 }
 
@@ -111,6 +132,32 @@ export async function failClip(
 
   await deleteClipArtifacts(env.CLIPS_BUCKET, clipId);
   await markClipFailed(env.DB, clipId, errorMessage);
+}
+
+async function failClipAmbiguous(
+  env: Env,
+  clipId: string,
+  errorMessage: string,
+): Promise<void> {
+  const record = await getClipById(env.DB, clipId);
+  if (!record || isTerminalStatus(record.status)) {
+    return;
+  }
+
+  // /run outcome unknown (transport error or unreadable body). Do not delete
+  // artifacts that may have been uploaded before the worker lost contact.
+  await markClipFailed(env.DB, clipId, errorMessage);
+}
+
+function parseEncoderRunResult(
+  body: string,
+): EncoderRunResult | null {
+  try {
+    const parsed = JSON.parse(body) as EncoderRunResult;
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function applyStatusUpdate(

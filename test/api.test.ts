@@ -6,6 +6,10 @@ import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { JOB_SECRET_HEADER } from "../src/auth";
 import { getClipById, outputKeysForClip } from "../src/db";
+import {
+  STUB_AMBIGUOUS_FAILURE_URL,
+  STUB_SKIP_COMPLETE_CALLBACK_URL,
+} from "./encoder-stub";
 
 async function workerFetch(
   input: RequestInfo | URL,
@@ -362,6 +366,87 @@ describe("terminal status stickiness", () => {
     const afterFailure = await getClipById(env.DB, clipId);
     expect(afterFailure?.status).toBe("complete");
     expect(afterFailure?.error_message).toBeNull();
+    expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).not.toBeNull();
+    expect(await env.CLIPS_BUCKET.get(keys.thumbnailKey)).not.toBeNull();
+  });
+});
+
+describe("authoritative /run response handling", () => {
+  async function waitForTerminalStatus(clipId: string) {
+    let lastBody: Record<string, unknown> = { status: "queued" };
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const statusResponse = await workerFetch(
+        `http://example.com/api/clips/${clipId}`,
+      );
+      expect(statusResponse.status).toBe(200);
+      lastBody = (await statusResponse.json()) as Record<string, unknown>;
+      if (lastBody.status === "complete" || lastBody.status === "failed") {
+        return lastBody;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    return lastBody;
+  }
+
+  it("marks a clip complete from the /run response when no complete callback arrives", async () => {
+    const response = await workerFetch("http://example.com/api/clips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "run response authority",
+        source: {
+          type: "youtube",
+          url: STUB_SKIP_COMPLETE_CALLBACK_URL,
+        },
+        trimStart: 1,
+        trimEnd: 5,
+        filters: [],
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    const created = (await response.json()) as { id: string };
+    const clipId = created.id;
+    const keys = outputKeysForClip(clipId);
+
+    const finalBody = await waitForTerminalStatus(clipId);
+    expect(finalBody.status).toBe("complete");
+
+    const persisted = await getClipById(env.DB, clipId);
+    expect(persisted?.status).toBe("complete");
+    expect(persisted?.output_mp4_key).toBe(keys.mp4Key);
+    expect(persisted?.output_thumbnail_key).toBe(keys.thumbnailKey);
+    expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).not.toBeNull();
+    expect(await env.CLIPS_BUCKET.get(keys.thumbnailKey)).not.toBeNull();
+  });
+
+  it("preserves artifacts when /run outcome is ambiguous", async () => {
+    const response = await workerFetch("http://example.com/api/clips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "ambiguous failure",
+        source: {
+          type: "youtube",
+          url: STUB_AMBIGUOUS_FAILURE_URL,
+        },
+        trimStart: 1,
+        trimEnd: 5,
+        filters: [],
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    const created = (await response.json()) as { id: string };
+    const clipId = created.id;
+    const keys = outputKeysForClip(clipId);
+
+    const finalBody = await waitForTerminalStatus(clipId);
+    expect(finalBody.status).toBe("failed");
+
+    const persisted = await getClipById(env.DB, clipId);
+    expect(persisted?.status).toBe("failed");
+    expect(persisted?.error_message).toBeTruthy();
     expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).not.toBeNull();
     expect(await env.CLIPS_BUCKET.get(keys.thumbnailKey)).not.toBeNull();
   });

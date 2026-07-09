@@ -25,6 +25,8 @@ JOB_SECRET_HEADER = "X-Carpo-Job-Secret"
 MAX_CALLBACK_ATTEMPTS = 5
 MAX_INTERMEDIATE_CALLBACK_ATTEMPTS = 3
 INITIAL_CALLBACK_BACKOFF_SECONDS = 0.5
+DOWNLOAD_TIMEOUT_SECONDS = 600
+ENCODE_TIMEOUT_SECONDS = 600
 VIDEO_CONTAINER_EXTENSIONS = ("mp4", "mkv", "webm")
 
 
@@ -181,14 +183,26 @@ def validate_job(job: dict[str, Any]) -> str | None:
     return None
 
 
-def run_command(command: list[str], cwd: Path | None = None) -> None:
+def run_command(
+    command: list[str],
+    cwd: Path | None = None,
+    *,
+    timeout_seconds: int = ENCODE_TIMEOUT_SECONDS,
+) -> None:
     log(f"running: {' '.join(command)}")
-    completed = subprocess.run(
-        command,
-        cwd=str(cwd) if cwd else None,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(cwd) if cwd else None,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        cmd = " ".join(command)
+        raise RuntimeError(
+            f"Command timed out after {timeout_seconds}s: {cmd}",
+        ) from exc
     if completed.returncode != 0:
         stderr = completed.stderr.strip() or completed.stdout.strip()
         raise RuntimeError(stderr or f"command failed: {' '.join(command)}")
@@ -231,6 +245,7 @@ def download_youtube(url: str, workdir: Path) -> Path:
             url,
         ],
         cwd=workdir,
+        timeout_seconds=DOWNLOAD_TIMEOUT_SECONDS,
     )
 
     merged = workdir / "source.mp4"
@@ -337,10 +352,28 @@ def copy_outputs_locally(job: dict[str, Any], mp4_path: Path, thumb_path: Path) 
     shutil.copy2(thumb_path, out_dir / Path(outputs.get("thumbnailKey", "thumbnail.jpg")).name)
 
 
+def run_result(
+    status: str,
+    job: dict[str, Any],
+    *,
+    error_message: str | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {"status": status}
+    if error_message is not None:
+        result["errorMessage"] = error_message
+    if status == "complete":
+        outputs = job.get("outputs", {})
+        result["outputs"] = {
+            "mp4Key": outputs.get("mp4Key", ""),
+            "thumbnailKey": outputs.get("thumbnailKey", ""),
+        }
+    return result
+
+
 def process_job(job: dict[str, Any]) -> dict[str, Any]:
     error = validate_job(job)
     if error:
-        return {"status": "failed", "errorMessage": error}
+        return run_result("failed", job, error_message=error)
 
     callback_url = job.get("callbackUrl")
     callback_secret = job.get("callbackSecret")
@@ -413,28 +446,25 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
                     callback_url,
                     secret=callback_secret,
                 )
+                # Terminal state is carried by the /run response; callbacks are
+                # a best-effort fast-path for polling clients.
                 progress.post(
                     callback_url,
                     "complete",
                     secret=callback_secret,
-                    required=True,
                 )
 
-            return {"status": "complete"}
+            return run_result("complete", job)
         except Exception as exc:  # noqa: BLE001 - report encoder failures to caller
             message = str(exc) or "Encoding failed"
             if callback_url:
-                try:
-                    progress.post(
-                        callback_url,
-                        "failed",
-                        secret=callback_secret,
-                        required=True,
-                        error_message=message,
-                    )
-                except RuntimeError:
-                    pass
-            return {"status": "failed", "errorMessage": message}
+                progress.post(
+                    callback_url,
+                    "failed",
+                    secret=callback_secret,
+                    error_message=message,
+                )
+            return run_result("failed", job, error_message=message)
 
 
 class EncoderHandler(BaseHTTPRequestHandler):

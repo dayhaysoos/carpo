@@ -11,6 +11,12 @@ const FAKE_MP4 = new Uint8Array([
 
 const FAKE_JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
 
+/** Test-only YouTube URLs that drive EncoderStub behavior in API seam tests. */
+export const STUB_SKIP_COMPLETE_CALLBACK_URL =
+  "https://www.youtube.com/watch?v=stub-skip-complete-callback";
+export const STUB_AMBIGUOUS_FAILURE_URL =
+  "https://www.youtube.com/watch?v=stub-ambiguous-failure";
+
 /**
  * Test double for the encoder container binding.
  * Simulates lifecycle callbacks and writes stub artifacts to R2.
@@ -39,6 +45,12 @@ export class EncoderStub extends DurableObject<Env> {
       "Content-Type": "application/json",
       [JOB_SECRET_HEADER]: job.callbackSecret,
     };
+    const sourceUrl =
+      job.source.type === "youtube" ? job.source.url : "";
+    const skipCompleteCallback = sourceUrl.includes(
+      "stub-skip-complete-callback",
+    );
+    const ambiguousFailure = sourceUrl.includes("stub-ambiguous-failure");
 
     for (const status of ["downloading", "encoding", "uploading"] as const) {
       const callbackTarget = job.callbackUrl.startsWith("http")
@@ -58,15 +70,24 @@ export class EncoderStub extends DurableObject<Env> {
       httpMetadata: { contentType: "image/jpeg" },
     });
 
-    const callbackTarget = job.callbackUrl.startsWith("http")
-      ? job.callbackUrl
-      : `http://example.com${job.callbackUrl}`;
-    await fetch(callbackTarget, {
-      method: "POST",
-      headers: authHeaders,
-      body: JSON.stringify({ status: "complete" }),
-    });
+    if (ambiguousFailure) {
+      return new Response("upstream timeout", { status: 502 });
+    }
 
-    return Response.json({ status: "complete" });
+    if (!skipCompleteCallback) {
+      const callbackTarget = job.callbackUrl.startsWith("http")
+        ? job.callbackUrl
+        : `http://example.com${job.callbackUrl}`;
+      await fetch(callbackTarget, {
+        method: "POST",
+        headers: authHeaders,
+        body: JSON.stringify({ status: "complete" }),
+      });
+    }
+
+    return Response.json({
+      status: "complete",
+      outputs: job.outputs,
+    });
   }
 }
