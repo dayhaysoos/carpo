@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { deleteClip, listClips, requestGifExport } from "../api";
+import { ClipFailureMessage } from "../components/ClipFailureMessage";
 import { CLIPS_QUERY_KEY } from "../queries";
 import { isTerminalStatus, statusLabel } from "../status";
 import type { ClipResponse } from "../types";
@@ -109,7 +110,7 @@ function LibraryCard({
         <p className="library-card-date">{formatDate(clip.createdAt)}</p>
 
         {clip.status === "failed" && clip.errorMessage && (
-          <p className="job-error">{clip.errorMessage}</p>
+          <ClipFailureMessage message={clip.errorMessage} />
         )}
 
         {clip.gifStatus === "failed" && clip.gifErrorMessage && (

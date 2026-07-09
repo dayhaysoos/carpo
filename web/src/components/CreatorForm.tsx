@@ -1,5 +1,6 @@
 import { useMutation } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { createClip, requestUploadUrl, uploadFileWithProgress } from "../api";
 import { useNativeVideoPlayer } from "../hooks/useNativeVideoPlayer";
 import { useTrimRange } from "../hooks/useTrimRange";
@@ -22,6 +23,7 @@ interface CreatorFormProps {
 const DEFAULT_MAX_UPLOAD_BYTES = 95 * 1024 * 1024;
 
 export function CreatorForm({ onClipCreated }: CreatorFormProps) {
+  const [searchParams] = useSearchParams();
   const [sourceMode, setSourceMode] = useState<SourceMode>("youtube");
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
@@ -108,6 +110,12 @@ export function CreatorForm({ onClipCreated }: CreatorFormProps) {
       setUrl("");
     }
   };
+
+  useEffect(() => {
+    if (searchParams.get("source") === "upload") {
+      handleSourceModeChange("upload");
+    }
+  }, [searchParams]);
 
   const handleFileChange = async (file: File | null) => {
     setSelectedFile(file);
