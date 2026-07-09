@@ -26,6 +26,7 @@ export function recordToResponse(
     source: recordToSource(record),
     trimStart: record.trim_start,
     trimEnd: record.trim_end,
+    quality: record.quality ?? "1080p",
     caption: record.caption,
     filters: parseFilters(record.filters_json),
     status: record.status,

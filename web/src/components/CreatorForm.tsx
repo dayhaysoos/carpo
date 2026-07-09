@@ -5,7 +5,7 @@ import { createClip, requestUploadUrl, uploadFileWithProgress } from "../api";
 import { useNativeVideoPlayer } from "../hooks/useNativeVideoPlayer";
 import { useTrimRange } from "../hooks/useTrimRange";
 import { useYoutubePlayer } from "../hooks/useYoutubePlayer";
-import { MAX_CAPTION_LENGTH, MAX_CLIP_LENGTH_SECONDS } from "../types";
+import { MAX_CAPTION_LENGTH, MAX_CLIP_LENGTH_SECONDS, type ClipQuality, DEFAULT_CLIP_QUALITY } from "../types";
 import {
   contentTypeForFile,
   formatUploadProgress,
@@ -28,6 +28,7 @@ export function CreatorForm({ onClipCreated }: CreatorFormProps) {
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
   const [caption, setCaption] = useState("");
+  const [quality, setQuality] = useState<ClipQuality>(DEFAULT_CLIP_QUALITY);
   const [urlTouched, setUrlTouched] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadKey, setUploadKey] = useState<string | null>(null);
@@ -90,6 +91,7 @@ export function CreatorForm({ onClipCreated }: CreatorFormProps) {
       setUrl("");
       setTitle("");
       setCaption("");
+      setQuality(DEFAULT_CLIP_QUALITY);
       setUrlTouched(false);
       setSelectedFile(null);
       setUploadKey(null);
@@ -188,6 +190,7 @@ export function CreatorForm({ onClipCreated }: CreatorFormProps) {
           caption.trim().length > 0
             ? [{ type: "caption", text: caption.trim() }]
             : [],
+        quality,
       });
       return;
     }
@@ -202,6 +205,7 @@ export function CreatorForm({ onClipCreated }: CreatorFormProps) {
           caption.trim().length > 0
             ? [{ type: "caption", text: caption.trim() }]
             : [],
+        quality,
       });
     }
   };
@@ -283,6 +287,27 @@ export function CreatorForm({ onClipCreated }: CreatorFormProps) {
             {!youtube.ready && <div className="player-loading">Loading player…</div>}
           </div>
           <TrimSlider duration={duration} ready={ready} trim={trim} />
+          <div className="quality-picker" role="group" aria-label="Output quality">
+            <span className="quality-label">Quality</span>
+            <div className="quality-options">
+              <button
+                type="button"
+                className={`quality-option ${quality === "1080p" ? "active" : ""}`}
+                aria-pressed={quality === "1080p"}
+                onClick={() => setQuality("1080p")}
+              >
+                1080p
+              </button>
+              <button
+                type="button"
+                className={`quality-option ${quality === "720p" ? "active" : ""}`}
+                aria-pressed={quality === "720p"}
+                onClick={() => setQuality("720p")}
+              >
+                720p
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -301,6 +326,27 @@ export function CreatorForm({ onClipCreated }: CreatorFormProps) {
             )}
           </div>
           <TrimSlider duration={duration} ready={ready} trim={trim} />
+          <div className="quality-picker" role="group" aria-label="Output quality">
+            <span className="quality-label">Quality</span>
+            <div className="quality-options">
+              <button
+                type="button"
+                className={`quality-option ${quality === "1080p" ? "active" : ""}`}
+                aria-pressed={quality === "1080p"}
+                onClick={() => setQuality("1080p")}
+              >
+                1080p
+              </button>
+              <button
+                type="button"
+                className={`quality-option ${quality === "720p" ? "active" : ""}`}
+                aria-pressed={quality === "720p"}
+                onClick={() => setQuality("720p")}
+              >
+                720p
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

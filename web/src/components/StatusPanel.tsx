@@ -17,6 +17,8 @@ function JobCard({ clip }: { clip: ClipResponse }) {
           <h3 className="job-title">{clip.title}</h3>
           <p className="job-meta">
             {clip.trimStart.toFixed(2)}s → {clip.trimEnd.toFixed(2)}s
+            <span className="job-meta-sep">·</span>
+            {clip.quality}
           </p>
         </div>
       </div>

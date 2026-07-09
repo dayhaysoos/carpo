@@ -126,7 +126,28 @@ function ensureFixtureVideo() {
     ]);
   }
 
-  return { barsPath: fixturePath, frameCounterPath };
+  const frameCounterHdPath = path.join(fixturesDir, "framecounter-hd.mp4");
+  if (!fs.existsSync(frameCounterHdPath)) {
+    run("ffmpeg", [
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "testsrc=duration=10:size=1920x1080:rate=30",
+      "-vf",
+      "geq=r='mod(N\\,256)':g='0':b='0'",
+      "-c:v",
+      "libx264",
+      "-g",
+      "90",
+      "-pix_fmt",
+      "yuv420p",
+      "-an",
+      frameCounterHdPath,
+    ]);
+  }
+
+  return { barsPath: fixturePath, frameCounterPath, frameCounterHdPath };
 }
 
 function buildImage() {
@@ -302,6 +323,12 @@ with patch("encoder.probe_media_start_time", return_value=11.0):
         assert "does not contain the requested trim range" in str(exc)
     else:
         raise AssertionError("expected empty trim window to fail")
+
+from encoder import section_exact_encode_bounds
+
+start, end = section_exact_encode_bounds(7.5, 10.0, 4.5)
+assert start == 3.0, start
+assert end == 5.5, end
 
 print("Section encode bounds test passed")
 `;
@@ -866,8 +893,11 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
     }
     if (sections.logs.includes("--force-keyframes-at-cuts")) {
       throw new Error(
-        "Encoder logs still show --force-keyframes-at-cuts after revert",
+        "Fast-path section download should not use --force-keyframes-at-cuts",
       );
+    }
+    if (!sections.logs.includes("--concurrent-fragments 8")) {
+      throw new Error("Encoder logs did not show --concurrent-fragments 8");
     }
     if (
       !sections.logs.includes("-S") ||
@@ -951,13 +981,13 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
     const ytdlpRuns = rejected.logs.match(/running: yt-dlp/g) ?? [];
     if (ytdlpRuns.length !== 2) {
       throw new Error(
-        `Expected 2 yt-dlp invocations (section + full fallback), got ${ytdlpRuns.length}`,
+        `Expected 2 yt-dlp invocations (section + force-keyframes fallback), got ${ytdlpRuns.length}`,
       );
     }
     const sectionRuns = rejected.logs.match(/--download-sections/g) ?? [];
-    if (sectionRuns.length !== 1) {
+    if (sectionRuns.length !== 2) {
       throw new Error(
-        `Expected exactly one --download-sections invocation, got ${sectionRuns.length}`,
+        `Expected two --download-sections invocations, got ${sectionRuns.length}`,
       );
     }
     if (
@@ -967,10 +997,13 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
         "Encoder logs did not show rejected section trim range fallback",
       );
     }
-    if (!rejected.logs.includes("re-downloading full video")) {
+    if (!rejected.logs.includes("force-keyframes-at-cuts")) {
       throw new Error(
-        "Encoder logs did not show full-download fallback for rejected section window",
+        "Encoder logs did not show force-keyframes section fallback for rejected section window",
       );
+    }
+    if (rejected.logs.includes("re-downloading full video")) {
+      throw new Error("Encoder logs still show removed full-video fallback");
     }
     const mp4Path = path.join(rejectedOutputDir, "rejected.mp4");
     const thumbPath = path.join(rejectedOutputDir, "rejected.jpg");
@@ -985,7 +1018,7 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
     );
 
     console.log(
-      "Encoder YouTube rejected-section full-download fallback contract test passed",
+      "Encoder YouTube rejected-section force-keyframes fallback contract test passed",
     );
   } finally {
     run("docker", ["rm", "-f", `${containerName}-youtube-sections-rejected`]);
@@ -1041,13 +1074,13 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
     const ytdlpRuns = lateKeyframe.logs.match(/running: yt-dlp/g) ?? [];
     if (ytdlpRuns.length !== 2) {
       throw new Error(
-        `Expected 2 yt-dlp invocations (section + full fallback), got ${ytdlpRuns.length}`,
+        `Expected 2 yt-dlp invocations (section + force-keyframes fallback), got ${ytdlpRuns.length}`,
       );
     }
     const sectionRuns = lateKeyframe.logs.match(/--download-sections/g) ?? [];
-    if (sectionRuns.length !== 1) {
+    if (sectionRuns.length !== 2) {
       throw new Error(
-        `Expected exactly one --download-sections invocation, got ${sectionRuns.length}`,
+        `Expected two --download-sections invocations, got ${sectionRuns.length}`,
       );
     }
     if (
@@ -1057,10 +1090,13 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
         "Encoder logs did not show rejected section for late keyframe snap",
       );
     }
-    if (!lateKeyframe.logs.includes("re-downloading full video")) {
+    if (!lateKeyframe.logs.includes("force-keyframes-at-cuts")) {
       throw new Error(
-        "Encoder logs did not show full-download fallback for late keyframe snap",
+        "Encoder logs did not show force-keyframes fallback for late keyframe snap",
       );
+    }
+    if (lateKeyframe.logs.includes("re-downloading full video")) {
+      throw new Error("Encoder logs still show removed full-video fallback");
     }
     const mp4Path = path.join(lateKeyframeOutputDir, "late-keyframe.mp4");
     const thumbPath = path.join(lateKeyframeOutputDir, "late-keyframe.jpg");
@@ -1077,7 +1113,7 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
     );
 
     console.log(
-      "Encoder YouTube late-keyframe full-download fallback contract test passed",
+      "Encoder YouTube late-keyframe force-keyframes fallback contract test passed",
     );
   } finally {
     run("docker", [
@@ -1131,24 +1167,22 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
     const ytdlpRuns = lateStart.logs.match(/running: yt-dlp/g) ?? [];
     if (ytdlpRuns.length !== 2) {
       throw new Error(
-        `Expected 2 yt-dlp invocations (section + full fallback), got ${ytdlpRuns.length}`,
+        `Expected 2 yt-dlp invocations (section + force-keyframes fallback), got ${ytdlpRuns.length}`,
       );
     }
     const sectionRuns = lateStart.logs.match(/--download-sections/g) ?? [];
-    if (sectionRuns.length !== 1) {
+    if (sectionRuns.length !== 2) {
       throw new Error(
-        `Expected exactly one --download-sections invocation, got ${sectionRuns.length}`,
+        `Expected two --download-sections invocations, got ${sectionRuns.length}`,
       );
     }
-    if (!lateStart.logs.includes("re-downloading full video")) {
+    if (!lateStart.logs.includes("force-keyframes-at-cuts")) {
       throw new Error(
-        "Encoder logs did not show full-download fallback for unknown alignment",
+        "Encoder logs did not show force-keyframes fallback for unknown alignment",
       );
     }
-    if (lateStart.logs.includes("--force-keyframes-at-cuts")) {
-      throw new Error(
-        "Encoder logs still show --force-keyframes-at-cuts after revert",
-      );
+    if (lateStart.logs.includes("re-downloading full video")) {
+      throw new Error("Encoder logs still show removed full-video fallback");
     }
     if (lateStart.logs.includes("-ss -")) {
       throw new Error("Encoder logs contained a negative ffmpeg -ss offset");
@@ -1190,6 +1224,207 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
     console.log(`  Duration: ${duration.toFixed(2)}s (expected ${expectedDuration}s)`);
   } finally {
     run("docker", ["rm", "-f", `${containerName}-youtube-sections-zero`]);
+  }
+}
+
+function probeVideoHeight(videoPath: string): number {
+  const output = run("ffprobe", [
+    "-v",
+    "error",
+    "-select_streams",
+    "v:0",
+    "-show_entries",
+    "stream=height",
+    "-of",
+    "default=noprint_wrappers=1:nokey=1",
+    videoPath,
+  ]);
+  const height = Number.parseInt(output.trim(), 10);
+  if (!Number.isFinite(height)) {
+    throw new Error(`Could not probe video height for ${videoPath}`);
+  }
+  return height;
+}
+
+function runEncoderQualityContract(
+  frameCounterPath: string,
+  frameCounterHdPath: string,
+) {
+  const sectionsFixture = path.join(fixturesDir, "fake-ytdlp-sections.sh");
+  const qualityOutputDir = path.join(outputDir, "quality");
+  fs.rmSync(qualityOutputDir, { recursive: true, force: true });
+  fs.mkdirSync(qualityOutputDir, { recursive: true });
+
+  const hd720JobPath = path.join(qualityOutputDir, "hd-720-job.json");
+  fs.writeFileSync(
+    hd720JobPath,
+    JSON.stringify({
+      jobId: "quality-hd-720",
+      source: {
+        type: "file",
+        path: "/fixture/framecounter-hd.mp4",
+      },
+      trimStart: 0,
+      trimEnd: 2,
+      quality: "720p",
+      maxClipLengthSeconds: 60,
+      outputs: {
+        mp4Key: "hd-720.mp4",
+        thumbnailKey: "hd-720.jpg",
+      },
+      localOutputDir: "/output",
+    }),
+  );
+
+  const hd720Container = `${containerName}-quality-hd-720`;
+  run("docker", ["rm", "-f", hd720Container]);
+  run("docker", [
+    "run",
+    "-d",
+    "--name",
+    hd720Container,
+    "-p",
+    "18097:8080",
+    "-v",
+    `${frameCounterHdPath}:/fixture/framecounter-hd.mp4:ro`,
+    "-v",
+    `${qualityOutputDir}:/output`,
+    imageName,
+  ]);
+
+  try {
+    waitForHealth(18097);
+    const hd720 = spawnSync(
+      "curl",
+      [
+        "-sS",
+        "-X",
+        "POST",
+        "http://127.0.0.1:18097/run",
+        "-H",
+        "Content-Type: application/json",
+        "-d",
+        `@${hd720JobPath}`,
+      ],
+      { encoding: "utf-8" },
+    );
+    if (hd720.status !== 0) {
+      throw new Error(`720p HD encode request failed: ${hd720.stderr}`);
+    }
+    const hd720Result = JSON.parse(hd720.stdout || "{}") as {
+      status: string;
+      errorMessage?: string;
+    };
+    if (hd720Result.status !== "complete") {
+      throw new Error(
+        `Expected complete status for 720p HD encode, got ${hd720Result.status}: ${hd720Result.errorMessage ?? ""}`,
+      );
+    }
+    const hd720Mp4 = path.join(qualityOutputDir, "hd-720.mp4");
+    const outputHeight = probeVideoHeight(hd720Mp4);
+    if (outputHeight > 720) {
+      throw new Error(
+        `720p encode output height ${outputHeight}px exceeds 720px cap`,
+      );
+    }
+    console.log("Encoder 720p output height cap contract test passed");
+    console.log(`  Output height: ${outputHeight}px`);
+  } finally {
+    run("docker", ["rm", "-f", hd720Container]);
+  }
+
+  const ytdlp1080JobPath = path.join(qualityOutputDir, "ytdlp-1080-job.json");
+  fs.writeFileSync(
+    ytdlp1080JobPath,
+    JSON.stringify({
+      jobId: "quality-ytdlp-1080",
+      source: {
+        type: "youtube",
+        url: "https://www.youtube.com/watch?v=quality-1080",
+      },
+      trimStart: 7.5,
+      trimEnd: 10,
+      quality: "1080p",
+      maxClipLengthSeconds: 60,
+      outputs: {
+        mp4Key: "ytdlp-1080.mp4",
+        thumbnailKey: "ytdlp-1080.jpg",
+      },
+      localOutputDir: "/output",
+    }),
+  );
+
+  const ytdlp720JobPath = path.join(qualityOutputDir, "ytdlp-720-job.json");
+  fs.writeFileSync(
+    ytdlp720JobPath,
+    JSON.stringify({
+      jobId: "quality-ytdlp-720",
+      source: {
+        type: "youtube",
+        url: "https://www.youtube.com/watch?v=quality-720",
+      },
+      trimStart: 7.5,
+      trimEnd: 10,
+      quality: "720p",
+      maxClipLengthSeconds: 60,
+      outputs: {
+        mp4Key: "ytdlp-720.mp4",
+        thumbnailKey: "ytdlp-720.jpg",
+      },
+      localOutputDir: "/output",
+    }),
+  );
+
+  try {
+    const ytdlp1080 = runEncoderYoutubeJob(
+      `${containerName}-quality-ytdlp-1080`,
+      18098,
+      ytdlp1080JobPath,
+      {
+        fakeYtdlpPath: sectionsFixture,
+        outputDir: qualityOutputDir,
+        frameCounterPath,
+      },
+    );
+    if (ytdlp1080.result.status !== "complete") {
+      throw new Error(
+        `Expected complete status for 1080p yt-dlp job, got ${ytdlp1080.result.status}`,
+      );
+    }
+    if (
+      !ytdlp1080.logs.includes("res:1080") ||
+      !ytdlp1080.logs.includes("bestvideo[height<=1080][vcodec^=avc1]+bestaudio")
+    ) {
+      throw new Error("1080p yt-dlp job logs missing expected format flags");
+    }
+    run("docker", ["rm", "-f", `${containerName}-quality-ytdlp-1080`]);
+
+    const ytdlp720 = runEncoderYoutubeJob(
+      `${containerName}-quality-ytdlp-720`,
+      18099,
+      ytdlp720JobPath,
+      {
+        fakeYtdlpPath: sectionsFixture,
+        outputDir: qualityOutputDir,
+        frameCounterPath,
+      },
+    );
+    if (ytdlp720.result.status !== "complete") {
+      throw new Error(
+        `Expected complete status for 720p yt-dlp job, got ${ytdlp720.result.status}`,
+      );
+    }
+    if (
+      !ytdlp720.logs.includes("res:720") ||
+      !ytdlp720.logs.includes("bestvideo[height<=720][vcodec^=avc1]+bestaudio")
+    ) {
+      throw new Error("720p yt-dlp job logs missing expected format flags");
+    }
+
+    console.log("Encoder quality yt-dlp format selector contract test passed");
+  } finally {
+    run("docker", ["rm", "-f", `${containerName}-quality-ytdlp-1080`]);
+    run("docker", ["rm", "-f", `${containerName}-quality-ytdlp-720`]);
   }
 }
 
@@ -2247,7 +2482,7 @@ function runEncoderGifContract(fixturePath: string) {
 function main() {
   assertDockerAvailable();
   assertFfmpegAvailable();
-  const { barsPath, frameCounterPath } = ensureFixtureVideo();
+  const { barsPath, frameCounterPath, frameCounterHdPath } = ensureFixtureVideo();
   testNullMaxClipLengthValidation();
   testSourceFileSelection();
   testEncodeErrorClassification();
@@ -2258,6 +2493,7 @@ function main() {
   testProcessGroupKill();
   runStageSourceContract(frameCounterPath);
   runEncoderYoutubeFailFastContract(frameCounterPath);
+  runEncoderQualityContract(frameCounterPath, frameCounterHdPath);
   runEncoderEncodeFailureContract();
   runEncoderContract(barsPath, frameCounterPath);
   runEncoderGifContract(barsPath);

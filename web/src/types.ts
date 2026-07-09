@@ -1,6 +1,10 @@
 export const MAX_CLIP_LENGTH_SECONDS = 60;
 export const MAX_CAPTION_LENGTH = 200;
 
+export const CLIP_QUALITIES = ["720p", "1080p"] as const;
+export type ClipQuality = (typeof CLIP_QUALITIES)[number];
+export const DEFAULT_CLIP_QUALITY: ClipQuality = "1080p";
+
 export const CLIP_STATUSES = [
   "queued",
   "downloading",
@@ -49,6 +53,7 @@ export interface CreateClipRequest {
   trimStart: number;
   trimEnd: number;
   filters: FilterSpec[];
+  quality?: ClipQuality;
 }
 
 export interface ClipOutputs {
@@ -63,6 +68,7 @@ export interface ClipResponse {
   source: ClipSource;
   trimStart: number;
   trimEnd: number;
+  quality: ClipQuality;
   caption: string | null;
   filters: FilterSpec[];
   status: ClipStatus;

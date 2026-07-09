@@ -107,7 +107,11 @@ function LibraryCard({
 
       <div className="library-card-body">
         <h3 className="library-card-title">{clip.title}</h3>
-        <p className="library-card-date">{formatDate(clip.createdAt)}</p>
+        <p className="library-card-meta">
+          {formatDate(clip.createdAt)}
+          <span className="library-meta-sep">·</span>
+          {clip.quality}
+        </p>
 
         {clip.status === "failed" && clip.errorMessage && (
           <ClipFailureMessage message={clip.errorMessage} />
