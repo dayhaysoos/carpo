@@ -17,6 +17,21 @@ export interface YoutubeSource {
   url: string;
 }
 
+export interface UploadSource {
+  type: "upload";
+  key: string;
+}
+
+export type ClipSource = YoutubeSource | UploadSource;
+
+export interface UploadUrlResponse {
+  key: string;
+  uploadUrl: string;
+  maxSizeBytes: number;
+  contentType: string;
+  method: "PUT";
+}
+
 export interface CaptionFilter {
   type: "caption";
   text: string;
@@ -26,7 +41,7 @@ export type FilterSpec = CaptionFilter;
 
 export interface CreateClipRequest {
   title: string;
-  source: YoutubeSource;
+  source: ClipSource;
   trimStart: number;
   trimEnd: number;
   filters: FilterSpec[];
@@ -40,7 +55,7 @@ export interface ClipOutputs {
 export interface ClipResponse {
   id: string;
   title: string;
-  source: YoutubeSource;
+  source: ClipSource;
   trimStart: number;
   trimEnd: number;
   caption: string | null;
