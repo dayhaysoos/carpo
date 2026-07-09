@@ -84,6 +84,18 @@ export class EncoderStub extends DurableObject<Env> {
       return new Response(null, { status: 204 });
     }
 
+    if (url.pathname === "/__carpo/dispatch") {
+      const job = (await request.json()) as EncoderJobSpec | GifEncoderJobSpec;
+      if ("jobType" in job && job.jobType === "gif") {
+        return Response.json(
+          { status: "failed", errorMessage: "GIF jobs must use /__carpo/gif-run" },
+          { status: 400 },
+        );
+      }
+      void this.runDispatchJob(job as EncoderJobSpec);
+      return new Response(null, { status: 202 });
+    }
+
     if (url.pathname === "/__carpo/gif-run") {
       const job = (await request.json()) as GifEncoderJobSpec;
       return this.handleGifRun(job);
@@ -102,16 +114,28 @@ export class EncoderStub extends DurableObject<Env> {
     }
 
     const encodeJob = job as EncoderJobSpec;
+    if (encodeJob.source.type === "upload") {
+      return this.handleDeferredUploadRun(encodeJob);
+    }
+
+    return this.runYoutubeJob(encodeJob);
+  }
+
+  private async runDispatchJob(job: EncoderJobSpec): Promise<void> {
+    if (job.source.type === "upload") {
+      await this.handleDeferredUploadRun(job);
+      return;
+    }
+    await this.runYoutubeJob(job);
+  }
+
+  private async runYoutubeJob(encodeJob: EncoderJobSpec): Promise<Response> {
     await markClipDownloadingIfQueued(this.env.DB, encodeJob.jobId);
 
     const authHeaders = {
       "Content-Type": "application/json",
       [JOB_SECRET_HEADER]: encodeJob.callbackSecret,
     };
-
-    if (encodeJob.source.type === "upload") {
-      return this.handleDeferredUploadRun(encodeJob);
-    }
 
     const sourceUrl =
       encodeJob.source.type === "youtube" ? encodeJob.source.url : "";

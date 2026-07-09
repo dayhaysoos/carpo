@@ -192,26 +192,23 @@ export async function dispatchEncodingJob(
     const keepAlive = startActivityRenewal(container);
 
     try {
-      // Set before fetch, not after response: a thrown fetch does not prove the
-      // encoder never received /run (the connection may drop after delivery).
-      // Ambiguous failure preserves artifacts and allows late callback recovery.
+      // Hand off to the DO; it returns immediately and runs /run in waitUntil so
+      // terminal status survives worker waitUntil timeouts.
       runPosted = true;
-      const responsePromise = container.fetch("http://encoder/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(jobSpec),
-      });
-      // Optimistic in-progress status: polling stays truthful while /run blocks
-      // even when encoder callbacks never reach the worker.
-      await markClipDownloadingIfQueued(env.DB, clipId);
-      const response = await responsePromise;
-      const detail = await response.text();
-      // Best-effort mirror of the DO's authoritative terminal write.
-      await recordEncoderRunOutcome(
-        env,
-        clipId,
-        classifyEncoderRunResponse(response.ok, response.status, detail),
+      const dispatchResponse = await container.fetch(
+        "http://encoder/__carpo/dispatch",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(jobSpec),
+        },
       );
+      if (!dispatchResponse.ok) {
+        const detail = await dispatchResponse.text();
+        throw new Error(
+          detail || `Encoder dispatch failed (${dispatchResponse.status})`,
+        );
+      }
     } finally {
       clearInterval(keepAlive);
       await markContainerJobRunningSafe(container, false);

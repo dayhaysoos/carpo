@@ -68,6 +68,18 @@ export class EncoderContainer extends Container<Env> {
       return new Response(null, { status: 204 });
     }
 
+    if (url.pathname === "/__carpo/dispatch" && request.method === "POST") {
+      try {
+        const job = (await request.json()) as RunJobSpec;
+        return this.handleDispatch(job);
+      } catch {
+        return Response.json(
+          { status: "failed", errorMessage: "Invalid dispatch payload" },
+          { status: 400 },
+        );
+      }
+    }
+
     if (url.pathname === "/__carpo/gif-run" && request.method === "POST") {
       try {
         const job = (await request.json()) as RunJobSpec;
@@ -100,6 +112,41 @@ export class EncoderContainer extends Container<Env> {
       await this.ctx.storage.delete("jobStartedAt");
     }
     await this.stop();
+  }
+
+  private handleDispatch(job: RunJobSpec): Response {
+    if (job.jobType === "gif") {
+      return Response.json(
+        { status: "failed", errorMessage: "GIF jobs must use /__carpo/gif-run" },
+        { status: 400 },
+      );
+    }
+
+    const clipId = job.jobId;
+    const dispatchWork = (async () => {
+      await markClipDownloadingIfQueued(this.env.DB, clipId);
+      await this.ctx.storage.put("jobRunning", true);
+      await this.ctx.storage.put("jobStartedAt", Date.now());
+      this.renewActivityTimeout();
+
+      try {
+        await this.executeClipRun(job);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : "Unknown encoding error";
+        await failClipAmbiguous(
+          this.env,
+          clipId,
+          `Encoder container error: ${message}`,
+        );
+      } finally {
+        await this.ctx.storage.put("jobRunning", false);
+        await this.ctx.storage.delete("jobStartedAt");
+      }
+    })();
+
+    this.ctx.waitUntil(dispatchWork);
+    return new Response(null, { status: 202 });
   }
 
   private async handleRun(request: Request): Promise<Response> {
