@@ -76,6 +76,7 @@ function assertFfmpegAvailable() {
 function ensureFixtureVideo() {
   fs.mkdirSync(fixturesDir, { recursive: true });
   const fixturePath = path.join(fixturesDir, "bars.mp4");
+  const frameCounterPath = path.join(fixturesDir, "framecounter.mp4");
 
   if (!fs.existsSync(fixturePath)) {
     run("ffmpeg", [
@@ -98,7 +99,27 @@ function ensureFixtureVideo() {
     ]);
   }
 
-  return fixturePath;
+  if (!fs.existsSync(frameCounterPath)) {
+    run("ffmpeg", [
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "testsrc=duration=10:size=320x240:rate=30",
+      "-vf",
+      "geq=r='mod(N\\,256)':g='0':b='0'",
+      "-c:v",
+      "libx264",
+      "-g",
+      "90",
+      "-pix_fmt",
+      "yuv420p",
+      "-an",
+      frameCounterPath,
+    ]);
+  }
+
+  return { barsPath: fixturePath, frameCounterPath };
 }
 
 function buildImage() {
@@ -198,18 +219,120 @@ print("Source file selection test passed")
   run("python3", ["-c", script]);
 }
 
-function runEncoderContract(fixturePath: string) {
+function readTopLeftRedByte(videoPath: string, frame = 0) {
+  const result = spawnSync(
+    "ffmpeg",
+    [
+      "-v",
+      "error",
+      "-i",
+      videoPath,
+      "-vf",
+      `select=eq(n\\,${frame})`,
+      "-vframes",
+      "1",
+      "-f",
+      "rawvideo",
+      "-pix_fmt",
+      "rgb24",
+      "-",
+    ],
+    { encoding: "buffer" },
+  );
+
+  if (result.status !== 0 || !result.stdout || result.stdout.length < 1) {
+    throw new Error(
+      `Failed to read frame ${frame} from ${videoPath}\n${result.stderr?.toString() ?? ""}`,
+    );
+  }
+
+  return result.stdout[0];
+}
+
+function readTopLeftRedByteFromImage(imagePath: string) {
+  const result = spawnSync(
+    "ffmpeg",
+    [
+      "-v",
+      "error",
+      "-i",
+      imagePath,
+      "-vframes",
+      "1",
+      "-f",
+      "rawvideo",
+      "-pix_fmt",
+      "rgb24",
+      "-",
+    ],
+    { encoding: "buffer" },
+  );
+
+  if (result.status !== 0 || !result.stdout || result.stdout.length < 1) {
+    throw new Error(
+      `Failed to read image ${imagePath}\n${result.stderr?.toString() ?? ""}`,
+    );
+  }
+
+  return result.stdout[0];
+}
+
+function expectedFrameMarkerValues(trimStart: number, fps = 30) {
+  const center = Math.round(trimStart * fps);
+  return [
+    (center - 1) % 256,
+    center % 256,
+    (center + 1) % 256,
+  ];
+}
+
+function assertTrimFrameAccuracy(
+  sourcePath: string,
+  mp4Path: string,
+  thumbPath: string,
+  trimStart: number,
+) {
+  const allowed = expectedFrameMarkerValues(trimStart);
+  const outputFrame = readTopLeftRedByte(mp4Path, 0);
+  const thumbFrame = readTopLeftRedByteFromImage(thumbPath);
+
+  if (!allowed.includes(outputFrame)) {
+    throw new Error(
+      `Trimmed MP4 first frame marker ${outputFrame} not within ±1 frame of trimStart ${trimStart} (allowed ${allowed.join(", ")})`,
+    );
+  }
+  if (!allowed.includes(thumbFrame)) {
+    throw new Error(
+      `Thumbnail frame marker ${thumbFrame} not within ±1 frame of trimStart ${trimStart} (allowed ${allowed.join(", ")})`,
+    );
+  }
+
+  const keyframeFrame = readTopLeftRedByte(sourcePath, 0);
+  if (outputFrame === keyframeFrame && !allowed.includes(keyframeFrame)) {
+    throw new Error(
+      "Trimmed MP4 appears to start at the source keyframe instead of trimStart",
+    );
+  }
+
+  console.log(
+    `  Trim accuracy: mp4=${outputFrame}, thumbnail=${thumbFrame} (allowed ${allowed.join(", ")})`,
+  );
+}
+
+function runEncoderContract(fixturePath: string, frameCounterPath: string) {
   fs.rmSync(outputDir, { recursive: true, force: true });
   fs.mkdirSync(outputDir, { recursive: true });
 
+  const trimStart = 2.5;
+  const trimEnd = 5;
   const job = {
     jobId: "contract-test",
     source: {
       type: "file",
-      path: "/fixture/bars.mp4",
+      path: "/fixture/framecounter.mp4",
     },
-    trimStart: 2,
-    trimEnd: 5,
+    trimStart,
+    trimEnd,
     caption: null,
     filters: [],
     maxClipLengthSeconds: 60,
@@ -233,6 +356,8 @@ function runEncoderContract(fixturePath: string) {
     "18080:8080",
     "-v",
     `${fixturePath}:/fixture/bars.mp4:ro`,
+    "-v",
+    `${frameCounterPath}:/fixture/framecounter.mp4:ro`,
     "-v",
     `${outputDir}:/output`,
     imageName,
@@ -309,9 +434,21 @@ function runEncoderContract(fixturePath: string) {
       mp4Path,
     ]);
     const duration = Number.parseFloat(probe.trim());
-    if (!Number.isFinite(duration) || duration < 2.5 || duration > 3.5) {
+    const expectedDuration = trimEnd - trimStart;
+    if (
+      !Number.isFinite(duration) ||
+      duration < expectedDuration - 0.5 ||
+      duration > expectedDuration + 0.5
+    ) {
       throw new Error(`Unexpected trimmed duration: ${probe.trim()}`);
     }
+
+    assertTrimFrameAccuracy(
+      frameCounterPath,
+      mp4Path,
+      thumbPath,
+      trimStart,
+    );
 
     console.log("Encoder contract test passed");
     console.log(`  MP4: ${mp4Path} (${mp4Size} bytes, ${duration.toFixed(2)}s)`);
@@ -324,11 +461,11 @@ function runEncoderContract(fixturePath: string) {
 function main() {
   assertDockerAvailable();
   assertFfmpegAvailable();
-  const fixturePath = ensureFixtureVideo();
+  const { barsPath, frameCounterPath } = ensureFixtureVideo();
   testNullMaxClipLengthValidation();
   testSourceFileSelection();
   buildImage();
-  runEncoderContract(fixturePath);
+  runEncoderContract(barsPath, frameCounterPath);
 }
 
 main();

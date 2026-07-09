@@ -16,6 +16,8 @@ export const STUB_SKIP_COMPLETE_CALLBACK_URL =
   "https://www.youtube.com/watch?v=stub-skip-complete-callback";
 export const STUB_AMBIGUOUS_FAILURE_URL =
   "https://www.youtube.com/watch?v=stub-ambiguous-failure";
+export const STUB_CONTAINER_START_FAILURE_URL =
+  "https://www.youtube.com/watch?v=stub-container-start-failure";
 
 /**
  * Test double for the encoder container binding.
@@ -28,8 +30,26 @@ export class EncoderStub extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
 
+    if (url.pathname === "/__carpo/start") {
+      let sourceUrl = "";
+      try {
+        const body = (await request.json()) as {
+          source?: { type?: string; url?: string };
+        };
+        if (body.source?.type === "youtube" && typeof body.source.url === "string") {
+          sourceUrl = body.source.url;
+        }
+      } catch {
+        // Start body is optional; production encoder ignores it.
+      }
+
+      if (sourceUrl.includes("stub-container-start-failure")) {
+        return new Response("container start failed", { status: 503 });
+      }
+      return new Response(null, { status: 204 });
+    }
+
     if (
-      url.pathname === "/__carpo/start" ||
       url.pathname === "/__carpo/renew-activity" ||
       url.pathname === "/__carpo/job-running"
     ) {

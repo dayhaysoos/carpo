@@ -275,6 +275,9 @@ def download_youtube(url: str, workdir: Path) -> Path:
 
 def encode_clip(source: Path, trim_start: float, trim_end: float, output_mp4: Path, output_thumb: Path) -> None:
     duration = trim_end - trim_start
+    # Input seeking (-ss before -i) is frame-accurate when re-encoding (not stream
+    # copy); verified by scripts/test-encoder-contract.ts against a frame-counter
+    # fixture trimmed at a non-keyframe offset (±1 frame).
     run_command(
         [
             "ffmpeg",
@@ -299,6 +302,7 @@ def encode_clip(source: Path, trim_start: float, trim_end: float, output_mp4: Pa
         ]
     )
 
+    # Same input-seek pattern; thumbnail spot-check included in contract test.
     run_command(
         [
             "ffmpeg",

@@ -67,12 +67,25 @@ export async function dispatchEncodingJob(
     },
   };
 
+  let runPosted = false;
+
   try {
-    await container.fetch("http://encoder/__carpo/start", { method: "POST" });
+    const startResponse = await container.fetch("http://encoder/__carpo/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source: request.source }),
+    });
+    if (!startResponse.ok) {
+      const detail = await startResponse.text();
+      throw new Error(
+        detail || `Encoder container start failed (${startResponse.status})`,
+      );
+    }
     await markContainerJobRunningSafe(container, true);
     const keepAlive = startActivityRenewal(container);
 
     try {
+      runPosted = true;
       const response = await container.fetch("http://encoder/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -123,8 +136,13 @@ export async function dispatchEncodingJob(
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Unknown encoding error";
-    // Transport/parse failures after a long /run are ambiguous; keep artifacts.
-    await failClipAmbiguous(env, clipId, message);
+    if (runPosted) {
+      // Transport/parse failures after /run was posted are ambiguous; keep artifacts.
+      await failClipAmbiguous(env, clipId, message);
+    } else {
+      // Pre-/run failures (container start, etc.) cannot have produced artifacts.
+      await failClip(env, clipId, message);
+    }
   }
 }
 

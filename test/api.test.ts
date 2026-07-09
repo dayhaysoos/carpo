@@ -9,6 +9,7 @@ import { getClipById, outputKeysForClip } from "../src/db";
 import { failClipAmbiguous } from "../src/jobs";
 import {
   STUB_AMBIGUOUS_FAILURE_URL,
+  STUB_CONTAINER_START_FAILURE_URL,
   STUB_SKIP_COMPLETE_CALLBACK_URL,
 } from "./encoder-stub";
 
@@ -706,9 +707,42 @@ describe("authoritative /run response handling", () => {
 
     const persisted = await getClipById(env.DB, clipId);
     expect(persisted?.status).toBe("failed");
+    expect(persisted?.failure_mode).toBe("ambiguous");
     expect(persisted?.error_message).toBeTruthy();
     expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).not.toBeNull();
     expect(await env.CLIPS_BUCKET.get(keys.thumbnailKey)).not.toBeNull();
+  });
+
+  it("marks pre-/run container start failures as confirmed", async () => {
+    const response = await workerFetch("http://example.com/api/clips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "container start failure",
+        source: {
+          type: "youtube",
+          url: STUB_CONTAINER_START_FAILURE_URL,
+        },
+        trimStart: 1,
+        trimEnd: 5,
+        filters: [],
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    const created = (await response.json()) as { id: string };
+    const clipId = created.id;
+    const keys = outputKeysForClip(clipId);
+
+    const finalBody = await waitForTerminalStatus(clipId);
+    expect(finalBody.status).toBe("failed");
+
+    const persisted = await getClipById(env.DB, clipId);
+    expect(persisted?.status).toBe("failed");
+    expect(persisted?.failure_mode).toBe("confirmed");
+    expect(persisted?.error_message).toBeTruthy();
+    expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).toBeNull();
+    expect(await env.CLIPS_BUCKET.get(keys.thumbnailKey)).toBeNull();
   });
 });
 
