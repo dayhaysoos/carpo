@@ -119,6 +119,37 @@ describe("POST /api/clips", () => {
     );
   });
 
+  it("rejects trim windows longer than the max clip length", async () => {
+    const response = await workerFetch("http://example.com/api/clips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "too long",
+        source: {
+          type: "youtube",
+          url: "https://youtu.be/dQw4w9WgXcQ",
+        },
+        trimStart: 0,
+        trimEnd: 61,
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as {
+      error: string;
+      details: Array<{ field: string; message: string }>;
+    };
+    expect(body.error).toBe("Validation failed");
+    expect(body.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: "trim",
+          message: expect.stringContaining("60 seconds"),
+        }),
+      ]),
+    );
+  });
+
   it("rejects upload sources until slice 6", async () => {
     const response = await workerFetch("http://example.com/api/clips", {
       method: "POST",
@@ -147,18 +178,51 @@ describe("POST /api/clips", () => {
     );
   });
 
-  it("rejects trim windows longer than the max clip length", async () => {
+  it("accepts a caption filter and persists it on the clip record", async () => {
     const response = await workerFetch("http://example.com/api/clips", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        title: "too long",
+        title: "caption clip",
         source: {
           type: "youtube",
-          url: "https://youtu.be/dQw4w9WgXcQ",
+          url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        },
+        trimStart: 1,
+        trimEnd: 5,
+        filters: [{ type: "caption", text: "Hello world" }],
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as {
+      id: string;
+      caption: string | null;
+      filters: Array<{ type: string; text: string }>;
+    };
+    expect(body.caption).toBe("Hello world");
+    expect(body.filters).toEqual([{ type: "caption", text: "Hello world" }]);
+
+    const persisted = await getClipById(env.DB, body.id);
+    expect(persisted?.caption).toBe("Hello world");
+    expect(persisted?.filters_json).toBe(
+      JSON.stringify([{ type: "caption", text: "Hello world" }]),
+    );
+  });
+
+  it("rejects over-length caption text", async () => {
+    const response = await workerFetch("http://example.com/api/clips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "long caption",
+        source: {
+          type: "youtube",
+          url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
         },
         trimStart: 0,
-        trimEnd: 61,
+        trimEnd: 5,
+        filters: [{ type: "caption", text: "x".repeat(201) }],
       }),
     });
 
@@ -171,8 +235,40 @@ describe("POST /api/clips", () => {
     expect(body.details).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          field: "trim",
-          message: expect.stringContaining("60 seconds"),
+          field: "filters[0].text",
+          message: expect.stringContaining("200"),
+        }),
+      ]),
+    );
+  });
+
+  it("rejects unknown filter types", async () => {
+    const response = await workerFetch("http://example.com/api/clips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "bad filter",
+        source: {
+          type: "youtube",
+          url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        },
+        trimStart: 0,
+        trimEnd: 5,
+        filters: [{ type: "noop" }],
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as {
+      error: string;
+      details: Array<{ field: string; message: string }>;
+    };
+    expect(body.error).toBe("Validation failed");
+    expect(body.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: "filters[0].type",
+          message: expect.stringContaining("Unknown filter type"),
         }),
       ]),
     );
@@ -847,7 +943,7 @@ describe("clip job lifecycle", () => {
         },
         trimStart: 2,
         trimEnd: 7,
-        filters: [{ type: "noop" }],
+        filters: [],
       }),
     });
 
@@ -876,7 +972,7 @@ describe("clip job lifecycle", () => {
       title: "lifecycle clip",
       status: "complete",
       errorMessage: null,
-      filters: [{ type: "noop" }],
+      filters: [],
     });
 
     const outputs = lastBody.outputs as {

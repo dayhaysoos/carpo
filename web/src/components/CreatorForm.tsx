@@ -1,7 +1,7 @@
 import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 import { createClip } from "../api";
-import { MAX_CLIP_LENGTH_SECONDS } from "../types";
+import { MAX_CAPTION_LENGTH, MAX_CLIP_LENGTH_SECONDS } from "../types";
 import { extractYoutubeVideoId, isValidYoutubeUrl } from "../youtube";
 import { usePlayerTrim } from "./YoutubePlayer";
 import { TrimSlider } from "./TrimSlider";
@@ -13,6 +13,7 @@ interface CreatorFormProps {
 export function CreatorForm({ onClipCreated }: CreatorFormProps) {
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
+  const [caption, setCaption] = useState("");
   const [urlTouched, setUrlTouched] = useState(false);
 
   const trimmedUrl = url.trim();
@@ -35,6 +36,7 @@ export function CreatorForm({ onClipCreated }: CreatorFormProps) {
       onClipCreated(clip.id);
       setUrl("");
       setTitle("");
+      setCaption("");
       setUrlTouched(false);
     },
   });
@@ -48,7 +50,10 @@ export function CreatorForm({ onClipCreated }: CreatorFormProps) {
       source: { type: "youtube", url: trimmedUrl },
       trimStart: trim.range.start,
       trimEnd: trim.range.end,
-      filters: [],
+      filters:
+        caption.trim().length > 0
+          ? [{ type: "caption", text: caption.trim() }]
+          : [],
     });
   };
 
@@ -96,6 +101,17 @@ export function CreatorForm({ onClipCreated }: CreatorFormProps) {
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           maxLength={200}
+        />
+      </label>
+
+      <label className="field">
+        <span>Caption (optional)</span>
+        <input
+          type="text"
+          placeholder="Burn text into the clip"
+          value={caption}
+          onChange={(e) => setCaption(e.target.value)}
+          maxLength={MAX_CAPTION_LENGTH}
         />
       </label>
 

@@ -319,6 +319,181 @@ function assertTrimFrameAccuracy(
   );
 }
 
+function readFrameRgbBuffer(videoPath: string, frame = 0) {
+  const result = spawnSync(
+    "ffmpeg",
+    [
+      "-v",
+      "error",
+      "-i",
+      videoPath,
+      "-vf",
+      `select=eq(n\\,${frame})`,
+      "-vframes",
+      "1",
+      "-f",
+      "rawvideo",
+      "-pix_fmt",
+      "rgb24",
+      "-",
+    ],
+    { encoding: "buffer" },
+  );
+
+  if (result.status !== 0 || !result.stdout || result.stdout.length < 1) {
+    throw new Error(
+      `Failed to read frame ${frame} from ${videoPath}\n${result.stderr?.toString() ?? ""}`,
+    );
+  }
+
+  return result.stdout;
+}
+
+function countPixelDifferences(left: Buffer, right: Buffer) {
+  if (left.length !== right.length) {
+    throw new Error("Frame buffers differ in size");
+  }
+
+  let differences = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) {
+      differences += 1;
+    }
+  }
+  return differences;
+}
+
+function runEncoderCaptionContract(fixturePath: string, frameCounterPath: string) {
+  const captionOutputDir = path.join(outputDir, "caption-contract");
+  fs.rmSync(captionOutputDir, { recursive: true, force: true });
+  fs.mkdirSync(captionOutputDir, { recursive: true });
+
+  const trimStart = 2.5;
+  const trimEnd = 5;
+  const captionText = "It's 50% off: now!";
+  const baselineJob = {
+    jobId: "caption-baseline",
+    source: {
+      type: "file",
+      path: "/fixture/framecounter.mp4",
+    },
+    trimStart,
+    trimEnd,
+    caption: null,
+    filters: [],
+    maxClipLengthSeconds: 60,
+    outputs: {
+      mp4Key: "baseline.mp4",
+      thumbnailKey: "baseline.jpg",
+    },
+    localOutputDir: "/output",
+  };
+  const captionedJob = {
+    ...baselineJob,
+    jobId: "caption-overlay",
+    filters: [{ type: "caption", text: captionText }],
+    outputs: {
+      mp4Key: "captioned.mp4",
+      thumbnailKey: "captioned.jpg",
+    },
+  };
+
+  const baselinePath = path.join(captionOutputDir, "baseline-job.json");
+  const captionedPath = path.join(captionOutputDir, "captioned-job.json");
+  fs.writeFileSync(baselinePath, JSON.stringify(baselineJob));
+  fs.writeFileSync(captionedPath, JSON.stringify(captionedJob));
+
+  const captionContainer = `${containerName}-caption`;
+  run("docker", ["rm", "-f", captionContainer]);
+  run("docker", [
+    "run",
+    "-d",
+    "--name",
+    captionContainer,
+    "-p",
+    "18081:8080",
+    "-v",
+    `${fixturePath}:/fixture/bars.mp4:ro`,
+    "-v",
+    `${frameCounterPath}:/fixture/framecounter.mp4:ro`,
+    "-v",
+    `${captionOutputDir}:/output`,
+    imageName,
+  ]);
+
+  try {
+    waitForHealth(18081);
+
+    for (const [label, jobFile] of [
+      ["baseline", baselinePath],
+      ["captioned", captionedPath],
+    ] as const) {
+      const encode = spawnSync(
+        "curl",
+        [
+          "-fsS",
+          "-X",
+          "POST",
+          "http://127.0.0.1:18081/run",
+          "-H",
+          "Content-Type: application/json",
+          "-d",
+          `@${jobFile}`,
+        ],
+        { encoding: "utf-8" },
+      );
+
+      if (encode.status !== 0) {
+        const logs = run("docker", ["logs", captionContainer]);
+        throw new Error(
+          `${label} encoder /run failed\n${encode.stderr}\ncontainer logs:\n${logs}`,
+        );
+      }
+
+      const result = JSON.parse(encode.stdout) as {
+        status: string;
+        errorMessage?: string;
+      };
+      if (result.status !== "complete") {
+        throw new Error(
+          `${label} encoder returned failure: ${result.errorMessage ?? "unknown error"}`,
+        );
+      }
+    }
+
+    const baselineMp4 = path.join(captionOutputDir, "baseline.mp4");
+    const captionedMp4 = path.join(captionOutputDir, "captioned.mp4");
+    const captionedThumb = path.join(captionOutputDir, "captioned.jpg");
+
+    if (!fs.existsSync(baselineMp4) || !fs.existsSync(captionedMp4)) {
+      throw new Error("Expected baseline and captioned MP4 artifacts");
+    }
+    if (!fs.existsSync(captionedThumb)) {
+      throw new Error("Expected captioned thumbnail artifact");
+    }
+
+    const baselineFrame = readFrameRgbBuffer(baselineMp4, 0);
+    const captionedFrame = readFrameRgbBuffer(captionedMp4, 0);
+    const pixelDifferences = countPixelDifferences(baselineFrame, captionedFrame);
+    if (pixelDifferences < 100) {
+      throw new Error(
+        `Caption overlay did not visibly change the output frame (${pixelDifferences} differing bytes)`,
+      );
+    }
+
+    const captionedLog = run("docker", ["logs", captionContainer]);
+    if (!captionedLog.includes("drawtext")) {
+      throw new Error("Encoder logs did not show drawtext filter invocation");
+    }
+
+    console.log("Encoder caption contract test passed");
+    console.log(`  Caption: ${captionText}`);
+    console.log(`  Frame differences: ${pixelDifferences} bytes`);
+  } finally {
+    run("docker", ["rm", "-f", captionContainer]);
+  }
+}
+
 function runEncoderContract(fixturePath: string, frameCounterPath: string) {
   fs.rmSync(outputDir, { recursive: true, force: true });
   fs.mkdirSync(outputDir, { recursive: true });
@@ -466,6 +641,7 @@ function main() {
   testSourceFileSelection();
   buildImage();
   runEncoderContract(barsPath, frameCounterPath);
+  runEncoderCaptionContract(barsPath, frameCounterPath);
 }
 
 main();

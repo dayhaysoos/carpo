@@ -1,4 +1,5 @@
 export const MAX_CLIP_LENGTH_SECONDS = 60;
+export const MAX_CAPTION_LENGTH = 200;
 
 export const CLIP_STATUSES = [
   "queued",
@@ -16,12 +17,19 @@ export interface YoutubeSource {
   url: string;
 }
 
+export interface CaptionFilter {
+  type: "caption";
+  text: string;
+}
+
+export type FilterSpec = CaptionFilter;
+
 export interface CreateClipRequest {
   title: string;
   source: YoutubeSource;
   trimStart: number;
   trimEnd: number;
-  filters?: Record<string, unknown>[];
+  filters: FilterSpec[];
 }
 
 export interface ClipOutputs {
@@ -36,7 +44,7 @@ export interface ClipResponse {
   trimStart: number;
   trimEnd: number;
   caption: string | null;
-  filters: Record<string, unknown>[];
+  filters: FilterSpec[];
   status: ClipStatus;
   errorMessage: string | null;
   outputs: ClipOutputs;

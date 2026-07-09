@@ -1,5 +1,9 @@
-import { MAX_CLIP_LENGTH_SECONDS } from "./types";
-import type { CreateClipRequest } from "./types";
+import {
+  FILTER_TYPES,
+  MAX_CAPTION_LENGTH,
+  MAX_CLIP_LENGTH_SECONDS,
+} from "./types";
+import type { CreateClipRequest, FilterSpec } from "./types";
 
 const YOUTUBE_HOSTS = new Set([
   "youtube.com",
@@ -17,7 +21,7 @@ export interface ValidationError {
 export function validateCreateClipRequest(
   body: unknown,
   maxClipLength = MAX_CLIP_LENGTH_SECONDS,
-): { ok: true; value: CreateClipRequest } | { ok: false; errors: ValidationError[] } {
+): { ok: true; value: CreateClipRequest & { caption: string | null } } | { ok: false; errors: ValidationError[] } {
   const errors: ValidationError[] = [];
 
   if (!body || typeof body !== "object") {
@@ -81,23 +85,20 @@ export function validateCreateClipRequest(
     }
   }
 
-  const caption =
-    input.caption === undefined || input.caption === null
-      ? null
-      : typeof input.caption === "string"
-        ? input.caption
-        : null;
-  if (input.caption !== undefined && input.caption !== null && typeof input.caption !== "string") {
-    errors.push({ field: "caption", message: "Caption must be a string or null" });
+  if (input.caption !== undefined && input.caption !== null) {
+    errors.push({
+      field: "caption",
+      message: "Caption must be provided as a filter entry ({ type: \"caption\", text: \"...\" })",
+    });
   }
 
-  let filters: unknown[] = [];
-  if (input.filters !== undefined) {
-    if (!Array.isArray(input.filters)) {
-      errors.push({ field: "filters", message: "Filters must be an array" });
-    } else {
-      filters = input.filters;
-    }
+  let filters: FilterSpec[] = [];
+  if (input.filters === undefined) {
+    filters = [];
+  } else if (!Array.isArray(input.filters)) {
+    errors.push({ field: "filters", message: "Filters must be an array" });
+  } else {
+    filters = validateFilters(input.filters, errors);
   }
 
   if (errors.length > 0) {
@@ -117,10 +118,59 @@ export function validateCreateClipRequest(
       source: parsedSource,
       trimStart: trimStart!,
       trimEnd: trimEnd!,
-      caption,
-      filters: filters as CreateClipRequest["filters"],
+      filters,
+      caption: extractCaptionFromFilters(filters),
     },
   };
+}
+
+function validateFilters(filters: unknown[], errors: ValidationError[]): FilterSpec[] {
+  const validated: FilterSpec[] = [];
+
+  for (let index = 0; index < filters.length; index += 1) {
+    const item = filters[index];
+    const fieldPrefix = `filters[${index}]`;
+
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      errors.push({ field: fieldPrefix, message: "Filter must be an object" });
+      continue;
+    }
+
+    const filter = item as Record<string, unknown>;
+    const filterType = filter.type;
+
+    if (filterType === "caption") {
+      const text = typeof filter.text === "string" ? filter.text : "";
+      if (!text.trim()) {
+        errors.push({
+          field: `${fieldPrefix}.text`,
+          message: "Caption text is required",
+        });
+      } else if (text.length > MAX_CAPTION_LENGTH) {
+        errors.push({
+          field: `${fieldPrefix}.text`,
+          message: `Caption must be ${MAX_CAPTION_LENGTH} characters or fewer`,
+        });
+      } else {
+        validated.push({ type: "caption", text });
+      }
+      continue;
+    }
+
+    if (typeof filterType !== "string" || !FILTER_TYPES.includes(filterType as FilterSpec["type"])) {
+      errors.push({
+        field: `${fieldPrefix}.type`,
+        message: `Unknown filter type: ${String(filterType)}`,
+      });
+    }
+  }
+
+  return validated;
+}
+
+export function extractCaptionFromFilters(filters: FilterSpec[]): string | null {
+  const captionFilter = filters.find((filter) => filter.type === "caption");
+  return captionFilter?.text ?? null;
 }
 
 function parseTimestamp(

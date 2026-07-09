@@ -15,7 +15,18 @@ export type FailureMode = "confirmed" | "ambiguous";
 
 export type SourceType = "youtube" | "upload";
 
-export type FilterSpec = Record<string, unknown>;
+export const MAX_CAPTION_LENGTH = 200;
+
+export const FILTER_TYPES = ["caption"] as const;
+
+export type FilterType = (typeof FILTER_TYPES)[number];
+
+export interface CaptionFilter {
+  type: "caption";
+  text: string;
+}
+
+export type FilterSpec = CaptionFilter;
 
 export interface YoutubeSource {
   type: "youtube";
@@ -34,8 +45,7 @@ export interface CreateClipRequest {
   source: ClipSource;
   trimStart: number;
   trimEnd: number;
-  caption?: string | null;
-  filters?: FilterSpec[];
+  filters: FilterSpec[];
 }
 
 export interface ClipRecord {
