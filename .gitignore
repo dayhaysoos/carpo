@@ -1,4 +1,5 @@
 node_modules/
+web/node_modules/
 .wrangler/
 dist/
 .env
@@ -7,6 +8,7 @@ dist/
 *.log
 .DS_Store
 test-output/
+*.tsbuildinfo
 fixtures/*.mp4
 fixtures/*.jpg
 fixtures/*.png

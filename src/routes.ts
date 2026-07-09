@@ -44,7 +44,11 @@ export async function handleRequest(
     return handleArtifactRequest(url.pathname.slice("/artifacts/".length), env);
   }
 
-  if (url.pathname === "/" || url.pathname.startsWith("/assets")) {
+  if (
+    url.pathname === "/" ||
+    url.pathname.startsWith("/assets/") ||
+    url.pathname === "/index.html"
+  ) {
     return env.ASSETS.fetch(request);
   }
 
