@@ -185,11 +185,15 @@ export async function applyStatusUpdate(
     return;
   }
   if (record.status === "failed" && record.failure_mode === "ambiguous") {
-    if (status !== "complete") {
+    if (status === "complete") {
+      const keys = outputKeysForClip(clipId);
+      await markClipComplete(env.DB, clipId, keys.mp4Key, keys.thumbnailKey);
       return;
     }
-    const keys = outputKeysForClip(clipId);
-    await markClipComplete(env.DB, clipId, keys.mp4Key, keys.thumbnailKey);
+    if (status === "failed") {
+      await failClip(env, clipId, errorMessage ?? "Encoding failed");
+      return;
+    }
     return;
   }
 
