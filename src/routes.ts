@@ -44,11 +44,7 @@ export async function handleRequest(
     return handleArtifactRequest(url.pathname.slice("/artifacts/".length), env);
   }
 
-  if (url.pathname === "/" || url.pathname.startsWith("/assets")) {
-    return env.ASSETS.fetch(request);
-  }
-
-  return json({ error: "Not found" }, 404);
+  return env.ASSETS.fetch(request);
 }
 
 async function handleCreateClip(
