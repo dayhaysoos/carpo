@@ -576,7 +576,7 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
 
             defer_upload = bool(job.get("deferArtifactUpload"))
 
-            if callback_url and not defer_upload:
+            if callback_url:
                 progress.post_resync_if_needed(
                     callback_url,
                     secret=callback_secret,
@@ -669,18 +669,30 @@ class EncoderHandler(BaseHTTPRequestHandler):
         if not path.exists():
             self.send_error(404, "Not found")
             return
-        data = path.read_bytes()
+        file_size = path.stat().st_size
         self.send_response(200)
         self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Length", str(file_size))
         self.end_headers()
-        self.wfile.write(data)
+        with path.open("rb") as handle:
+            shutil.copyfileobj(handle, self.wfile)
 
     def do_POST(self) -> None:  # noqa: N802
         if self.path == "/stage-source":
+            content_length = self.headers.get("Content-Length")
+            if content_length is None or not content_length.strip():
+                self.send_error(411, "Length Required")
+                return
             try:
-                length = int(self.headers.get("Content-Length", "0"))
-                raw = self.rfile.read(length) if length else b""
+                length = int(content_length)
+            except ValueError:
+                self.send_error(411, "Length Required")
+                return
+            if length < 0:
+                self.send_error(411, "Length Required")
+                return
+            try:
+                raw = self.rfile.read(length)
                 stage_upload_source(raw)
             except Exception as exc:  # noqa: BLE001
                 self._send_json(500, {"status": "failed", "errorMessage": str(exc)})

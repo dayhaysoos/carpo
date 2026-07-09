@@ -793,6 +793,107 @@ HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
   }
 }
 
+function runStageSourceContract(frameCounterPath: string) {
+  fs.mkdirSync(outputDir, { recursive: true });
+  const encoderPort = 18084;
+  const stageContainer = `${containerName}-stage-source`;
+
+  run("docker", ["rm", "-f", stageContainer]);
+  run("docker", [
+    "run",
+    "-d",
+    "--name",
+    stageContainer,
+    "-p",
+    `${encoderPort}:8080`,
+    imageName,
+  ]);
+
+  try {
+    waitForHealth(encoderPort);
+
+    const missingLength = spawnSync(
+      "python3",
+      [
+        "-c",
+        `import http.client
+conn = http.client.HTTPConnection("127.0.0.1", ${encoderPort})
+conn.request(
+    "POST",
+    "/stage-source",
+    body=b"0\\r\\n\\r\\n",
+    headers={
+        "Content-Type": "video/mp4",
+        "Transfer-Encoding": "chunked",
+    },
+)
+print(conn.getresponse().status)`,
+      ],
+      { encoding: "utf-8" },
+    );
+    if (missingLength.stdout?.trim() !== "411") {
+      throw new Error(
+        `Expected 411 for /stage-source without Content-Length, got ${missingLength.stdout}`,
+      );
+    }
+
+    const sourceBytes = fs.readFileSync(frameCounterPath);
+    const stagedPath = path.join(outputDir, "staged-upload-source.mp4");
+    fs.writeFileSync(stagedPath, sourceBytes);
+
+    const staged = spawnSync(
+      "curl",
+      [
+        "-sS",
+        "-o",
+        "/dev/null",
+        "-w",
+        "%{http_code}",
+        "-X",
+        "POST",
+        `http://127.0.0.1:${encoderPort}/stage-source`,
+        "-H",
+        `Content-Length: ${sourceBytes.length}`,
+        "-H",
+        "Content-Type: video/mp4",
+        "--data-binary",
+        `@${stagedPath}`,
+      ],
+      { encoding: "utf-8" },
+    );
+    if (staged.stdout?.trim() !== "204") {
+      throw new Error(
+        `Expected 204 for /stage-source with Content-Length, got ${staged.stdout}`,
+      );
+    }
+
+    const inspectScript = `
+import sys
+from pathlib import Path
+
+sys.path.insert(0, ${JSON.stringify(path.join(root, "container"))})
+from encoder import STAGED_UPLOAD_PATH
+
+staged = Path(STAGED_UPLOAD_PATH)
+assert staged.exists(), "staged upload source missing"
+assert staged.stat().st_size == ${sourceBytes.length}, staged.stat().st_size
+print("Staged upload source size matches Content-Length")
+`;
+    run("docker", [
+      "exec",
+      stageContainer,
+      "python3",
+      "-c",
+      inspectScript,
+    ]);
+
+    console.log("Encoder stage-source contract test passed");
+    console.log(`  Staged bytes: ${sourceBytes.length}`);
+  } finally {
+    run("docker", ["rm", "-f", stageContainer]);
+  }
+}
+
 function main() {
   assertDockerAvailable();
   assertFfmpegAvailable();
@@ -800,6 +901,7 @@ function main() {
   testNullMaxClipLengthValidation();
   testSourceFileSelection();
   buildImage();
+  runStageSourceContract(frameCounterPath);
   runEncoderContract(barsPath, frameCounterPath);
   runEncoderUploadContract(frameCounterPath);
   runEncoderCaptionContract(barsPath, frameCounterPath);

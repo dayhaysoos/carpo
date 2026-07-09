@@ -11,6 +11,7 @@ import {
   STUB_AMBIGUOUS_FAILURE_URL,
   STUB_CONTAINER_START_FAILURE_URL,
   STUB_DEFERRED_COPY_FAILURE_UPLOAD_KEY,
+  STUB_DEFERRED_SLOW_UPLOAD_KEY,
   STUB_NO_CALLBACKS_SLOW_RUN_URL,
   STUB_SKIP_COMPLETE_CALLBACK_URL,
   STUB_VERIFY_WORKER_BASE_URL,
@@ -25,6 +26,16 @@ async function workerFetch(
   const response = await exports.default.fetch(request, env, ctx);
   await waitOnExecutionContext(ctx);
   return response;
+}
+
+async function workerFetchWithoutWaitingForBackground(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<{ response: Response; ctx: ExecutionContext }> {
+  const request = new Request(input, init);
+  const ctx = createExecutionContext();
+  const response = await exports.default.fetch(request, env, ctx);
+  return { response, ctx };
 }
 
 async function createYoutubeClip(title = "test clip") {
@@ -346,6 +357,58 @@ describe("deferred upload artifact staging", () => {
     expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).toBeNull();
     expect(await env.CLIPS_BUCKET.get(keys.thumbnailKey)).toBeNull();
     expect(await env.CLIPS_BUCKET.get(uploadKey)).toBeNull();
+  });
+
+  it("reports uploading during deferred artifact copy", async () => {
+    const uploadKey = STUB_DEFERRED_SLOW_UPLOAD_KEY;
+    await env.CLIPS_BUCKET.put(uploadKey, new Uint8Array([0, 1, 2, 3]), {
+      httpMetadata: { contentType: "video/mp4" },
+    });
+
+    const { response, ctx } = await workerFetchWithoutWaitingForBackground(
+      "http://example.com/api/clips",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: "deferred upload slow copy",
+          source: { type: "upload", key: uploadKey },
+          trimStart: 0,
+          trimEnd: 5,
+          filters: [],
+        }),
+      },
+    );
+    expect(response.status).toBe(201);
+    const created = (await response.json()) as { id: string };
+    const clipId = created.id;
+
+    const seenStatuses = new Set<string>();
+    let lastBody: Record<string, unknown> = { status: "queued" };
+
+    const dispatchDone = waitOnExecutionContext(ctx);
+    while (true) {
+      const statusResponse = await workerFetch(
+        `http://example.com/api/clips/${clipId}`,
+      );
+      expect(statusResponse.status).toBe(200);
+      lastBody = (await statusResponse.json()) as Record<string, unknown>;
+      if (typeof lastBody.status === "string") {
+        seenStatuses.add(lastBody.status);
+      }
+      if (lastBody.status === "complete" || lastBody.status === "failed") {
+        break;
+      }
+      await Promise.race([
+        dispatchDone,
+        new Promise((resolve) => setTimeout(resolve, 10)),
+      ]);
+    }
+
+    await dispatchDone;
+
+    expect(seenStatuses.has("uploading")).toBe(true);
+    expect(lastBody.status).toBe("complete");
   });
 });
 

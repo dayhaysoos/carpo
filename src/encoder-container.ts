@@ -5,7 +5,7 @@ import { UPLOAD_KEY_PREFIX } from "./uploads";
 
 const STAGED_UPLOAD_PATH = "/tmp/carpo-upload-source.mp4";
 
-type RunJobSpec = EncoderJobSpec & {
+type RunJobSpec = Omit<EncoderJobSpec, "source"> & {
   deferArtifactUpload?: boolean;
   source?: EncoderJobSpec["source"] | { type: "file"; path: string };
 };
@@ -100,7 +100,7 @@ export class EncoderContainer extends Container<Env> {
       job = {
         ...job,
         source: { type: "file", path: STAGED_UPLOAD_PATH },
-      };
+      } as RunJobSpec;
     }
 
     job.deferArtifactUpload = true;
@@ -165,14 +165,24 @@ export class EncoderContainer extends Container<Env> {
     if (!headers.get("Content-Type")) {
       headers.set("Content-Type", "video/mp4");
     }
+    headers.set("Content-Length", String(object.size));
+
+    if (!object.body) {
+      return { ok: false, error: "Upload source body is empty" };
+    }
+
+    const { readable, writable } = new FixedLengthStream(object.size);
+    const pipePromise = object.body.pipeTo(writable);
 
     const stageResponse = await super.fetch(
       new Request("http://encoder/stage-source", {
         method: "POST",
         headers,
-        body: object.body,
+        body: readable,
       }),
     );
+
+    await pipePromise;
 
     if (!stageResponse.ok) {
       const detail = await stageResponse.text();

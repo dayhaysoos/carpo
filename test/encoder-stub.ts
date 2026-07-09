@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { JOB_SECRET_HEADER } from "../src/auth";
 import type { Env } from "../src/env";
+import { applyStatusUpdate } from "../src/jobs";
 import type { EncoderJobSpec } from "../src/types";
 
 const FAKE_MP4 = new Uint8Array([
@@ -24,6 +25,8 @@ export const STUB_NO_CALLBACKS_SLOW_RUN_URL =
   "https://www.youtube.com/watch?v=stub-no-callbacks-slow-run";
 export const STUB_DEFERRED_COPY_FAILURE_UPLOAD_KEY =
   "uploads/stub-deferred-copy-failure.mp4";
+export const STUB_DEFERRED_SLOW_UPLOAD_KEY =
+  "uploads/stub-deferred-slow-upload.mp4";
 
 /**
  * Test double for the encoder container binding.
@@ -73,7 +76,7 @@ export class EncoderStub extends DurableObject<Env> {
     };
 
     if (job.source.type === "upload") {
-      return this.handleDeferredUploadRun(job, authHeaders);
+      return this.handleDeferredUploadRun(job);
     }
 
     const sourceUrl =
@@ -160,18 +163,14 @@ export class EncoderStub extends DurableObject<Env> {
 
   private async handleDeferredUploadRun(
     job: EncoderJobSpec,
-    authHeaders: Record<string, string>,
   ): Promise<Response> {
-    const callbackTarget = job.callbackUrl.startsWith("http")
-      ? job.callbackUrl
-      : `http://example.com${job.callbackUrl}`;
+    for (const status of ["downloading", "encoding", "uploading"] as const) {
+      await applyStatusUpdate(this.env, job.jobId, status);
+    }
 
-    for (const status of ["downloading", "encoding"] as const) {
-      await fetch(callbackTarget, {
-        method: "POST",
-        headers: authHeaders,
-        body: JSON.stringify({ status }),
-      });
+    const slowDeferredCopy = job.source.key.includes("stub-deferred-slow-upload");
+    if (slowDeferredCopy) {
+      await new Promise((resolve) => setTimeout(resolve, 150));
     }
 
     const copyFailure = job.source.key.includes("stub-deferred-copy-failure");
