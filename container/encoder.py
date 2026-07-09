@@ -34,9 +34,6 @@ YOUTUBE_SOCKET_TIMEOUT_SECONDS = 15
 YOUTUBE_STALL_TIMEOUT_SECONDS = int(
     os.environ.get("YOUTUBE_STALL_TIMEOUT_SECONDS", "45"),
 )
-YOUTUBE_POSTPROCESS_STALL_TIMEOUT_SECONDS = int(
-    os.environ.get("YOUTUBE_POSTPROCESS_STALL_TIMEOUT_SECONDS", "180"),
-)
 YOUTUBE_DOWNLOAD_MAX_SECONDS = int(
     os.environ.get("YOUTUBE_DOWNLOAD_MAX_SECONDS", "600"),
 )
@@ -601,12 +598,10 @@ def run_ytdlp(command: list[str], workdir: Path) -> None:
         now = time.monotonic()
         with activity_lock:
             idle_seconds = now - last_activity
-            stall_limit = (
-                YOUTUBE_POSTPROCESS_STALL_TIMEOUT_SECONDS
-                if postprocess_phase
-                else YOUTUBE_STALL_TIMEOUT_SECONDS
-            )
-        if idle_seconds > stall_limit:
+        if (
+            not postprocess_phase
+            and idle_seconds > YOUTUBE_STALL_TIMEOUT_SECONDS
+        ):
             stall_killed = True
             _kill_process_group(proc.pid)
             break
@@ -788,23 +783,32 @@ def download_youtube(
 
         probed_start = probe_media_start_time(source_path)
         if probed_start is not None and probed_start > 0:
-            encode_trim_start, encode_trim_end = resolve_section_encode_bounds(
-                source_path,
-                trim_start,
-                trim_end,
-                section_start,
-            )
-            return source_path, encode_trim_start, encode_trim_end
-
-        if probed_start is None:
-            alignment_detail = "unavailable"
+            try:
+                encode_trim_start, encode_trim_end = resolve_section_encode_bounds(
+                    source_path,
+                    trim_start,
+                    trim_end,
+                    section_start,
+                )
+                return source_path, encode_trim_start, encode_trim_end
+            except RuntimeError as exc:
+                if "does not contain the requested trim range" not in str(exc):
+                    raise
+                log(
+                    "YouTube section download does not contain the requested "
+                    f"trim range (start_time={probed_start}); re-downloading full video",
+                )
+                _clear_ytdlp_source_files(workdir)
         else:
-            alignment_detail = f"{probed_start}"
-        log(
-            "YouTube section download has unknown alignment "
-            f"(start_time={alignment_detail}); re-downloading full video",
-        )
-        _clear_ytdlp_source_files(workdir)
+            if probed_start is None:
+                alignment_detail = "unavailable"
+            else:
+                alignment_detail = f"{probed_start}"
+            log(
+                "YouTube section download has unknown alignment "
+                f"(start_time={alignment_detail}); re-downloading full video",
+            )
+            _clear_ytdlp_source_files(workdir)
 
     full_command, _ = _ytdlp_download_command(
         url,

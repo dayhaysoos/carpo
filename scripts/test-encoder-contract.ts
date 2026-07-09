@@ -396,6 +396,10 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
     fixturesDir,
     "fake-ytdlp-sections-late-start.sh",
   );
+  const sectionsRejectedFixture = path.join(
+    fixturesDir,
+    "fake-ytdlp-sections-rejected.sh",
+  );
 
   const failFastOutputDir = path.join(outputDir, "youtube-fail-fast");
   fs.rmSync(failFastOutputDir, { recursive: true, force: true });
@@ -631,7 +635,11 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
         fakeYtdlpPath: silentMergeFixture,
         outputDir: failFastOutputDir,
         frameCounterPath,
-        env: { YOUTUBE_STALL_TIMEOUT_SECONDS: "5" },
+        env: {
+          YOUTUBE_STALL_TIMEOUT_SECONDS: "5",
+          // Scaled stand-in for the old 180s post-process idle budget (10s).
+          YOUTUBE_POSTPROCESS_STALL_TIMEOUT_SECONDS: "10",
+        },
       },
     );
     if (silentMerge.result.status !== "complete") {
@@ -639,9 +647,9 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
         `Expected complete status for silent-merge fixture, got ${silentMerge.result.status}: ${silentMerge.result.errorMessage ?? ""}`,
       );
     }
-    if (silentMerge.elapsedMs < 10_000) {
+    if (silentMerge.elapsedMs < 14_000) {
       throw new Error(
-        `Silent-merge fixture finished too quickly (${silentMerge.elapsedMs}ms); expected >10s silent post-download phase`,
+        `Silent-merge fixture finished too quickly (${silentMerge.elapsedMs}ms); expected >14s silent post-download phase (longer than scaled 180s budget)`,
       );
     }
     console.log("Encoder YouTube silent-merge contract test passed");
@@ -735,6 +743,90 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
     console.log("Encoder YouTube sections trim contract test passed");
   } finally {
     run("docker", ["rm", "-f", `${containerName}-youtube-sections`]);
+  }
+
+  const rejectedTrimStart = 7.5;
+  const rejectedTrimEnd = 9.5;
+  const rejectedOutputDir = path.join(outputDir, "youtube-sections-rejected");
+  fs.rmSync(rejectedOutputDir, { recursive: true, force: true });
+  fs.mkdirSync(rejectedOutputDir, { recursive: true });
+  const rejectedJobPath = path.join(rejectedOutputDir, "rejected-job.json");
+  fs.writeFileSync(
+    rejectedJobPath,
+    JSON.stringify({
+      jobId: "youtube-sections-rejected",
+      source: {
+        type: "youtube",
+        url: "https://www.youtube.com/watch?v=section-rejected",
+      },
+      trimStart: rejectedTrimStart,
+      trimEnd: rejectedTrimEnd,
+      maxClipLengthSeconds: 60,
+      outputs: {
+        mp4Key: "rejected.mp4",
+        thumbnailKey: "rejected.jpg",
+      },
+      localOutputDir: "/output",
+    }),
+  );
+
+  try {
+    const rejected = runEncoderYoutubeJob(
+      `${containerName}-youtube-sections-rejected`,
+      18095,
+      rejectedJobPath,
+      {
+        fakeYtdlpPath: sectionsRejectedFixture,
+        outputDir: rejectedOutputDir,
+        frameCounterPath,
+      },
+    );
+    if (rejected.result.status !== "complete") {
+      throw new Error(
+        `Expected complete status for rejected-section fixture, got ${rejected.result.status}: ${rejected.result.errorMessage ?? ""}`,
+      );
+    }
+    const ytdlpRuns = rejected.logs.match(/running: yt-dlp/g) ?? [];
+    if (ytdlpRuns.length !== 2) {
+      throw new Error(
+        `Expected 2 yt-dlp invocations (section + full fallback), got ${ytdlpRuns.length}`,
+      );
+    }
+    const sectionRuns = rejected.logs.match(/--download-sections/g) ?? [];
+    if (sectionRuns.length !== 1) {
+      throw new Error(
+        `Expected exactly one --download-sections invocation, got ${sectionRuns.length}`,
+      );
+    }
+    if (
+      !rejected.logs.includes("does not contain the requested trim range")
+    ) {
+      throw new Error(
+        "Encoder logs did not show rejected section trim range fallback",
+      );
+    }
+    if (!rejected.logs.includes("re-downloading full video")) {
+      throw new Error(
+        "Encoder logs did not show full-download fallback for rejected section window",
+      );
+    }
+    const mp4Path = path.join(rejectedOutputDir, "rejected.mp4");
+    const thumbPath = path.join(rejectedOutputDir, "rejected.jpg");
+    if (!fs.existsSync(mp4Path) || !fs.existsSync(thumbPath)) {
+      throw new Error("Expected rejected-section trim artifacts on host output dir");
+    }
+    assertTrimFrameAccuracy(
+      frameCounterPath,
+      mp4Path,
+      thumbPath,
+      rejectedTrimStart,
+    );
+
+    console.log(
+      "Encoder YouTube rejected-section full-download fallback contract test passed",
+    );
+  } finally {
+    run("docker", ["rm", "-f", `${containerName}-youtube-sections-rejected`]);
   }
 
   const lateStartOutputDir = path.join(outputDir, "youtube-sections-zero-start");

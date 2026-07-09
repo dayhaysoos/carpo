@@ -14,7 +14,7 @@ while [ $# -gt 0 ]; do
 done
 
 printf '[download] 100.0%% of ~10.00MiB at 1.00MiB/s ETA 00:00\n'
-sleep 12
+sleep 15
 
 OUTFILE=$(printf '%s' "$OUTPUT" | sed 's/%(ext)s/mp4/')
 if [ -z "$OUTFILE" ]; then
