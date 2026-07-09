@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -31,6 +32,9 @@ DOWNLOAD_TIMEOUT_SECONDS = 600
 YOUTUBE_SOCKET_TIMEOUT_SECONDS = 15
 YOUTUBE_STALL_TIMEOUT_SECONDS = int(
     os.environ.get("YOUTUBE_STALL_TIMEOUT_SECONDS", "45"),
+)
+YOUTUBE_POSTPROCESS_STALL_TIMEOUT_SECONDS = int(
+    os.environ.get("YOUTUBE_POSTPROCESS_STALL_TIMEOUT_SECONDS", "180"),
 )
 YOUTUBE_DOWNLOAD_MAX_SECONDS = int(
     os.environ.get("YOUTUBE_DOWNLOAD_MAX_SECONDS", "600"),
@@ -376,6 +380,78 @@ def _ytdlp_command_with_newline(command: list[str]) -> list[str]:
     return [command[0], "--newline", *command[1:]]
 
 
+def _ytdlp_line_indicates_postprocess(line: str) -> bool:
+    text = line.strip()
+    if not text:
+        return False
+    if any(
+        marker in text
+        for marker in ("[Merger]", "[ExtractAudio]", "[FixupM3u8]", "[ffmpeg]")
+    ):
+        return True
+    if "[download]" in text and re.search(r"\b100(?:\.\d+)?%", text):
+        return True
+    return False
+
+
+def _classify_stall_error(stderr_lines: list[str]) -> str:
+    stderr_text = "\n".join(stderr_lines)
+    if not stderr_text.strip():
+        return YOUTUBE_STALL_MESSAGE
+    classified = classify_ytdlp_error(stderr_text)
+    if classified == "Failed to download YouTube video.":
+        return YOUTUBE_STALL_MESSAGE
+    return classified
+
+
+def probe_media_start_time(path: Path) -> float | None:
+    """Return container start_time from ffprobe when present."""
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=start_time",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        return float(result.stdout.strip())
+    except ValueError:
+        return None
+
+
+def resolve_section_encode_bounds(
+    source_path: Path,
+    trim_start: float,
+    trim_end: float,
+    section_start: float,
+) -> tuple[float, float]:
+    """Map requested trim bounds to offsets within a section download."""
+    if not YOUTUBE_USE_DOWNLOAD_SECTIONS:
+        return trim_start, trim_end
+
+    probed_start = probe_media_start_time(source_path)
+    if probed_start is not None and probed_start > 0:
+        base = probed_start
+    else:
+        base = section_start
+
+    return trim_start - base, trim_end - base
+
+
 def run_ytdlp(command: list[str], workdir: Path) -> None:
     command = _ytdlp_command_with_newline(command)
     log(f"running: {' '.join(command)}")
@@ -393,11 +469,18 @@ def run_ytdlp(command: list[str], workdir: Path) -> None:
     activity_lock = threading.Lock()
     last_activity = time.monotonic()
     started = time.monotonic()
+    postprocess_phase = False
 
     def mark_activity() -> None:
         nonlocal last_activity
         with activity_lock:
             last_activity = time.monotonic()
+
+    def note_postprocess(line: str) -> None:
+        nonlocal postprocess_phase
+        if _ytdlp_line_indicates_postprocess(line):
+            with activity_lock:
+                postprocess_phase = True
 
     def read_stream(stream: Any, *, is_stderr: bool) -> None:
         if stream is None:
@@ -409,6 +492,7 @@ def run_ytdlp(command: list[str], workdir: Path) -> None:
                     line.rstrip("\n"),
                     YOUTUBE_STDERR_MAX_LINES,
                 )
+            note_postprocess(line)
             if line.strip():
                 mark_activity()
 
@@ -434,7 +518,12 @@ def run_ytdlp(command: list[str], workdir: Path) -> None:
         now = time.monotonic()
         with activity_lock:
             idle_seconds = now - last_activity
-        if idle_seconds > YOUTUBE_STALL_TIMEOUT_SECONDS:
+            stall_limit = (
+                YOUTUBE_POSTPROCESS_STALL_TIMEOUT_SECONDS
+                if postprocess_phase
+                else YOUTUBE_STALL_TIMEOUT_SECONDS
+            )
+        if idle_seconds > stall_limit:
             stall_killed = True
             proc.kill()
             break
@@ -449,7 +538,7 @@ def run_ytdlp(command: list[str], workdir: Path) -> None:
     stderr_thread.join(timeout=2)
 
     if stall_killed:
-        raise RuntimeError(YOUTUBE_STALL_MESSAGE)
+        raise RuntimeError(_classify_stall_error(stderr_lines))
     if overall_timeout:
         raise RuntimeError(
             "YouTube download timed out. "
@@ -581,8 +670,12 @@ def download_youtube(
             raise RuntimeError("yt-dlp did not produce a source file")
         source_path = select_source_file(candidates)
 
-    encode_trim_start = trim_start - section_start
-    encode_trim_end = trim_end - section_start
+    encode_trim_start, encode_trim_end = resolve_section_encode_bounds(
+        source_path,
+        trim_start,
+        trim_end,
+        section_start,
+    )
     return source_path, encode_trim_start, encode_trim_end
 
 

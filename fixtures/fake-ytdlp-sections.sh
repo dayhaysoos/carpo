@@ -1,5 +1,5 @@
 #!/bin/sh
-# Fake yt-dlp that honors --download-sections and copies the frame-counter fixture.
+# Fake yt-dlp that honors --download-sections and simulates keyframe snap.
 OUTPUT=""
 SECTIONS=""
 while [ $# -gt 0 ]; do
@@ -36,4 +36,11 @@ if [ ! -f /fixture/framecounter.mp4 ]; then
   exit 1
 fi
 
-cp /fixture/framecounter.mp4 "$OUTFILE"
+SECTION_START=$(printf '%s' "$SECTIONS" | sed 's/^\*//' | cut -d- -f1)
+KEYFRAME_SNAP=$(awk -v start="$SECTION_START" 'BEGIN {
+  snap = start - 2
+  if (snap < 0) snap = 0
+  printf "%.3f", snap
+}')
+
+ffmpeg -y -loglevel error -ss "$KEYFRAME_SNAP" -i /fixture/framecounter.mp4 -c copy -copyts "$OUTFILE"

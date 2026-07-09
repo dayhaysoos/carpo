@@ -305,7 +305,9 @@ function runEncoderYoutubeJob(
 function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
   const blockedFixture = path.join(fixturesDir, "fake-ytdlp-403.sh");
   const stallFixture = path.join(fixturesDir, "fake-ytdlp-stall.sh");
+  const stall403Fixture = path.join(fixturesDir, "fake-ytdlp-stall-403.sh");
   const slowProgressFixture = path.join(fixturesDir, "fake-ytdlp-slow-progress.sh");
+  const silentMergeFixture = path.join(fixturesDir, "fake-ytdlp-silent-merge.sh");
   const sectionsFixture = path.join(fixturesDir, "fake-ytdlp-sections.sh");
 
   const failFastOutputDir = path.join(outputDir, "youtube-fail-fast");
@@ -416,6 +418,48 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
     run("docker", ["rm", "-f", `${containerName}-youtube-stall`]);
   }
 
+  const stall403JobPath = path.join(failFastOutputDir, "stall-403-job.json");
+  fs.writeFileSync(
+    stall403JobPath,
+    JSON.stringify({ ...baseJob, jobId: "youtube-fail-fast-stall-403" }),
+  );
+
+  try {
+    const stall403 = runEncoderYoutubeJob(
+      `${containerName}-youtube-stall-403`,
+      18090,
+      stall403JobPath,
+      {
+        fakeYtdlpPath: stall403Fixture,
+        outputDir: failFastOutputDir,
+        env: { YOUTUBE_STALL_TIMEOUT_SECONDS: "5" },
+      },
+    );
+    if (stall403.result.status !== "failed") {
+      throw new Error(
+        `Expected failed status for stall-403 fixture, got ${stall403.result.status}`,
+      );
+    }
+    if (
+      stall403.result.errorMessage !==
+      "YouTube is blocking downloads from this server. Try uploading the video file instead."
+    ) {
+      throw new Error(
+        `Expected 403 classification after stall kill, got ${stall403.result.errorMessage ?? "(missing)"}`,
+      );
+    }
+    if (stall403.elapsedMs < 4_000 || stall403.elapsedMs > 20_000) {
+      throw new Error(
+        `Stall-403 kill timing unexpected (${stall403.elapsedMs}ms); expected roughly 5-15s`,
+      );
+    }
+    console.log("Encoder YouTube stall-403 classification contract test passed");
+    console.log(`  Elapsed: ${stall403.elapsedMs}ms`);
+    console.log(`  Message: ${stall403.result.errorMessage}`);
+  } finally {
+    run("docker", ["rm", "-f", `${containerName}-youtube-stall-403`]);
+  }
+
   const slowJobPath = path.join(failFastOutputDir, "slow-progress-job.json");
   fs.writeFileSync(
     slowJobPath,
@@ -450,8 +494,42 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
     run("docker", ["rm", "-f", `${containerName}-youtube-slow`]);
   }
 
-  const trimStart = 2.5;
-  const trimEnd = 5;
+  const silentMergeJobPath = path.join(failFastOutputDir, "silent-merge-job.json");
+  fs.writeFileSync(
+    silentMergeJobPath,
+    JSON.stringify({ ...baseJob, jobId: "youtube-silent-merge" }),
+  );
+
+  try {
+    const silentMerge = runEncoderYoutubeJob(
+      `${containerName}-youtube-silent-merge`,
+      18091,
+      silentMergeJobPath,
+      {
+        fakeYtdlpPath: silentMergeFixture,
+        outputDir: failFastOutputDir,
+        frameCounterPath,
+        env: { YOUTUBE_STALL_TIMEOUT_SECONDS: "5" },
+      },
+    );
+    if (silentMerge.result.status !== "complete") {
+      throw new Error(
+        `Expected complete status for silent-merge fixture, got ${silentMerge.result.status}: ${silentMerge.result.errorMessage ?? ""}`,
+      );
+    }
+    if (silentMerge.elapsedMs < 10_000) {
+      throw new Error(
+        `Silent-merge fixture finished too quickly (${silentMerge.elapsedMs}ms); expected >10s silent post-download phase`,
+      );
+    }
+    console.log("Encoder YouTube silent-merge contract test passed");
+    console.log(`  Elapsed: ${silentMerge.elapsedMs}ms`);
+  } finally {
+    run("docker", ["rm", "-f", `${containerName}-youtube-silent-merge`]);
+  }
+
+  const trimStart = 7.5;
+  const trimEnd = 10;
   const sectionsOutputDir = path.join(outputDir, "youtube-sections");
   fs.rmSync(sectionsOutputDir, { recursive: true, force: true });
   fs.mkdirSync(sectionsOutputDir, { recursive: true });
@@ -514,9 +592,9 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
     }
     const sectionStart = Number.parseFloat(sectionMatch[1]);
     const sectionEnd = Number.parseFloat(sectionMatch[2]);
-    if (sectionStart !== 0 || sectionEnd !== trimEnd + 3) {
+    if (sectionStart !== trimStart - 3 || sectionEnd !== trimEnd + 3) {
       throw new Error(
-        `Unexpected section bounds ${sectionStart}-${sectionEnd}; expected 0-${trimEnd + 3}`,
+        `Unexpected section bounds ${sectionStart}-${sectionEnd}; expected ${trimStart - 3}-${trimEnd + 3}`,
       );
     }
 
