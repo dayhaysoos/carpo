@@ -112,6 +112,8 @@ export interface EncoderJobSpec {
     mp4: string;
     thumbnail: string;
   };
+  /** Worker-authenticated URL for the encoder to fetch an upload source. */
+  sourceFetchUrl?: string;
 }
 
 export interface StatusUpdateRequest {

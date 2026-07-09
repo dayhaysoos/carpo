@@ -193,7 +193,9 @@ def validate_job(job: dict[str, Any]) -> str | None:
         if not isinstance(path, str) or not Path(path).exists():
             return "Local file path is required for file source"
     elif source_type == "upload":
-        return "Upload sources are not supported in slice 1"
+        fetch_url = job.get("sourceFetchUrl")
+        if not isinstance(fetch_url, str) or not fetch_url.strip():
+            return "sourceFetchUrl is required for upload sources"
     else:
         return "source.type must be youtube, upload, or file"
 
@@ -245,6 +247,44 @@ def select_source_file(candidates: list[Path]) -> Path:
             return len(VIDEO_CONTAINER_EXTENSIONS)
 
     return min(video_files, key=preference_key)
+
+
+def download_upload(
+    fetch_url: str,
+    workdir: Path,
+    *,
+    secret: str | None = None,
+) -> Path:
+    headers: dict[str, str] = {}
+    if secret:
+        headers[JOB_SECRET_HEADER] = secret
+
+    request = urllib.request.Request(fetch_url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:
+            content_type = response.headers.get("Content-Type", "video/mp4")
+            ext = "mp4"
+            normalized = content_type.split(";")[0].strip().lower()
+            if normalized == "video/webm":
+                ext = "webm"
+            elif normalized == "video/quicktime":
+                ext = "mov"
+            elif normalized == "video/x-matroska":
+                ext = "mkv"
+
+            destination = workdir / f"source.{ext}"
+            with destination.open("wb") as handle:
+                shutil.copyfileobj(response, handle)
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(
+            f"Failed to fetch upload source ({exc.code}): {exc.reason}",
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Failed to fetch upload source: {exc}") from exc
+
+    if not destination.exists() or destination.stat().st_size == 0:
+        raise RuntimeError("Upload source download produced an empty file")
+    return destination
 
 
 def download_youtube(url: str, workdir: Path) -> Path:
@@ -490,7 +530,14 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
             elif source_type == "file":
                 source_path = Path(source["path"])
             elif source_type == "upload":
-                raise RuntimeError("Upload sources are not supported in slice 1")
+                fetch_url = job.get("sourceFetchUrl")
+                if not isinstance(fetch_url, str) or not fetch_url.strip():
+                    raise RuntimeError("sourceFetchUrl is required for upload sources")
+                source_path = download_upload(
+                    fetch_url,
+                    workdir,
+                    secret=callback_secret,
+                )
             else:
                 raise RuntimeError(f"Unsupported source type: {source_type}")
 
