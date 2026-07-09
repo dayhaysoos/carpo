@@ -28,6 +28,8 @@ MAX_CALLBACK_ATTEMPTS = 5
 MAX_INTERMEDIATE_CALLBACK_ATTEMPTS = 3
 INITIAL_CALLBACK_BACKOFF_SECONDS = 0.5
 DOWNLOAD_TIMEOUT_SECONDS = 600
+YOUTUBE_DOWNLOAD_TIMEOUT_SECONDS = 45
+YOUTUBE_SOCKET_TIMEOUT_SECONDS = 15
 ENCODE_TIMEOUT_SECONDS = 600
 UPLOAD_TIMEOUT_SECONDS = 600
 VIDEO_CONTAINER_EXTENSIONS = ("mp4", "mkv", "webm")
@@ -37,6 +39,10 @@ GIF_FPS = 12
 GIF_MAX_WIDTH = 480
 DEJAVU_FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 KNOWN_FILTER_TYPES = frozenset({"caption"})
+YOUTUBE_BLOCKED_MESSAGE = (
+    "YouTube is blocking downloads from this server. "
+    "Try uploading the video file instead."
+)
 
 
 def log(message: str) -> None:
@@ -252,6 +258,92 @@ def run_command(
         raise RuntimeError(stderr or f"command failed: {' '.join(command)}")
 
 
+def classify_ytdlp_error(output: str) -> str:
+    """Map yt-dlp stderr/stdout to a user-facing download error."""
+    text = output.lower()
+
+    blocked_markers = (
+        "http error 403",
+        "403: forbidden",
+        "403 forbidden",
+        "sign in to confirm you're not a bot",
+        "confirm you are not a bot",
+        "cookies are required",
+        "this content isn't available",
+        "http error 429",
+    )
+    if any(marker in text for marker in blocked_markers):
+        return YOUTUBE_BLOCKED_MESSAGE
+
+    if "private video" in text or "this is a private video" in text:
+        return (
+            "This YouTube video is private. "
+            "Try uploading the video file instead."
+        )
+
+    if "members-only" in text or "join this channel" in text:
+        return (
+            "This YouTube video is members-only. "
+            "Try uploading the video file instead."
+        )
+
+    if (
+        "video unavailable" in text
+        or "this video is unavailable" in text
+        or "video has been removed" in text
+    ):
+        return (
+            "This YouTube video is unavailable. "
+            "It may have been deleted or restricted."
+        )
+
+    if (
+        "geo restricted" in text
+        or "not made this video available in your country" in text
+        or "not available in your country" in text
+    ):
+        return "This YouTube video is not available in your region."
+
+    if "unsupported url" in text or "no video formats" in text:
+        return "The URL is not a supported YouTube link."
+
+    if "invalid youtube url" in text or "url is not valid" in text:
+        return "Enter a valid YouTube URL."
+
+    trimmed = output.strip()
+    if trimmed:
+        first_line = trimmed.splitlines()[0]
+        if len(first_line) > 240:
+            first_line = first_line[:237] + "..."
+        return f"Failed to download YouTube video: {first_line}"
+
+    return "Failed to download YouTube video."
+
+
+def run_ytdlp(command: list[str], workdir: Path) -> None:
+    log(f"running: {' '.join(command)}")
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=str(workdir),
+            capture_output=True,
+            text=True,
+            timeout=YOUTUBE_DOWNLOAD_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            "YouTube download timed out. "
+            "Try uploading the video file instead.",
+        ) from exc
+    if completed.returncode != 0:
+        output = "\n".join(
+            part.strip()
+            for part in (completed.stderr, completed.stdout)
+            if part and part.strip()
+        )
+        raise RuntimeError(classify_ytdlp_error(output))
+
+
 def select_source_file(candidates: list[Path]) -> Path:
     video_files = [
         path
@@ -314,10 +406,20 @@ def download_upload(
 
 def download_youtube(url: str, workdir: Path) -> Path:
     output_template = str(workdir / "source.%(ext)s")
-    run_command(
+    run_ytdlp(
         [
             "yt-dlp",
             "--no-playlist",
+            "--retries",
+            "1",
+            "--fragment-retries",
+            "1",
+            "--extractor-retries",
+            "1",
+            "--file-access-retries",
+            "1",
+            "--socket-timeout",
+            str(YOUTUBE_SOCKET_TIMEOUT_SECONDS),
             "--merge-output-format",
             "mp4",
             "-f",
@@ -326,8 +428,7 @@ def download_youtube(url: str, workdir: Path) -> Path:
             output_template,
             url,
         ],
-        cwd=workdir,
-        timeout_seconds=DOWNLOAD_TIMEOUT_SECONDS,
+        workdir,
     )
 
     merged = workdir / "source.mp4"

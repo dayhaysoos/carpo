@@ -180,6 +180,145 @@ print("Null maxClipLengthSeconds validation test passed")
   run("python3", ["-c", script]);
 }
 
+function testYoutubeErrorClassification() {
+  const stderrFixture = fs.readFileSync(
+    path.join(fixturesDir, "ytdlp-403.stderr"),
+    "utf-8",
+  );
+
+  const script = `
+import sys
+
+sys.path.insert(0, ${JSON.stringify(path.join(root, "container"))})
+from encoder import (
+    YOUTUBE_BLOCKED_MESSAGE,
+    classify_ytdlp_error,
+)
+
+blocked = ${JSON.stringify(stderrFixture)}
+assert classify_ytdlp_error(blocked) == YOUTUBE_BLOCKED_MESSAGE
+
+assert classify_ytdlp_error("ERROR: Private video. Sign in if you've been granted access.") == (
+    "This YouTube video is private. Try uploading the video file instead."
+)
+assert classify_ytdlp_error("ERROR: Video unavailable") == (
+    "This YouTube video is unavailable. It may have been deleted or restricted."
+)
+assert classify_ytdlp_error("ERROR: Unsupported URL") == (
+    "The URL is not a supported YouTube link."
+)
+
+print("YouTube error classification test passed")
+`;
+
+  run("python3", ["-c", script]);
+}
+
+function runEncoderYoutubeFailFastContract() {
+  const fakeYtdlpPath = path.join(fixturesDir, "fake-ytdlp-403.sh");
+  fs.chmodSync(fakeYtdlpPath, 0o755);
+
+  const failFastOutputDir = path.join(outputDir, "youtube-fail-fast");
+  fs.rmSync(failFastOutputDir, { recursive: true, force: true });
+  fs.mkdirSync(failFastOutputDir, { recursive: true });
+
+  const job = {
+    jobId: "youtube-fail-fast",
+    source: {
+      type: "youtube",
+      url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    },
+    trimStart: 0,
+    trimEnd: 5,
+    maxClipLengthSeconds: 60,
+    outputs: {
+      mp4Key: "blocked.mp4",
+      thumbnailKey: "blocked.jpg",
+    },
+    localOutputDir: "/output",
+  };
+  const jobPath = path.join(failFastOutputDir, "job.json");
+  fs.writeFileSync(jobPath, JSON.stringify(job));
+
+  const failFastContainer = `${containerName}-youtube-fail-fast`;
+  const encoderPort = 18085;
+  run("docker", ["rm", "-f", failFastContainer]);
+  run("docker", [
+    "run",
+    "-d",
+    "--name",
+    failFastContainer,
+    "-p",
+    `${encoderPort}:8080`,
+    "-v",
+    `${failFastOutputDir}:/output`,
+    "-v",
+    `${fakeYtdlpPath}:/usr/local/bin/yt-dlp:ro`,
+    imageName,
+  ]);
+
+  try {
+    waitForHealth(encoderPort);
+
+    const startedAt = Date.now();
+    const encode = spawnSync(
+      "curl",
+      [
+        "-sS",
+        "-X",
+        "POST",
+        `http://127.0.0.1:${encoderPort}/run`,
+        "-H",
+        "Content-Type: application/json",
+        "-d",
+        `@${jobPath}`,
+      ],
+      { encoding: "utf-8" },
+    );
+    const elapsedMs = Date.now() - startedAt;
+
+    const result = JSON.parse(encode.stdout || "{}") as {
+      status: string;
+      errorMessage?: string;
+    };
+    if (encode.status !== 0 && !result.status) {
+      const logs = run("docker", ["logs", failFastContainer]);
+      throw new Error(
+        `YouTube fail-fast /run request failed\n${encode.stderr}\ncontainer logs:\n${logs}`,
+      );
+    }
+    if (result.status !== "failed") {
+      throw new Error(
+        `Expected failed status, got ${result.status}: ${result.errorMessage ?? encode.stdout}`,
+      );
+    }
+    if (
+      result.errorMessage !==
+      "YouTube is blocking downloads from this server. Try uploading the video file instead."
+    ) {
+      throw new Error(
+        `Unexpected error message: ${result.errorMessage ?? "(missing)"}`,
+      );
+    }
+    if (elapsedMs > 30_000) {
+      throw new Error(
+        `YouTube fail-fast took too long (${elapsedMs}ms); expected under 30s`,
+      );
+    }
+
+    const logs = run("docker", ["logs", failFastContainer]);
+    if (!logs.includes("--retries") || !logs.includes("--fragment-retries")) {
+      throw new Error("Encoder logs did not show aggressive yt-dlp retry flags");
+    }
+
+    console.log("Encoder YouTube fail-fast contract test passed");
+    console.log(`  Elapsed: ${elapsedMs}ms`);
+    console.log(`  Message: ${result.errorMessage}`);
+  } finally {
+    run("docker", ["rm", "-f", failFastContainer]);
+  }
+}
+
 function testSourceFileSelection() {
   const selectionDir = path.join(outputDir, "source-selection");
   fs.rmSync(selectionDir, { recursive: true, force: true });
@@ -1148,8 +1287,10 @@ function main() {
   const { barsPath, frameCounterPath } = ensureFixtureVideo();
   testNullMaxClipLengthValidation();
   testSourceFileSelection();
+  testYoutubeErrorClassification();
   buildImage();
   runStageSourceContract(frameCounterPath);
+  runEncoderYoutubeFailFastContract();
   runEncoderContract(barsPath, frameCounterPath);
   runEncoderGifContract(barsPath);
   runEncoderUploadContract(frameCounterPath);

@@ -1165,6 +1165,48 @@ describe("terminal status stickiness", () => {
     expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).toBeNull();
     expect(await env.CLIPS_BUCKET.get(keys.thumbnailKey)).toBeNull();
   });
+
+  it("serializes YouTube blocked failure messages in clip responses", async () => {
+    const blockedMessage =
+      "YouTube is blocking downloads from this server. Try uploading the video file instead.";
+    const { clipId, secret } = await createYoutubeClip("youtube blocked");
+
+    const fail = await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [JOB_SECRET_HEADER]: secret,
+        },
+        body: JSON.stringify({
+          status: "failed",
+          errorMessage: blockedMessage,
+        }),
+      },
+    );
+    expect(fail.status).toBe(200);
+
+    const list = await workerFetch("http://example.com/api/clips");
+    expect(list.status).toBe(200);
+    const body = (await list.json()) as {
+      clips: Array<{
+        id: string;
+        status: string;
+        errorMessage: string | null;
+      }>;
+    };
+    const clip = body.clips.find((item) => item.id === clipId);
+    expect(clip).toMatchObject({
+      status: "failed",
+      errorMessage: blockedMessage,
+    });
+
+    const persisted = await getClipById(env.DB, clipId);
+    expect(persisted?.status).toBe("failed");
+    expect(persisted?.failure_mode).toBe("confirmed");
+    expect(persisted?.error_message).toBe(blockedMessage);
+  });
 });
 
 describe("authoritative /run response handling", () => {
