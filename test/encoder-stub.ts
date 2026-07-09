@@ -20,6 +20,8 @@ export const STUB_CONTAINER_START_FAILURE_URL =
   "https://www.youtube.com/watch?v=stub-container-start-failure";
 export const STUB_VERIFY_WORKER_BASE_URL =
   "https://www.youtube.com/watch?v=stub-verify-worker-base-url";
+export const STUB_NO_CALLBACKS_SLOW_RUN_URL =
+  "https://www.youtube.com/watch?v=stub-no-callbacks-slow-run";
 
 /**
  * Test double for the encoder container binding.
@@ -72,6 +74,7 @@ export class EncoderStub extends DurableObject<Env> {
     const skipCompleteCallback = sourceUrl.includes(
       "stub-skip-complete-callback",
     );
+    const noCallbacksSlowRun = sourceUrl.includes("stub-no-callbacks-slow-run");
     const ambiguousFailure = sourceUrl.includes("stub-ambiguous-failure");
     const verifyWorkerBaseUrl = sourceUrl.includes("stub-verify-worker-base-url");
 
@@ -103,15 +106,17 @@ export class EncoderStub extends DurableObject<Env> {
       }
     }
 
-    for (const status of ["downloading", "encoding", "uploading"] as const) {
-      const callbackTarget = job.callbackUrl.startsWith("http")
-        ? job.callbackUrl
-        : `http://example.com${job.callbackUrl}`;
-      await fetch(callbackTarget, {
-        method: "POST",
-        headers: authHeaders,
-        body: JSON.stringify({ status }),
-      });
+    if (!noCallbacksSlowRun) {
+      for (const status of ["downloading", "encoding", "uploading"] as const) {
+        const callbackTarget = job.callbackUrl.startsWith("http")
+          ? job.callbackUrl
+          : `http://example.com${job.callbackUrl}`;
+        await fetch(callbackTarget, {
+          method: "POST",
+          headers: authHeaders,
+          body: JSON.stringify({ status }),
+        });
+      }
     }
 
     await this.env.CLIPS_BUCKET.put(job.outputs.mp4Key, FAKE_MP4, {
@@ -125,7 +130,11 @@ export class EncoderStub extends DurableObject<Env> {
       return new Response("upstream timeout", { status: 502 });
     }
 
-    if (!skipCompleteCallback) {
+    if (noCallbacksSlowRun) {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+
+    if (!skipCompleteCallback && !noCallbacksSlowRun) {
       const callbackTarget = job.callbackUrl.startsWith("http")
         ? job.callbackUrl
         : `http://example.com${job.callbackUrl}`;

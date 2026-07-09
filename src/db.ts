@@ -73,6 +73,25 @@ export async function updateClipStatus(
     .run();
 }
 
+export async function markClipDownloadingIfQueued(
+  db: D1Database,
+  id: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE clips
+       SET status = 'downloading',
+           error_message = NULL,
+           failure_mode = NULL,
+           updated_at = datetime('now')
+       WHERE id = ?
+         AND status = 'queued'`,
+    )
+    .bind(id)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
 // Terminal status guards (compare-and-set): complete and confirmed-failed are
 // sticky. Writes succeed only when status != 'complete' AND NOT (status =
 // 'failed' AND failure_mode = 'confirmed'). Confirmed failure may overwrite

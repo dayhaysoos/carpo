@@ -3,6 +3,7 @@ import {
   getClipById,
   insertClip,
   markClipComplete,
+  markClipDownloadingIfQueued,
   markClipFailed,
   outputKeysForClip,
   updateClipStatus,
@@ -92,11 +93,15 @@ export async function dispatchEncodingJob(
       // encoder never received /run (the connection may drop after delivery).
       // Ambiguous failure preserves artifacts and allows late callback recovery.
       runPosted = true;
-      const response = await container.fetch("http://encoder/run", {
+      const responsePromise = container.fetch("http://encoder/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(jobSpec),
       });
+      // Optimistic in-progress status: polling stays truthful while /run blocks
+      // even when encoder callbacks never reach the worker.
+      await markClipDownloadingIfQueued(env.DB, clipId);
+      const response = await responsePromise;
 
       if (!response.ok) {
         const detail = await response.text();
