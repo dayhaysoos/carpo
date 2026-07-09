@@ -1,19 +1,8 @@
-import { useState } from "react";
-import { addJobId, loadJobIds } from "./jobStorage";
-import { CreatorForm } from "./components/CreatorForm";
-import { StatusPanel } from "./components/StatusPanel";
+import { NavLink, Route, Routes } from "react-router-dom";
+import { CreatorPage } from "./pages/CreatorPage";
+import { LibraryPage } from "./pages/LibraryPage";
 
 export function App() {
-  const [jobIds, setJobIds] = useState<string[]>(() => loadJobIds());
-
-  const handleClipCreated = (clipId: string) => {
-    setJobIds(addJobId(clipId));
-  };
-
-  const handleDismiss = (id: string) => {
-    setJobIds((prev) => prev.filter((jobId) => jobId !== id));
-  };
-
   return (
     <div className="app">
       <header className="app-header">
@@ -24,12 +13,31 @@ export function App() {
             <p>Seize the moment.</p>
           </div>
         </div>
+        <nav className="app-nav" aria-label="Main">
+          <NavLink
+            to="/"
+            end
+            className={({ isActive }) =>
+              isActive ? "nav-link active" : "nav-link"
+            }
+          >
+            Create
+          </NavLink>
+          <NavLink
+            to="/library"
+            className={({ isActive }) =>
+              isActive ? "nav-link active" : "nav-link"
+            }
+          >
+            Library
+          </NavLink>
+        </nav>
       </header>
 
-      <main className="app-main">
-        <CreatorForm onClipCreated={handleClipCreated} />
-        <StatusPanel jobIds={jobIds} onDismiss={handleDismiss} />
-      </main>
+      <Routes>
+        <Route path="/" element={<CreatorPage />} />
+        <Route path="/library" element={<LibraryPage />} />
+      </Routes>
     </div>
   );
 }
