@@ -22,6 +22,7 @@ MAX_CLIP_LENGTH_SECONDS = 60
 HOST = "0.0.0.0"
 PORT = int(os.environ.get("PORT", "8080"))
 STAGED_UPLOAD_PATH = "/tmp/carpo-upload-source.mp4"
+STAGE_SOURCE_CHUNK_SIZE = 1024 * 1024
 JOB_SECRET_HEADER = "X-Carpo-Job-Secret"
 MAX_CALLBACK_ATTEMPTS = 5
 MAX_INTERMEDIATE_CALLBACK_ATTEMPTS = 3
@@ -478,12 +479,34 @@ def copy_outputs_locally(job: dict[str, Any], mp4_path: Path, thumb_path: Path) 
     shutil.copy2(thumb_path, out_dir / Path(outputs.get("thumbnailKey", "thumbnail.jpg")).name)
 
 
-def stage_upload_source(body: bytes) -> None:
+class TruncatedBodyError(ValueError):
+    """Raised when fewer bytes were received than Content-Length declared."""
+
+
+def stream_upload_source(rfile, length: int) -> None:
     path = Path(STAGED_UPLOAD_PATH)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(body)
-    if path.stat().st_size == 0:
-        raise RuntimeError("Staged upload source is empty")
+
+    received = 0
+    try:
+        with path.open("wb") as handle:
+            while received < length:
+                to_read = min(STAGE_SOURCE_CHUNK_SIZE, length - received)
+                chunk = rfile.read(to_read)
+                if not chunk:
+                    break
+                handle.write(chunk)
+                received += len(chunk)
+
+        if received != length:
+            raise TruncatedBodyError(
+                f"Expected {length} bytes, received {received}",
+            )
+        if received == 0:
+            raise RuntimeError("Staged upload source is empty")
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
 
 
 def run_result(
@@ -692,8 +715,10 @@ class EncoderHandler(BaseHTTPRequestHandler):
                 self.send_error(411, "Length Required")
                 return
             try:
-                raw = self.rfile.read(length)
-                stage_upload_source(raw)
+                stream_upload_source(self.rfile, length)
+            except TruncatedBodyError:
+                self.send_error(400, "Bad Request")
+                return
             except Exception as exc:  # noqa: BLE001
                 self._send_json(500, {"status": "failed", "errorMessage": str(exc)})
                 return

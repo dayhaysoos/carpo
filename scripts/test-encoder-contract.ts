@@ -889,6 +889,69 @@ print("Staged upload source size matches Content-Length")
 
     console.log("Encoder stage-source contract test passed");
     console.log(`  Staged bytes: ${sourceBytes.length}`);
+
+    const declaredLength = 1024;
+    const truncatedLength = 512;
+    const truncated = spawnSync(
+      "python3",
+      [
+        "-c",
+        `import socket
+
+declared = ${declaredLength}
+actual = ${truncatedLength}
+body = b"x" * actual
+request = (
+    f"POST /stage-source HTTP/1.1\\r\\n"
+    f"Host: 127.0.0.1:${encoderPort}\\r\\n"
+    f"Content-Type: video/mp4\\r\\n"
+    f"Content-Length: {declared}\\r\\n"
+    f"Connection: close\\r\\n"
+    f"\\r\\n"
+).encode() + body
+
+with socket.create_connection(("127.0.0.1", ${encoderPort}), timeout=10) as sock:
+    sock.sendall(request)
+    sock.shutdown(socket.SHUT_WR)
+    response = b""
+    while True:
+        chunk = sock.recv(4096)
+        if not chunk:
+            break
+        response += chunk
+
+status = response.split(b"\\r\\n", 1)[0].split(b" ", 2)[1].decode()
+print(status)`,
+      ],
+      { encoding: "utf-8" },
+    );
+    if (truncated.stdout?.trim() !== "400") {
+      throw new Error(
+        `Expected 400 for truncated /stage-source body, got ${truncated.stdout?.trim() || "(empty)"} stderr=${truncated.stderr?.trim() || "(none)"}`,
+      );
+    }
+
+    const missingStagedScript = `
+import sys
+from pathlib import Path
+
+sys.path.insert(0, ${JSON.stringify(path.join(root, "container"))})
+from encoder import STAGED_UPLOAD_PATH
+
+staged = Path(STAGED_UPLOAD_PATH)
+assert not staged.exists(), "truncated upload should not leave staged file"
+print("Truncated upload left no staged file")
+`;
+    run("docker", [
+      "exec",
+      stageContainer,
+      "python3",
+      "-c",
+      missingStagedScript,
+    ]);
+
+    console.log("Encoder stage-source truncated-body contract test passed");
+    console.log(`  Declared: ${declaredLength}, sent: ${truncatedLength}`);
   } finally {
     run("docker", ["rm", "-f", stageContainer]);
   }
