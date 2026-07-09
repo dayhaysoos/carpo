@@ -393,27 +393,10 @@ export async function expireClaimedHelperJob(
     .prepare(
       `UPDATE clips
        SET helper_state = 'expired',
+           status = 'queued',
            updated_at = datetime('now')
        WHERE id = ?
-         AND helper_state = 'claimed'`,
-    )
-    .bind(id)
-    .run();
-  return (result.meta.changes ?? 0) > 0;
-}
-
-export async function markClipQueuedFromDownloading(
-  db: D1Database,
-  id: string,
-): Promise<boolean> {
-  const result = await db
-    .prepare(
-      `UPDATE clips
-       SET status = 'queued',
-           error_message = NULL,
-           failure_mode = NULL,
-           updated_at = datetime('now')
-       WHERE id = ?
+         AND helper_state = 'claimed'
          AND status = 'downloading'`,
     )
     .bind(id)
@@ -423,17 +406,32 @@ export async function markClipQueuedFromDownloading(
 
 const STALE_HELPER_CLAIM_CEILING_MINUTES = 5;
 
-export async function sweepStaleHelperClaims(db: D1Database): Promise<string[]> {
+export async function sweepStaleHelperClaims(db: D1Database): Promise<number> {
   const result = await db
     .prepare(
       `UPDATE clips
        SET helper_state = 'expired',
+           status = 'queued',
            updated_at = datetime('now')
        WHERE helper_state = 'claimed'
-         AND helper_claimed_at < datetime('now', ?)
-       RETURNING id`,
+         AND status = 'downloading'
+         AND helper_claimed_at < datetime('now', ?)`,
     )
     .bind(`-${STALE_HELPER_CLAIM_CEILING_MINUTES} minutes`)
-    .all<{ id: string }>();
-  return (result.results ?? []).map((row) => row.id);
+    .run();
+  return result.meta.changes ?? 0;
+}
+
+export async function listRecoverableHelperClips(
+  db: D1Database,
+): Promise<ClipRecord[]> {
+  const result = await db
+    .prepare(
+      `SELECT * FROM clips
+       WHERE helper_state = 'expired'
+         AND status = 'queued'
+         AND source_type = 'youtube'`,
+    )
+    .all<ClipRecord>();
+  return result.results ?? [];
 }

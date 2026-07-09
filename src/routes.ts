@@ -5,7 +5,6 @@ import {
   insertClip,
   listClips,
   sweepStaleClips,
-  sweepStaleHelperClaims,
   markGifEncoding,
   outputKeysForClip,
 } from "./db";
@@ -28,7 +27,7 @@ import {
   handleHelperFulfill,
   isHelperEnabled,
   scheduleHelperClaimWindowFallback,
-  recoverStaleHelperClaim,
+  sweepAndRecoverHelperClips,
 } from "./helper";
 
 export async function handleRequest(
@@ -96,7 +95,7 @@ export async function handleRequest(
 
   if (request.method === "GET" && url.pathname.startsWith("/api/clips/")) {
     const clipId = url.pathname.slice("/api/clips/".length);
-    return handleGetClip(clipId, env);
+    return handleGetClip(clipId, env, ctx, url.origin);
   }
 
   if (request.method === "DELETE" && url.pathname.startsWith("/api/clips/")) {
@@ -188,12 +187,7 @@ async function handleCreateClip(
 
   if (useHelper) {
     ctx.waitUntil(
-      scheduleHelperClaimWindowFallback(
-        env,
-        clipId,
-        validation.value,
-        origin,
-      ),
+      scheduleHelperClaimWindowFallback(env, clipId, origin, ctx),
     );
   } else {
     ctx.waitUntil(
@@ -219,10 +213,7 @@ async function handleListClips(
   const offset = Math.max(parseInt(url.searchParams.get("offset") ?? "", 10) || 0, 0);
 
   await sweepStaleClips(env.DB);
-  const recoveredIds = await sweepStaleHelperClaims(env.DB);
-  for (const clipId of recoveredIds) {
-    ctx.waitUntil(recoverStaleHelperClaim(env, clipId, url.origin));
-  }
+  await sweepAndRecoverHelperClips(env, url.origin, ctx);
   const { clips, total } = await listClips(env.DB, limit, offset);
   const prefix = env.R2_PUBLIC_PREFIX;
 
@@ -253,11 +244,17 @@ async function handleDeleteClip(clipId: string, env: Env): Promise<Response> {
   return new Response(null, { status: 204 });
 }
 
-async function handleGetClip(clipId: string, env: Env): Promise<Response> {
+async function handleGetClip(
+  clipId: string,
+  env: Env,
+  ctx: ExecutionContext,
+  origin: string,
+): Promise<Response> {
   if (!clipId) {
     return json({ error: "Clip id is required" }, 400);
   }
 
+  await sweepAndRecoverHelperClips(env, origin, ctx);
   const record = await getClipById(env.DB, clipId);
   if (!record) {
     return json({ error: "Clip not found" }, 404);

@@ -8,7 +8,9 @@ import {
   expirePendingHelperJob,
   fulfillHelperJob,
   getClipById,
-  markClipQueuedFromDownloading,
+  listRecoverableHelperClips,
+  markClipDownloadingIfQueued,
+  sweepStaleHelperClaims,
 } from "./db";
 import type { Env } from "./env";
 import { dispatchEncodingJob } from "./jobs";
@@ -47,35 +49,60 @@ export function recordToCreateClipRequest(record: ClipRecord): CreateClipRequest
 export async function scheduleHelperClaimWindowFallback(
   env: Env,
   clipId: string,
-  request: CreateClipRequest,
   origin: string,
+  ctx: ExecutionContext,
 ): Promise<void> {
   const windowMs = helperClaimWindowMs(env);
   if (windowMs > 0) {
     await new Promise((resolve) => setTimeout(resolve, windowMs));
   }
   const expired = await expirePendingHelperJob(env.DB, clipId);
-  if (expired) {
-    await dispatchEncodingJob(env, clipId, request, origin);
+  if (!expired) {
+    return;
   }
-}
-
-export async function recoverStaleHelperClaim(
-  env: Env,
-  clipId: string,
-  origin: string,
-): Promise<void> {
-  await markClipQueuedFromDownloading(env.DB, clipId);
   const record = await getClipById(env.DB, clipId);
   if (!record) {
     return;
   }
-  await dispatchEncodingJob(
-    env,
-    clipId,
-    recordToCreateClipRequest(record),
-    origin,
+  await recoverHelperFallback(env, record, origin, ctx);
+}
+
+// Pre-claims queued→downloading so recovery is idempotent and race-safe across
+// concurrent pollers. dispatchEncodingJob's downstream markClipDownloadingIfQueued
+// calls ignore their return value, so the CAS losing there is harmless.
+export async function recoverHelperFallback(
+  env: Env,
+  record: ClipRecord,
+  origin: string,
+  ctx: ExecutionContext,
+): Promise<void> {
+  const started = await markClipDownloadingIfQueued(env.DB, record.id);
+  if (!started) {
+    return;
+  }
+  ctx.waitUntil(
+    dispatchEncodingJob(
+      env,
+      record.id,
+      recordToCreateClipRequest(record),
+      origin,
+    ),
   );
+}
+
+// Expired-and-queued youtube clips are exactly "awaiting container fallback",
+// whichever path left them there (stale sweep, fail endpoint, claim-window
+// expiry, or a recovery waitUntil that died before dispatching).
+export async function sweepAndRecoverHelperClips(
+  env: Env,
+  origin: string,
+  ctx: ExecutionContext,
+): Promise<void> {
+  await sweepStaleHelperClaims(env.DB);
+  const records = await listRecoverableHelperClips(env.DB);
+  for (const record of records) {
+    await recoverHelperFallback(env, record, origin, ctx);
+  }
 }
 
 function helperAuthError(request: Request, env: Env): Response | null {
@@ -285,17 +312,9 @@ export async function handleHelperFail(
     return json({ error: "Clip is not in a claimed helper state" }, 409);
   }
 
-  await markClipQueuedFromDownloading(env.DB, clipId);
   const refreshed = await getClipById(env.DB, clipId);
   if (refreshed) {
-    ctx.waitUntil(
-      dispatchEncodingJob(
-        env,
-        clipId,
-        recordToCreateClipRequest(refreshed),
-        origin,
-      ),
-    );
+    ctx.waitUntil(recoverHelperFallback(env, refreshed, origin, ctx));
   }
 
   const updated = await getClipById(env.DB, clipId);
