@@ -83,12 +83,15 @@ export class EncoderStub extends DurableObject<Env> {
       const expectedCallback = `${base}/api/internal/jobs/${job.jobId}/status`;
       const expectedMp4 = `${base}/api/internal/jobs/${job.jobId}/artifacts/mp4`;
       const expectedThumb = `${base}/api/internal/jobs/${job.jobId}/artifacts/thumbnail`;
-      const expectedSource = `${base}/api/internal/jobs/${job.jobId}/source`;
+      const expectedSource =
+        job.source.type === "upload"
+          ? `http://encoder/__carpo/source?key=${encodeURIComponent(job.source.key)}`
+          : null;
       if (
         job.callbackUrl !== expectedCallback ||
         job.artifactUploadUrls.mp4 !== expectedMp4 ||
         job.artifactUploadUrls.thumbnail !== expectedThumb ||
-        (job.source.type === "upload" && job.sourceFetchUrl !== expectedSource)
+        (expectedSource !== null && job.sourceFetchUrl !== expectedSource)
       ) {
         return new Response(
           JSON.stringify({

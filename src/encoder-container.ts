@@ -1,4 +1,6 @@
 import { Container } from "@cloudflare/containers";
+import type { Env } from "./env";
+import { UPLOAD_KEY_PREFIX } from "./uploads";
 
 // Hard ceiling for stale jobRunning keepalive. If the worker isolate dies
 // mid-/run, dispatchEncodingJob's finally never clears the flag; without a
@@ -9,13 +11,17 @@ import { Container } from "@cloudflare/containers";
 // case. TTL must exceed that; 70 min gives headroom.
 const JOB_RUNNING_TTL_MS = 70 * 60 * 1000;
 
-export class EncoderContainer extends Container {
+export class EncoderContainer extends Container<Env> {
   defaultPort = 8080;
   sleepAfter = "30m";
   enableInternet = true;
 
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+
+    if (url.pathname === "/__carpo/source" && request.method === "GET") {
+      return this.handleUploadSourceFetch(url);
+    }
 
     if (url.pathname === "/__carpo/start" && request.method === "POST") {
       await this.startAndWaitForPorts({
@@ -64,5 +70,24 @@ export class EncoderContainer extends Container {
       await this.ctx.storage.delete("jobStartedAt");
     }
     await this.stop();
+  }
+
+  private async handleUploadSourceFetch(url: URL): Promise<Response> {
+    const uploadKey = url.searchParams.get("key")?.trim() ?? "";
+    if (!uploadKey.startsWith(UPLOAD_KEY_PREFIX)) {
+      return new Response("Invalid upload key", { status: 400 });
+    }
+
+    const object = await this.env.CLIPS_BUCKET.get(uploadKey);
+    if (!object) {
+      return new Response("Upload source not found", { status: 404 });
+    }
+
+    const headers = new Headers();
+    object.writeHttpMetadata(headers);
+    headers.set("etag", object.httpEtag);
+    headers.set("cache-control", "private, no-store");
+
+    return new Response(object.body, { headers });
   }
 }

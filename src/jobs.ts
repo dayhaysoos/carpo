@@ -77,7 +77,7 @@ export async function dispatchEncodingJob(
       },
       ...(request.source.type === "upload"
         ? {
-            sourceFetchUrl: `${workerBaseUrl}/api/internal/jobs/${clipId}/source`,
+            sourceFetchUrl: `http://encoder/__carpo/source?key=${encodeURIComponent(request.source.key)}`,
           }
         : {}),
     };
