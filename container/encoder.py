@@ -73,7 +73,6 @@ YOUTUBE_DOWNLOAD_TIMEOUT_MESSAGE = (
     "Try uploading the video file instead."
 )
 YOUTUBE_FORCE_KEYFRAMES_FFMPEG_PRESET = "veryfast"
-TRIM_START_STREAM_COPY_TOLERANCE_SECONDS = 0.05
 ENCODE_DURATION_TOLERANCE_SECONDS = 0.5
 
 
@@ -595,7 +594,7 @@ def probe_media_stream_value(path: Path, field: str) -> float | int | None:
 def probe_media_start_time(path: Path) -> float | None:
     """Return container start_time from ffprobe when present."""
     value = probe_media_stream_value(path, "format=start_time")
-    return float(value) if isinstance(value, float) else None
+    return float(value) if isinstance(value, (float, int)) else None
 
 
 def probe_media_duration(path: Path) -> float | None:
@@ -606,8 +605,37 @@ def probe_media_duration(path: Path) -> float | None:
 
 def probe_media_height(path: Path) -> int | None:
     """Return the primary video stream height from ffprobe when present."""
-    value = probe_media_stream_value(path, "stream=height")
-    return int(value) if isinstance(value, int) else None
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=height",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    raw = result.stdout.strip()
+    if not raw:
+        return None
+    try:
+        height = int(float(raw))
+    except ValueError:
+        return None
+    return height if height > 0 else None
 
 
 def resolve_section_encode_bounds(
@@ -1080,7 +1108,7 @@ def _can_stream_copy_encode(
 ) -> bool:
     if caption_filters:
         return False
-    if trim_start > TRIM_START_STREAM_COPY_TOLERANCE_SECONDS:
+    if trim_start != 0:
         return False
     source_height = probe_media_height(source)
     if source_height is None or source_height > max_output_height:

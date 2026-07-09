@@ -322,6 +322,11 @@ with patch("encoder.probe_media_start_time", return_value=7.6):
     assert start == 0.0, start
     assert abs(end - 2.4) < 0.001, end
 
+with patch("encoder.probe_media_start_time", return_value=7):
+    start, end = resolve_section_encode_bounds(Path("source.mp4"), 7.5, 10.0, 4.5)
+    assert start == 0.5, start
+    assert abs(end - 3.0) < 0.001, end
+
 with patch("encoder.probe_media_start_time", return_value=8.0):
     try:
         resolve_section_encode_bounds(Path("source.mp4"), 7.5, 10.0, 4.5)
@@ -345,6 +350,54 @@ assert start == 3.0, start
 assert end == 5.5, end
 
 print("Section encode bounds test passed")
+`;
+
+  run("python3", ["-c", script]);
+}
+
+function testStreamCopyGate() {
+  const script = `
+import sys
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+sys.path.insert(0, ${JSON.stringify(path.join(root, "container"))})
+from encoder import _can_stream_copy_encode, probe_media_height, probe_media_start_time
+
+source = Path("source.mp4")
+
+with patch("encoder.probe_media_height", return_value=240), \\
+     patch("encoder.probe_media_duration", return_value=2.5):
+    assert _can_stream_copy_encode(
+        source, 0, 2.5, caption_filters=None, max_output_height=1080
+    )
+
+with patch("encoder.probe_media_height", return_value=240), \\
+     patch("encoder.probe_media_duration", return_value=2.54):
+    assert not _can_stream_copy_encode(
+        source, 0.04, 2.54, caption_filters=None, max_output_height=1080
+    ), "small trim_start must not stream-copy"
+
+with patch("encoder.probe_media_height", return_value=240), \\
+     patch("encoder.probe_media_duration", return_value=2.5):
+    assert not _can_stream_copy_encode(
+        source, 2.5, 5.0, caption_filters=None, max_output_height=1080
+    ), "upload/file trim offsets must re-encode"
+
+with patch("encoder.probe_media_height", return_value=None), \\
+     patch("encoder.probe_media_duration", return_value=2.5):
+    assert not _can_stream_copy_encode(
+        source, 0, 2.5, caption_filters=None, max_output_height=1080
+    ), "missing/zero height must not stream-copy"
+
+with patch("encoder.probe_media_stream_value", return_value=8):
+    assert probe_media_start_time(source) == 8.0
+
+zero_height_result = MagicMock(returncode=0, stdout="0\\n")
+with patch("encoder.subprocess.run", return_value=zero_height_result):
+    assert probe_media_height(source) is None, "zero height probe must be rejected"
+
+print("Stream-copy gate test passed")
 `;
 
   run("python3", ["-c", script]);
@@ -2300,6 +2353,11 @@ HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
     if (logs.includes("yt-dlp")) {
       throw new Error("Upload-source job should not invoke yt-dlp");
     }
+    if (logs.includes("encode: stream-copy (no re-encode needed)")) {
+      throw new Error(
+        "Upload job with trim_start=2.5 must re-encode, not stream-copy",
+      );
+    }
 
     console.log("Encoder upload-source contract test passed");
     console.log(`  MP4: ${mp4Path} (${mp4Size} bytes)`);
@@ -2670,6 +2728,7 @@ function main() {
   testYoutubeErrorClassification();
   testYtdlpStallLineDetection();
   testSectionEncodeBounds();
+  testStreamCopyGate();
   buildImage();
   testProcessGroupKill();
   runStageSourceContract(frameCounterPath);
