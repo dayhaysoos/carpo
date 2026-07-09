@@ -2645,7 +2645,7 @@ describe("helper fetch API", () => {
       expect(fail.status).toBe(202);
 
       const record = await getClipById(env.DB, clipId);
-      expect(record?.helper_state).toBe("expired");
+      expect(record?.helper_state).toBe("recovering");
 
       let dispatch: EncoderJobSpec | null = null;
       for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -2705,7 +2705,7 @@ describe("helper fetch API", () => {
     expect(lastBody.status).toBe("complete");
 
     const record = await getClipById(env.DB, clipId);
-    expect(record?.helper_state).toBe("expired");
+    expect(record?.helper_state).toBe("recovering");
     expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).not.toBeNull();
   });
 
@@ -2750,7 +2750,7 @@ describe("helper fetch API", () => {
       expect(get.status).toBe(200);
 
       const record = await getClipById(env.DB, clipId);
-      expect(record?.helper_state).toBe("expired");
+      expect(record?.helper_state).toBe("recovering");
 
       let dispatch: EncoderJobSpec | null = null;
       for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -2830,6 +2830,172 @@ describe("helper fetch API", () => {
     }
   });
 
+  it("retries a recovery stranded before the dispatch reached the container", async () => {
+    const savedWindow = env.HELPER_CLAIM_WINDOW_SECONDS;
+    try {
+      env.HELPER_CLAIM_WINDOW_SECONDS = "60";
+
+      const { response } = await workerFetchWithoutWaitingForBackground(
+        "http://example.com/api/clips",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: "helper stranded recovering",
+            source: {
+              type: "youtube",
+              url: "https://www.youtube.com/watch?v=helper-stranded-recovering",
+            },
+            trimStart: 2,
+            trimEnd: 6,
+            filters: [],
+          }),
+        },
+      );
+      const created = (await response.json()) as { id: string };
+      const clipId = created.id;
+
+      await env.DB.prepare(
+        `UPDATE clips
+         SET helper_state = 'recovering',
+             updated_at = datetime('now', '-3 minutes')
+         WHERE id = ?`,
+      )
+        .bind(clipId)
+        .run();
+
+      const list = await workerFetch("http://example.com/api/clips");
+      expect(list.status).toBe(200);
+
+      // The sweep flips the row back to 'expired', and recovery re-claims it
+      // as 'recovering' within the same poll before dispatching.
+      const record = await getClipById(env.DB, clipId);
+      expect(record?.helper_state).toBe("recovering");
+
+      let dispatch: EncoderJobSpec | null = null;
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        dispatch = await getLastDispatch(clipId);
+        if (dispatch?.source.type === "youtube") {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+
+      expect(dispatch).toMatchObject({
+        source: {
+          type: "youtube",
+          url: "https://www.youtube.com/watch?v=helper-stranded-recovering",
+        },
+        trimStart: 2,
+        trimEnd: 6,
+      });
+    } finally {
+      env.HELPER_CLAIM_WINDOW_SECONDS = savedWindow;
+    }
+  });
+
+  it("leaves fresh recovering rows untouched by the sweep", async () => {
+    const savedWindow = env.HELPER_CLAIM_WINDOW_SECONDS;
+    try {
+      env.HELPER_CLAIM_WINDOW_SECONDS = "60";
+
+      const { response } = await workerFetchWithoutWaitingForBackground(
+        "http://example.com/api/clips",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: "helper fresh recovering",
+            source: {
+              type: "youtube",
+              url: "https://www.youtube.com/watch?v=helper-fresh-recovering",
+            },
+            trimStart: 1,
+            trimEnd: 4,
+            filters: [],
+          }),
+        },
+      );
+      const created = (await response.json()) as { id: string };
+      const clipId = created.id;
+
+      await env.DB.prepare(
+        `UPDATE clips SET helper_state = 'recovering' WHERE id = ?`,
+      )
+        .bind(clipId)
+        .run();
+
+      const list = await workerFetch("http://example.com/api/clips");
+      expect(list.status).toBe(200);
+
+      const record = await getClipById(env.DB, clipId);
+      expect(record?.helper_state).toBe("recovering");
+      expect(record?.status).toBe("queued");
+      expect(await getLastDispatch(clipId)).toBeNull();
+    } finally {
+      env.HELPER_CLAIM_WINDOW_SECONDS = savedWindow;
+    }
+  });
+
+  it("expires stale pending jobs whose claim-window task never ran", async () => {
+    const savedWindow = env.HELPER_CLAIM_WINDOW_SECONDS;
+    try {
+      env.HELPER_CLAIM_WINDOW_SECONDS = "60";
+
+      const { response } = await workerFetchWithoutWaitingForBackground(
+        "http://example.com/api/clips",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: "helper stale pending",
+            source: {
+              type: "youtube",
+              url: "https://www.youtube.com/watch?v=helper-stale-pending",
+            },
+            trimStart: 1,
+            trimEnd: 5,
+            filters: [],
+          }),
+        },
+      );
+      const created = (await response.json()) as { id: string };
+      const clipId = created.id;
+
+      await env.DB.prepare(
+        `UPDATE clips SET created_at = datetime('now', '-5 minutes') WHERE id = ?`,
+      )
+        .bind(clipId)
+        .run();
+
+      const list = await workerFetch("http://example.com/api/clips");
+      expect(list.status).toBe(200);
+
+      const record = await getClipById(env.DB, clipId);
+      expect(record?.helper_state).toBe("recovering");
+
+      let dispatch: EncoderJobSpec | null = null;
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        dispatch = await getLastDispatch(clipId);
+        if (dispatch?.source.type === "youtube") {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+
+      expect(dispatch).toMatchObject({
+        source: {
+          type: "youtube",
+          url: "https://www.youtube.com/watch?v=helper-stale-pending",
+        },
+        trimStart: 1,
+        trimEnd: 5,
+      });
+    } finally {
+      env.HELPER_CLAIM_WINDOW_SECONDS = savedWindow;
+    }
+  });
+
   it("recovers stale helper claims when listing clips", async () => {
     const savedWindow = env.HELPER_CLAIM_WINDOW_SECONDS;
     try {
@@ -2871,7 +3037,7 @@ describe("helper fetch API", () => {
       expect(list.status).toBe(200);
 
       const record = await getClipById(env.DB, clipId);
-      expect(record?.helper_state).toBe("expired");
+      expect(record?.helper_state).toBe("recovering");
 
       let dispatch: EncoderJobSpec | null = null;
       for (let attempt = 0; attempt < 40; attempt += 1) {

@@ -9,7 +9,7 @@ import {
   fulfillHelperJob,
   getClipById,
   listRecoverableHelperClips,
-  markClipDownloadingIfQueued,
+  markHelperRecovering,
   sweepStaleHelperClaims,
 } from "./db";
 import type { Env } from "./env";
@@ -67,17 +67,21 @@ export async function scheduleHelperClaimWindowFallback(
   await recoverHelperFallback(env, record, origin, ctx);
 }
 
-// Pre-claims queued→downloading so recovery is idempotent and race-safe across
-// concurrent pollers. dispatchEncodingJob's downstream markClipDownloadingIfQueued
-// calls ignore their return value, so the CAS losing there is harmless.
+// Claims the row via helper_state 'expired'→'recovering' rather than advancing
+// status: the container DO durably sets status via markClipDownloadingIfQueued
+// in its dispatch handler, so status leaving 'queued' is proof the dispatch
+// actually reached the DO. If the isolate dies between this CAS and the DO
+// receiving the dispatch, the row sits at recovering/queued, which the sweep
+// detects and flips back to 'expired' for retry. The CAS keeps recovery
+// idempotent and race-safe across concurrent pollers.
 export async function recoverHelperFallback(
   env: Env,
   record: ClipRecord,
   origin: string,
   ctx: ExecutionContext,
 ): Promise<void> {
-  const started = await markClipDownloadingIfQueued(env.DB, record.id);
-  if (!started) {
+  const claimed = await markHelperRecovering(env.DB, record.id);
+  if (!claimed) {
     return;
   }
   ctx.waitUntil(
@@ -98,7 +102,7 @@ export async function sweepAndRecoverHelperClips(
   origin: string,
   ctx: ExecutionContext,
 ): Promise<void> {
-  await sweepStaleHelperClaims(env.DB);
+  await sweepStaleHelperClaims(env.DB, helperClaimWindowMs(env) / 1000);
   const records = await listRecoverableHelperClips(env.DB);
   for (const record of records) {
     await recoverHelperFallback(env, record, origin, ctx);

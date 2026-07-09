@@ -19,7 +19,12 @@ export type GifStatus = (typeof GIF_STATUSES)[number];
 
 export type SourceType = "youtube" | "upload";
 
-export type HelperState = "pending" | "claimed" | "fulfilled" | "expired";
+export type HelperState =
+  | "pending"
+  | "claimed"
+  | "fulfilled"
+  | "expired"
+  | "recovering";
 
 export const MAX_CAPTION_LENGTH = 200;
 

@@ -404,10 +404,33 @@ export async function expireClaimedHelperJob(
   return (result.meta.changes ?? 0) > 0;
 }
 
-const STALE_HELPER_CLAIM_CEILING_MINUTES = 5;
-
-export async function sweepStaleHelperClaims(db: D1Database): Promise<number> {
+export async function markHelperRecovering(
+  db: D1Database,
+  id: string,
+): Promise<boolean> {
   const result = await db
+    .prepare(
+      `UPDATE clips
+       SET helper_state = 'recovering',
+           updated_at = datetime('now')
+       WHERE id = ?
+         AND helper_state = 'expired'
+         AND status = 'queued'`,
+    )
+    .bind(id)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+const STALE_HELPER_CLAIM_CEILING_MINUTES = 5;
+const STALE_HELPER_RECOVERY_CEILING_MINUTES = 2;
+const STALE_PENDING_GRACE_SECONDS = 60;
+
+export async function sweepStaleHelperClaims(
+  db: D1Database,
+  claimWindowSeconds: number,
+): Promise<number> {
+  const claimed = await db
     .prepare(
       `UPDATE clips
        SET helper_state = 'expired',
@@ -419,7 +442,47 @@ export async function sweepStaleHelperClaims(db: D1Database): Promise<number> {
     )
     .bind(`-${STALE_HELPER_CLAIM_CEILING_MINUTES} minutes`)
     .run();
-  return result.meta.changes ?? 0;
+
+  // recovering + still-queued means the recovery waitUntil died between the
+  // helper_state CAS and the dispatch reaching the container DO (the DO
+  // durably advances status via markClipDownloadingIfQueued). Flip back to
+  // 'expired' so the next poll retries. A rare duplicate dispatch is safe:
+  // recovery targets the same DO name (getByName(clipId)) and terminal DB
+  // writes are compare-and-set sticky, so duplicate work cannot corrupt state.
+  const recovering = await db
+    .prepare(
+      `UPDATE clips
+       SET helper_state = 'expired',
+           updated_at = datetime('now')
+       WHERE helper_state = 'recovering'
+         AND status = 'queued'
+         AND updated_at < datetime('now', ?)`,
+    )
+    .bind(`-${STALE_HELPER_RECOVERY_CEILING_MINUTES} minutes`)
+    .run();
+
+  // pending rows are normally expired by the per-clip claim-window waitUntil
+  // scheduled at create time; if that task never ran, expire them here once
+  // they exceed the claim window plus a grace period.
+  const pendingCutoffSeconds =
+    Math.ceil(claimWindowSeconds) + STALE_PENDING_GRACE_SECONDS;
+  const pending = await db
+    .prepare(
+      `UPDATE clips
+       SET helper_state = 'expired',
+           updated_at = datetime('now')
+       WHERE helper_state = 'pending'
+         AND status = 'queued'
+         AND created_at < datetime('now', ?)`,
+    )
+    .bind(`-${pendingCutoffSeconds} seconds`)
+    .run();
+
+  return (
+    (claimed.meta.changes ?? 0) +
+    (recovering.meta.changes ?? 0) +
+    (pending.meta.changes ?? 0)
+  );
 }
 
 export async function listRecoverableHelperClips(
