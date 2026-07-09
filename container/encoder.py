@@ -113,6 +113,60 @@ def log(message: str) -> None:
     print(message, flush=True)
 
 
+def log_ytdlp_environment() -> None:
+    """Log yt-dlp version, EJS package, and detected JS runtime at job start."""
+    try:
+        completed = subprocess.run(
+            ["yt-dlp", "--version-full"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        log(f"yt-dlp env: failed to probe toolchain ({exc})")
+        return
+
+    output = (completed.stdout or completed.stderr or "").strip()
+    if completed.returncode == 0 and output:
+        for line in output.splitlines():
+            log(f"yt-dlp env: {line}")
+        return
+
+    try:
+        version = subprocess.run(
+            ["yt-dlp", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        if version.stdout.strip():
+            log(f"yt-dlp env: version {version.stdout.strip()}")
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+    try:
+        verbose = subprocess.run(
+            ["yt-dlp", "-v"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return
+
+    combined = "\n".join(
+        line
+        for line in (verbose.stderr or "").splitlines()
+        if "JS runtimes:" in line or "yt_dlp_ejs" in line
+    )
+    if combined:
+        for line in combined.splitlines():
+            log(f"yt-dlp env: {line}")
+
+
 def post_status(
     callback_url: str,
     status: str,
@@ -1445,6 +1499,7 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
             encode_trim_start = trim_start
             encode_trim_end = trim_end
             if source_type == "youtube":
+                log_ytdlp_environment()
                 download_started = time.monotonic()
                 source_path, encode_trim_start, encode_trim_end = download_youtube(
                     source["url"],
