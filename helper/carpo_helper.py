@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import os
 import shutil
 import signal
@@ -25,6 +26,9 @@ YTDLP_SUBPROCESS_TIMEOUT_SECONDS = 180
 # 60s safety margin under the server's 5-minute claim sweep.
 JOB_DEADLINE_SECONDS = 240.0
 MIN_PUT_BUDGET_SECONDS = 15.0
+MIN_API_BUDGET_SECONDS = 10.0
+API_TIMEOUT_SECONDS = 60.0
+API_TIMEOUT_FLOOR_SECONDS = 5.0
 DEADLINE_EXCEEDED_MESSAGE = "helper deadline exceeded"
 YTDLP_UPDATE_INTERVAL_SECONDS = 24 * 60 * 60
 YTDLP_UPDATE_TIMEOUT_SECONDS = 60
@@ -56,6 +60,48 @@ def ytdlp_timeout_for_budget(
     base_timeout: float = YTDLP_SUBPROCESS_TIMEOUT_SECONDS,
 ) -> float:
     return max(0.0, min(base_timeout, budget))
+
+
+def api_timeout_for_budget(
+    budget: float,
+    base_timeout: float = API_TIMEOUT_SECONDS,
+    floor: float = API_TIMEOUT_FLOOR_SECONDS,
+) -> float:
+    return max(floor, min(base_timeout, budget))
+
+
+def parse_claim_payload(job: Any) -> dict[str, Any]:
+    if not isinstance(job, dict):
+        raise ValueError("claim payload must be a JSON object")
+
+    url = job.get("url")
+    if not isinstance(url, str) or not url.strip():
+        raise ValueError("claim payload url must be a non-empty string")
+
+    trim_start = job.get("trimStart")
+    trim_end = job.get("trimEnd")
+    for name, value in (("trimStart", trim_start), ("trimEnd", trim_end)):
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+        ):
+            raise ValueError(f"claim payload {name} must be a finite number")
+    if trim_start < 0:
+        raise ValueError("claim payload trimStart must be >= 0")
+    if trim_end <= trim_start:
+        raise ValueError("claim payload trimEnd must be greater than trimStart")
+
+    quality = job.get("quality")
+    if not isinstance(quality, str) or not quality:
+        quality = DEFAULT_QUALITY
+
+    return {
+        "url": url.strip(),
+        "trimStart": float(trim_start),
+        "trimEnd": float(trim_end),
+        "quality": quality,
+    }
 
 
 def render_config_json(
@@ -239,6 +285,7 @@ def api_request(
     *,
     body: dict[str, Any] | None = None,
     include_helper_token: bool = False,
+    timeout: float = API_TIMEOUT_SECONDS,
 ) -> tuple[int, bytes, dict[str, str]]:
     url = f"{config['baseUrl']}{path}"
     data = None
@@ -247,7 +294,7 @@ def api_request(
         data = json.dumps(body).encode("utf-8")
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.status, response.read(), dict(response.headers)
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read(), dict(exc.headers)
@@ -316,7 +363,12 @@ def upload_file_put(
             raise RuntimeError(f"Upload failed ({exc.code}): {body}") from exc
 
 
-def post_fail(config: dict[str, Any], clip_id: str, error_message: str) -> None:
+def post_fail(
+    config: dict[str, Any],
+    clip_id: str,
+    error_message: str,
+    timeout: float = API_TIMEOUT_SECONDS,
+) -> None:
     try:
         status, body, _ = api_request(
             config,
@@ -324,6 +376,7 @@ def post_fail(config: dict[str, Any], clip_id: str, error_message: str) -> None:
             f"/api/helper/jobs/{clip_id}/fail",
             body={"errorMessage": truncate_error_message(error_message)},
             include_helper_token=True,
+            timeout=timeout,
         )
         if status not in (200, 202):
             detail = body.decode("utf-8", errors="replace")
@@ -350,21 +403,32 @@ def check_deadline(deadline: float, minimum_budget: float = 0.0) -> float:
 
 def process_job(
     config: dict[str, Any],
-    job: dict[str, Any],
+    job: Any,
     *,
     dry_run: bool = False,
 ) -> None:
-    clip_id = job["clipId"]
+    clip_id = job.get("clipId") if isinstance(job, dict) else None
+    if not isinstance(clip_id, str) or not clip_id.strip():
+        logging.error("claim response missing clipId; ignoring: %r", job)
+        return
     deadline = time.monotonic() + JOB_DEADLINE_SECONDS
-    url = job["url"]
-    trim_start = float(job["trimStart"])
-    trim_end = float(job["trimEnd"])
-    quality = job.get("quality") or DEFAULT_QUALITY
-
-    logging.info("claimed clipId=%s quality=%s trim=%.1f-%.1f", clip_id, quality, trim_start, trim_end)
 
     workdir: Path | None = None
     try:
+        payload = parse_claim_payload(job)
+        url = payload["url"]
+        trim_start = payload["trimStart"]
+        trim_end = payload["trimEnd"]
+        quality = payload["quality"]
+
+        logging.info(
+            "claimed clipId=%s quality=%s trim=%.1f-%.1f",
+            clip_id,
+            quality,
+            trim_start,
+            trim_end,
+        )
+
         section_start, section_end = section_bounds(trim_start, trim_end)
         workdir = Path(tempfile.mkdtemp(prefix="carpo-helper-"))
         command = build_ytdlp_command(
@@ -400,12 +464,13 @@ def process_job(
 
         if dry_run:
             logging.info("dry-run clipId=%s — skipping upload", clip_id)
-            post_fail(config, clip_id, "dry run")
+            budget = remaining_budget(deadline, time.monotonic())
+            post_fail(config, clip_id, "dry run", timeout=api_timeout_for_budget(budget))
             logging.info("failed clipId=%s: dry run", clip_id)
             return
 
         check_abort(clip_id)
-        check_deadline(deadline)
+        api_budget = check_deadline(deadline, MIN_API_BUDGET_SECONDS)
         status, body, _ = api_request(
             config,
             "POST",
@@ -415,6 +480,7 @@ def process_job(
                 "sizeBytes": size_bytes,
                 "filename": source_path.name,
             },
+            timeout=api_timeout_for_budget(api_budget),
         )
         if status != 200:
             detail = body.decode("utf-8", errors="replace")
@@ -439,13 +505,14 @@ def process_job(
         logging.info("uploaded clipId=%s key=%s", clip_id, upload_key)
 
         check_abort(clip_id)
-        check_deadline(deadline)
+        fulfill_budget = check_deadline(deadline, MIN_API_BUDGET_SECONDS)
         fulfill_status, fulfill_body, _ = api_request(
             config,
             "POST",
             f"/api/helper/jobs/{clip_id}/fulfill",
             body={"uploadKey": upload_key, "sectionStart": section_start},
             include_helper_token=True,
+            timeout=api_timeout_for_budget(fulfill_budget),
         )
         if fulfill_status not in (200, 202):
             detail = fulfill_body.decode("utf-8", errors="replace")
@@ -456,7 +523,8 @@ def process_job(
         raise
     except Exception as exc:
         logging.exception("job failed clipId=%s", clip_id)
-        post_fail(config, clip_id, str(exc))
+        budget = remaining_budget(deadline, time.monotonic())
+        post_fail(config, clip_id, str(exc), timeout=api_timeout_for_budget(budget))
         logging.info("failed clipId=%s: %s", clip_id, truncate_error_message(str(exc)))
     finally:
         if workdir and workdir.exists():

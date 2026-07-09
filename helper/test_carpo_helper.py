@@ -11,12 +11,16 @@ import unittest
 from pathlib import Path
 
 from carpo_helper import (
+    API_TIMEOUT_FLOOR_SECONDS,
+    API_TIMEOUT_SECONDS,
     JOB_DEADLINE_SECONDS,
     MIN_PUT_BUDGET_SECONDS,
     YTDLP_SUBPROCESS_TIMEOUT_SECONDS,
+    api_timeout_for_budget,
     build_ytdlp_command,
     content_type_for_path,
     load_config,
+    parse_claim_payload,
     remaining_budget,
     render_config_json,
     resolve_upload_url,
@@ -207,6 +211,93 @@ class DeadlineBudgetTests(unittest.TestCase):
 
     def test_put_budget_floor(self) -> None:
         self.assertGreater(MIN_PUT_BUDGET_SECONDS, 0.0)
+
+
+class ApiTimeoutTests(unittest.TestCase):
+    def test_capped_by_base_timeout(self) -> None:
+        self.assertEqual(api_timeout_for_budget(500.0), API_TIMEOUT_SECONDS)
+
+    def test_capped_by_budget(self) -> None:
+        self.assertEqual(api_timeout_for_budget(30.0), 30.0)
+
+    def test_floor_applied(self) -> None:
+        self.assertEqual(api_timeout_for_budget(1.0), API_TIMEOUT_FLOOR_SECONDS)
+        self.assertEqual(api_timeout_for_budget(0.0), API_TIMEOUT_FLOOR_SECONDS)
+
+
+class ParseClaimPayloadTests(unittest.TestCase):
+    def valid_payload(self) -> dict:
+        return {
+            "clipId": "abc",
+            "url": "https://youtu.be/xyz",
+            "trimStart": 10,
+            "trimEnd": 20.5,
+            "quality": "720p",
+        }
+
+    def test_valid_payload(self) -> None:
+        parsed = parse_claim_payload(self.valid_payload())
+        self.assertEqual(parsed["url"], "https://youtu.be/xyz")
+        self.assertEqual(parsed["trimStart"], 10.0)
+        self.assertEqual(parsed["trimEnd"], 20.5)
+        self.assertEqual(parsed["quality"], "720p")
+
+    def test_missing_quality_defaults(self) -> None:
+        payload = self.valid_payload()
+        del payload["quality"]
+        self.assertEqual(parse_claim_payload(payload)["quality"], "1080p")
+
+    def test_missing_url(self) -> None:
+        payload = self.valid_payload()
+        del payload["url"]
+        with self.assertRaisesRegex(ValueError, "url"):
+            parse_claim_payload(payload)
+
+    def test_empty_url(self) -> None:
+        payload = self.valid_payload()
+        payload["url"] = "   "
+        with self.assertRaisesRegex(ValueError, "url"):
+            parse_claim_payload(payload)
+
+    def test_missing_trim_start(self) -> None:
+        payload = self.valid_payload()
+        del payload["trimStart"]
+        with self.assertRaisesRegex(ValueError, "trimStart"):
+            parse_claim_payload(payload)
+
+    def test_non_numeric_trim(self) -> None:
+        payload = self.valid_payload()
+        payload["trimEnd"] = "20"
+        with self.assertRaisesRegex(ValueError, "trimEnd"):
+            parse_claim_payload(payload)
+
+    def test_boolean_trim_rejected(self) -> None:
+        payload = self.valid_payload()
+        payload["trimStart"] = True
+        with self.assertRaisesRegex(ValueError, "trimStart"):
+            parse_claim_payload(payload)
+
+    def test_non_finite_trim(self) -> None:
+        payload = self.valid_payload()
+        payload["trimStart"] = float("nan")
+        with self.assertRaisesRegex(ValueError, "trimStart"):
+            parse_claim_payload(payload)
+
+    def test_negative_trim_start(self) -> None:
+        payload = self.valid_payload()
+        payload["trimStart"] = -1
+        with self.assertRaisesRegex(ValueError, "trimStart"):
+            parse_claim_payload(payload)
+
+    def test_trim_end_not_greater(self) -> None:
+        payload = self.valid_payload()
+        payload["trimEnd"] = 10
+        with self.assertRaisesRegex(ValueError, "trimEnd"):
+            parse_claim_payload(payload)
+
+    def test_non_dict_payload(self) -> None:
+        with self.assertRaisesRegex(ValueError, "JSON object"):
+            parse_claim_payload(["not", "a", "dict"])
 
 
 class RenderConfigJsonTests(unittest.TestCase):
