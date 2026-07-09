@@ -5,6 +5,7 @@ import type {
   FailureMode,
   GifStatus,
 } from "./types";
+import { DEFAULT_CLIP_QUALITY } from "./types";
 import { generateCallbackSecret } from "./auth";
 import { extractCaptionFromFilters } from "./validation";
 
@@ -23,8 +24,8 @@ export async function insertClip(
     .prepare(
       `INSERT INTO clips (
         id, title, source_type, source_ref, trim_start, trim_end,
-        caption, filters_json, status, callback_secret
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`,
+        quality, caption, filters_json, status, callback_secret
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`,
     )
     .bind(
       id,
@@ -33,6 +34,7 @@ export async function insertClip(
       sourceRef,
       request.trimStart,
       request.trimEnd,
+      request.quality ?? DEFAULT_CLIP_QUALITY,
       extractCaptionFromFilters(request.filters),
       filtersJson,
       callbackSecret,

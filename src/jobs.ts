@@ -166,6 +166,7 @@ export async function dispatchEncodingJob(
       source: request.source,
       trimStart: request.trimStart,
       trimEnd: request.trimEnd,
+      quality: request.quality ?? "1080p",
       caption: extractCaptionFromFilters(request.filters),
       filters: request.filters,
       maxClipLengthSeconds: Number(env.MAX_CLIP_LENGTH_SECONDS) || 60,

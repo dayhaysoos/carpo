@@ -493,8 +493,87 @@ describe("POST /api/clips", () => {
     expect(body.trimStart).toBe(1);
     expect(body.trimEnd).toBe(5);
     expect(body.filters).toEqual([]);
+    expect(body.quality).toBe("1080p");
     expect(body.outputs.mp4).toBeNull();
     expect(body.outputs.thumbnail).toBeNull();
+  });
+
+  it("defaults quality to 1080p when omitted", async () => {
+    const response = await workerFetch("http://example.com/api/clips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "default quality",
+        source: {
+          type: "youtube",
+          url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        },
+        trimStart: 1,
+        trimEnd: 4,
+        filters: [],
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { quality: string };
+    expect(body.quality).toBe("1080p");
+  });
+
+  it("accepts and persists an explicit 720p quality", async () => {
+    const response = await workerFetch("http://example.com/api/clips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "720p clip",
+        source: {
+          type: "youtube",
+          url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        },
+        trimStart: 1,
+        trimEnd: 4,
+        quality: "720p",
+        filters: [],
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { id: string; quality: string };
+    expect(body.quality).toBe("720p");
+
+    const record = await getClipById(env.DB, body.id);
+    expect(record?.quality).toBe("720p");
+  });
+
+  it("rejects invalid quality values", async () => {
+    const response = await workerFetch("http://example.com/api/clips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "bad quality",
+        source: {
+          type: "youtube",
+          url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        },
+        trimStart: 0,
+        trimEnd: 5,
+        quality: "4K",
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as {
+      error: string;
+      details: Array<{ field: string; message: string }>;
+    };
+    expect(body.error).toBe("Validation failed");
+    expect(body.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: "quality",
+          message: "quality must be '720p' or '1080p'",
+        }),
+      ]),
+    );
   });
 
   it("rejects invalid YouTube URLs", async () => {

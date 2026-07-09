@@ -1,0 +1,1 @@
+ALTER TABLE clips ADD COLUMN quality TEXT NOT NULL DEFAULT '1080p' CHECK (quality IN ('720p', '1080p'));

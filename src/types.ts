@@ -23,7 +23,11 @@ export const MAX_CAPTION_LENGTH = 200;
 
 export const FILTER_TYPES = ["caption"] as const;
 
-export type FilterType = (typeof FILTER_TYPES)[number];
+export const CLIP_QUALITIES = ["720p", "1080p"] as const;
+
+export type ClipQuality = (typeof CLIP_QUALITIES)[number];
+
+export const DEFAULT_CLIP_QUALITY: ClipQuality = "1080p";
 
 export interface CaptionFilter {
   type: "caption";
@@ -50,6 +54,7 @@ export interface CreateClipRequest {
   trimStart: number;
   trimEnd: number;
   filters: FilterSpec[];
+  quality?: ClipQuality;
 }
 
 export interface ClipRecord {
@@ -59,6 +64,7 @@ export interface ClipRecord {
   source_ref: string;
   trim_start: number;
   trim_end: number;
+  quality: ClipQuality;
   caption: string | null;
   filters_json: string;
   status: ClipStatus;
@@ -86,6 +92,7 @@ export interface ClipResponse {
   source: ClipSource;
   trimStart: number;
   trimEnd: number;
+  quality: ClipQuality;
   caption: string | null;
   filters: FilterSpec[];
   status: ClipStatus;
@@ -109,6 +116,7 @@ export interface EncoderJobSpec {
   source: ClipSource;
   trimStart: number;
   trimEnd: number;
+  quality: ClipQuality;
   caption: string | null;
   filters: FilterSpec[];
   maxClipLengthSeconds: number;

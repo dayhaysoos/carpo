@@ -426,6 +426,62 @@ input {
   gap: 0.75rem;
 }
 
+.quality-picker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.quality-label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.quality-options {
+  display: inline-flex;
+  gap: 0.375rem;
+  padding: 0.2rem;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+
+.quality-option {
+  padding: 0.35rem 0.65rem;
+  border-radius: calc(var(--radius-sm) - 2px);
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.quality-option:hover {
+  color: var(--text);
+}
+
+.quality-option.active {
+  background: rgba(91, 140, 255, 0.15);
+  color: var(--text);
+}
+
+.job-meta-sep,
+.library-meta-sep {
+  margin: 0 0.35rem;
+  opacity: 0.5;
+}
+
+.library-card-meta {
+  margin: 0.125rem 0 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
 .status-panel .empty-state {
   padding: 2rem 1rem;
   text-align: center;

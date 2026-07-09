@@ -1,9 +1,11 @@
 import {
+  CLIP_QUALITIES,
+  DEFAULT_CLIP_QUALITY,
   FILTER_TYPES,
   MAX_CAPTION_LENGTH,
   MAX_CLIP_LENGTH_SECONDS,
 } from "./types";
-import type { ClipSource, CreateClipRequest, FilterSpec } from "./types";
+import type { ClipQuality, ClipSource, CreateClipRequest, FilterSpec } from "./types";
 import { isValidUploadKey } from "./uploads";
 
 const YOUTUBE_HOSTS = new Set([
@@ -107,6 +109,21 @@ export function validateCreateClipRequest(
     filters = validateFilters(input.filters, errors);
   }
 
+  let quality: ClipQuality = DEFAULT_CLIP_QUALITY;
+  if (input.quality !== undefined && input.quality !== null) {
+    if (
+      typeof input.quality !== "string" ||
+      !CLIP_QUALITIES.includes(input.quality as ClipQuality)
+    ) {
+      errors.push({
+        field: "quality",
+        message: "quality must be '720p' or '1080p'",
+      });
+    } else {
+      quality = input.quality as ClipQuality;
+    }
+  }
+
   if (errors.length > 0) {
     return { ok: false, errors };
   }
@@ -131,6 +148,7 @@ export function validateCreateClipRequest(
       trimStart: trimStart!,
       trimEnd: trimEnd!,
       filters,
+      quality,
       caption: extractCaptionFromFilters(filters),
     },
   };

@@ -1,8 +1,9 @@
 #!/bin/sh
 # Fake yt-dlp for rebased-timestamp section downloads (start_time=0) and
-# full-video fallback when --download-sections is omitted.
+# force-keyframes fallback with exact section cuts.
 OUTPUT=""
 SECTIONS=""
+FORCE_KEYFRAMES=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -o)
@@ -12,6 +13,10 @@ while [ $# -gt 0 ]; do
     --download-sections)
       SECTIONS="$2"
       shift 2
+      ;;
+    --force-keyframes-at-cuts)
+      FORCE_KEYFRAMES=1
+      shift
       ;;
     *)
       shift
@@ -43,13 +48,22 @@ if [ -n "$SECTIONS" ]; then
     printf "%.3f", end - start
   }')
 
-  # Rebased timestamps (no -copyts) so ffprobe reports start_time=0.
-  ffmpeg -y -loglevel error \
-    -ss "$SECTION_START" \
-    -i /fixture/framecounter.mp4 \
-    -t "$SECTION_DURATION" \
-    -c copy \
-    "$OUTFILE"
+  if [ "$FORCE_KEYFRAMES" -eq 1 ]; then
+    ffmpeg -y -loglevel error \
+      -ss "$SECTION_START" \
+      -i /fixture/framecounter.mp4 \
+      -t "$SECTION_DURATION" \
+      -c copy \
+      "$OUTFILE"
+  else
+    ffmpeg -y -loglevel error \
+      -ss "$SECTION_START" \
+      -i /fixture/framecounter.mp4 \
+      -t "$SECTION_DURATION" \
+      -c copy \
+      "$OUTFILE"
+  fi
 else
-  cp /fixture/framecounter.mp4 "$OUTFILE"
+  echo "ERROR: --download-sections is required for this contract fixture" >&2
+  exit 1
 fi
