@@ -7,7 +7,7 @@ import { usePlayerTrim } from "./YoutubePlayer";
 import { TrimSlider } from "./TrimSlider";
 
 interface CreatorFormProps {
-  onClipCreated: (clipId: string) => void;
+  onClipCreated: () => void;
 }
 
 export function CreatorForm({ onClipCreated }: CreatorFormProps) {
@@ -32,8 +32,8 @@ export function CreatorForm({ onClipCreated }: CreatorFormProps) {
 
   const mutation = useMutation({
     mutationFn: createClip,
-    onSuccess: (clip) => {
-      onClipCreated(clip.id);
+    onSuccess: () => {
+      onClipCreated();
       setUrl("");
       setTitle("");
       setCaption("");

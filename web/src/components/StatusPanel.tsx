@@ -1,48 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { getClip } from "../api";
-import { removeJobId } from "../jobStorage";
+import { Link } from "react-router-dom";
+import { listClips } from "../api";
+import { CLIPS_QUERY_KEY } from "../queries";
 import { isTerminalStatus, statusLabel, statusProgress } from "../status";
 import type { ClipResponse } from "../types";
 
-interface JobCardProps {
-  clipId: string;
-  onDismiss: (id: string) => void;
-}
-
-function JobCard({ clipId, onDismiss }: JobCardProps) {
-  const { data, error, isLoading } = useQuery({
-    queryKey: ["clip", clipId],
-    queryFn: () => getClip(clipId),
-    refetchInterval: (query) => {
-      const status = query.state.data?.status;
-      if (!status || isTerminalStatus(status)) return false;
-      return 2000;
-    },
-  });
-
-  if (isLoading && !data) {
-    return (
-      <article className="job-card loading">
-        <div className="job-title">Loading…</div>
-      </article>
-    );
-  }
-
-  if (error && !data) {
-    return (
-      <article className="job-card failed">
-        <div className="job-header">
-          <span className="job-title">Unknown job</span>
-          <button type="button" className="btn-ghost" onClick={() => onDismiss(clipId)}>
-            Dismiss
-          </button>
-        </div>
-        <p className="job-error">{error.message}</p>
-      </article>
-    );
-  }
-
-  const clip = data as ClipResponse;
+function JobCard({ clip }: { clip: ClipResponse }) {
   const progress = statusProgress(clip.status);
 
   return (
@@ -54,77 +17,77 @@ function JobCard({ clipId, onDismiss }: JobCardProps) {
             {clip.trimStart.toFixed(2)}s → {clip.trimEnd.toFixed(2)}s
           </p>
         </div>
-        {isTerminalStatus(clip.status) && (
-          <button type="button" className="btn-ghost" onClick={() => onDismiss(clipId)}>
-            Dismiss
-          </button>
-        )}
       </div>
 
       <div className="job-status-row">
         <span className={`status-badge status-${clip.status}`}>
           {statusLabel(clip.status)}
         </span>
-        {!isTerminalStatus(clip.status) && (
-          <div className="progress-bar">
-            <div className="progress-fill" style={{ width: `${progress}%` }} />
-          </div>
-        )}
-      </div>
-
-      {clip.status === "failed" && clip.errorMessage && (
-        <p className="job-error">{clip.errorMessage}</p>
-      )}
-
-      {clip.status === "complete" && clip.outputs.mp4 && (
-        <div className="job-output">
-          <video
-            src={clip.outputs.mp4}
-            poster={clip.outputs.thumbnail ?? undefined}
-            controls
-            loop
-            playsInline
-            className="clip-preview"
-          />
-          <a href={clip.outputs.mp4} download className="btn-secondary">
-            Download MP4
-          </a>
+        <div className="progress-bar">
+          <div className="progress-fill" style={{ width: `${progress}%` }} />
         </div>
-      )}
+      </div>
     </article>
   );
 }
 
-interface StatusPanelProps {
-  jobIds: string[];
-  onDismiss: (id: string) => void;
-}
+export function StatusPanel() {
+  const { data, error, isLoading } = useQuery({
+    queryKey: CLIPS_QUERY_KEY,
+    queryFn: () => listClips(),
+    refetchInterval: (query) => {
+      const clips = query.state.data?.clips ?? [];
+      const hasInFlight = clips.some((clip) => !isTerminalStatus(clip.status));
+      return hasInFlight ? 2000 : false;
+    },
+  });
 
-export function StatusPanel({ jobIds, onDismiss }: StatusPanelProps) {
-  const handleDismiss = (id: string) => {
-    removeJobId(id);
-    onDismiss(id);
-  };
+  const inFlightClips =
+    data?.clips.filter((clip) => !isTerminalStatus(clip.status)) ?? [];
 
   return (
     <section className="status-panel card">
       <div className="card-header">
         <h2>Jobs</h2>
         <p>
-          {jobIds.length === 0
-            ? "Created clips appear here with live status."
-            : `${jobIds.length} clip${jobIds.length === 1 ? "" : "s"}`}
+          {inFlightClips.length === 0
+            ? "Created clips appear here while encoding."
+            : `${inFlightClips.length} in progress`}
         </p>
       </div>
 
-      {jobIds.length === 0 ? (
-        <div className="empty-state">No clips yet — create one to get started.</div>
-      ) : (
-        <div className="job-list">
-          {jobIds.map((id) => (
-            <JobCard key={id} clipId={id} onDismiss={handleDismiss} />
-          ))}
+      {isLoading && !data && (
+        <div className="empty-state">Loading jobs…</div>
+      )}
+
+      {error && !data && (
+        <p className="job-error">{error.message}</p>
+      )}
+
+      {data && inFlightClips.length === 0 && (
+        <div className="empty-state">
+          No active jobs.{" "}
+          <Link to="/library" className="inline-link">
+            View your library
+          </Link>
         </div>
+      )}
+
+      {inFlightClips.length > 0 && (
+        <>
+          <div className="job-list">
+            {inFlightClips.map((clip) => (
+              <JobCard key={clip.id} clip={clip} />
+            ))}
+          </div>
+          <p className="status-panel-footer">
+            Finished clips appear in the{" "}
+            <Link to="/library" className="inline-link">
+              library
+            </Link>
+            .
+          </p>
+        </>
       )}
     </section>
   );

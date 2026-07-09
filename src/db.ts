@@ -144,15 +144,46 @@ export async function markClipFailed(
   return (result.meta.changes ?? 0) > 0;
 }
 
+export async function listClips(
+  db: D1Database,
+  limit: number,
+  offset: number,
+): Promise<{ clips: ClipRecord[]; total: number }> {
+  const totalResult = await db
+    .prepare("SELECT COUNT(*) as count FROM clips")
+    .first<{ count: number }>();
+  const total = totalResult?.count ?? 0;
+
+  const result = await db
+    .prepare("SELECT * FROM clips ORDER BY created_at DESC LIMIT ? OFFSET ?")
+    .bind(limit, offset)
+    .all<ClipRecord>();
+
+  return { clips: result.results ?? [], total };
+}
+
+export async function deleteClip(db: D1Database, id: string): Promise<boolean> {
+  const result = await db
+    .prepare("DELETE FROM clips WHERE id = ?")
+    .bind(id)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
 export async function deleteClipArtifacts(
   bucket: R2Bucket,
   clipId: string,
+  record?: Pick<ClipRecord, "output_mp4_key" | "output_thumbnail_key"> | null,
 ): Promise<void> {
   const keys = outputKeysForClip(clipId);
-  await Promise.all([
-    bucket.delete(keys.mp4Key),
-    bucket.delete(keys.thumbnailKey),
-  ]);
+  const keysToDelete = new Set([keys.mp4Key, keys.thumbnailKey]);
+  if (record?.output_mp4_key) {
+    keysToDelete.add(record.output_mp4_key);
+  }
+  if (record?.output_thumbnail_key) {
+    keysToDelete.add(record.output_thumbnail_key);
+  }
+  await Promise.all([...keysToDelete].map((key) => bucket.delete(key)));
 }
 
 export function outputKeysForClip(clipId: string): {

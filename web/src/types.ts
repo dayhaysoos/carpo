@@ -52,6 +52,13 @@ export interface ClipResponse {
   updatedAt: string;
 }
 
+export interface ClipListResponse {
+  clips: ClipResponse[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
 export interface ValidationError {
   field: string;
   message: string;
