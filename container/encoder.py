@@ -29,6 +29,8 @@ DOWNLOAD_TIMEOUT_SECONDS = 600
 ENCODE_TIMEOUT_SECONDS = 600
 UPLOAD_TIMEOUT_SECONDS = 600
 VIDEO_CONTAINER_EXTENSIONS = ("mp4", "mkv", "webm")
+DEJAVU_FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+KNOWN_FILTER_TYPES = frozenset({"caption"})
 
 
 def log(message: str) -> None:
@@ -273,21 +275,79 @@ def download_youtube(url: str, workdir: Path) -> Path:
     return select_source_file(candidates)
 
 
-def encode_clip(source: Path, trim_start: float, trim_end: float, output_mp4: Path, output_thumb: Path) -> None:
+def build_video_filter_chain(filters: list[Any], workdir: Path) -> str | None:
+    """Map composable job filters to an ffmpeg -vf filter chain."""
+    if not isinstance(filters, list):
+        return None
+
+    parts: list[str] = []
+    for index, item in enumerate(filters):
+        if not isinstance(item, dict):
+            raise RuntimeError(f"filters[{index}] must be an object")
+
+        filter_type = item.get("type")
+        if filter_type == "caption":
+            text = item.get("text")
+            if not isinstance(text, str) or not text.strip():
+                raise RuntimeError(f"filters[{index}].text is required for caption")
+            parts.append(build_caption_drawtext(text, workdir, index))
+            continue
+
+        if filter_type not in KNOWN_FILTER_TYPES:
+            raise RuntimeError(f"Unknown filter type: {filter_type!r}")
+
+    return ",".join(parts) if parts else None
+
+
+def build_caption_drawtext(text: str, workdir: Path, index: int) -> str:
+    """Burn caption text with legible styling; textfile avoids drawtext escaping pitfalls."""
+    text_path = workdir / f"caption-{index}.txt"
+    text_path.write_text(text, encoding="utf-8")
+
+    return (
+        f"drawtext=fontfile={DEJAVU_FONT}"
+        f":textfile={text_path}"
+        ":expansion=none"
+        ":fontsize=h/18"
+        ":fontcolor=white"
+        ":borderw=3"
+        ":bordercolor=black@0.85"
+        ":box=1"
+        ":boxcolor=black@0.45"
+        ":boxborderw=8"
+        ":x=(w-text_w)/2"
+        ":y=h*0.90-text_h"
+    )
+
+
+def encode_clip(
+    source: Path,
+    trim_start: float,
+    trim_end: float,
+    output_mp4: Path,
+    output_thumb: Path,
+    *,
+    filters: list[Any] | None = None,
+    workdir: Path | None = None,
+) -> None:
     duration = trim_end - trim_start
-    # Input seeking (-ss before -i) is frame-accurate when re-encoding (not stream
-    # copy); verified by scripts/test-encoder-contract.ts against a frame-counter
-    # fixture trimmed at a non-keyframe offset (±1 frame).
-    run_command(
+    filter_workdir = workdir or source.parent
+    video_filters = build_video_filter_chain(filters or [], filter_workdir)
+
+    encode_command = [
+        "ffmpeg",
+        "-y",
+        "-ss",
+        str(trim_start),
+        "-i",
+        str(source),
+        "-t",
+        str(duration),
+    ]
+    if video_filters:
+        encode_command.extend(["-vf", video_filters])
+    encode_command.extend(
         [
-            "ffmpeg",
-            "-y",
-            "-ss",
-            str(trim_start),
-            "-i",
-            str(source),
-            "-t",
-            str(duration),
             "-c:v",
             "libx264",
             "-preset",
@@ -299,25 +359,30 @@ def encode_clip(source: Path, trim_start: float, trim_end: float, output_mp4: Pa
             "-movflags",
             "+faststart",
             str(output_mp4),
-        ]
+        ],
     )
+    # Input seeking (-ss before -i) is frame-accurate when re-encoding (not stream
+    # copy); verified by scripts/test-encoder-contract.ts against a frame-counter
+    # fixture trimmed at a non-keyframe offset (±1 frame).
+    run_command(encode_command)
 
+    thumb_command = [
+        "ffmpeg",
+        "-y",
+        "-ss",
+        str(trim_start),
+        "-i",
+        str(source),
+        "-frames:v",
+        "1",
+        "-q:v",
+        "2",
+    ]
+    if video_filters:
+        thumb_command.extend(["-vf", video_filters])
+    thumb_command.append(str(output_thumb))
     # Same input-seek pattern; thumbnail spot-check included in contract test.
-    run_command(
-        [
-            "ffmpeg",
-            "-y",
-            "-ss",
-            str(trim_start),
-            "-i",
-            str(source),
-            "-frames:v",
-            "1",
-            "-q:v",
-            "2",
-            str(output_thumb),
-        ]
-    )
+    run_command(thumb_command)
 
 
 def upload_file(
@@ -442,7 +507,15 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
 
             output_mp4 = workdir / "clip.mp4"
             output_thumb = workdir / "thumbnail.jpg"
-            encode_clip(source_path, trim_start, trim_end, output_mp4, output_thumb)
+            encode_clip(
+                source_path,
+                trim_start,
+                trim_end,
+                output_mp4,
+                output_thumb,
+                filters=job.get("filters") or [],
+                workdir=workdir,
+            )
 
             if callback_url:
                 progress.post_resync_if_needed(

@@ -10,6 +10,7 @@ import {
 } from "./db";
 import type { Env } from "./env";
 import type { ClipStatus, CreateClipRequest, EncoderJobSpec, FailureMode } from "./types";
+import { extractCaptionFromFilters } from "./validation";
 
 const ACTIVITY_RENEWAL_MS = 30_000;
 
@@ -63,8 +64,8 @@ export async function dispatchEncodingJob(
       source: request.source,
       trimStart: request.trimStart,
       trimEnd: request.trimEnd,
-      caption: request.caption ?? null,
-      filters: request.filters ?? [],
+      caption: extractCaptionFromFilters(request.filters),
+      filters: request.filters,
       maxClipLengthSeconds: Number(env.MAX_CLIP_LENGTH_SECONDS) || 60,
       outputs: outputKeys,
       callbackUrl,

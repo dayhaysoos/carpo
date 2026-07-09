@@ -5,6 +5,7 @@ import type {
   FailureMode,
 } from "./types";
 import { generateCallbackSecret } from "./auth";
+import { extractCaptionFromFilters } from "./validation";
 
 export async function insertClip(
   db: D1Database,
@@ -31,7 +32,7 @@ export async function insertClip(
       sourceRef,
       request.trimStart,
       request.trimEnd,
-      request.caption ?? null,
+      extractCaptionFromFilters(request.filters),
       filtersJson,
       callbackSecret,
     )
