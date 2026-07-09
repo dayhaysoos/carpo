@@ -40,13 +40,8 @@ if [[ ! -f "${CONFIG_PATH}" ]]; then
   read -r -p "Helper token (HELPER_TOKEN from server): " HELPER_TOKEN
   read -r -p "Browser for cookies [chrome]: " BROWSER
   BROWSER="${BROWSER:-chrome}"
-  cat > "${CONFIG_PATH}" <<EOF
-{
-  "baseUrl": "${BASE_URL}",
-  "helperToken": "${HELPER_TOKEN}",
-  "cookiesFromBrowser": "${BROWSER}"
-}
-EOF
+  "${PYTHON_PATH}" -c 'import sys; sys.path.insert(0, sys.argv[1]); from carpo_helper import render_config_json; print(render_config_json(sys.argv[2], sys.argv[3], sys.argv[4]))' \
+    "${SCRIPT_DIR}" "${BASE_URL}" "${HELPER_TOKEN}" "${BROWSER}" > "${CONFIG_PATH}"
   chmod 600 "${CONFIG_PATH}"
   echo "Wrote ${CONFIG_PATH}"
 else

@@ -22,6 +22,10 @@ HELPER_TOKEN_HEADER = "X-Carpo-Helper-Token"
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "carpo-helper" / "config.json"
 SECTION_PADDING_SECONDS = 3
 YTDLP_SUBPROCESS_TIMEOUT_SECONDS = 180
+# 60s safety margin under the server's 5-minute claim sweep.
+JOB_DEADLINE_SECONDS = 240.0
+MIN_PUT_BUDGET_SECONDS = 15.0
+DEADLINE_EXCEEDED_MESSAGE = "helper deadline exceeded"
 YTDLP_UPDATE_INTERVAL_SECONDS = 24 * 60 * 60
 YTDLP_UPDATE_TIMEOUT_SECONDS = 60
 ERROR_MESSAGE_MAX_LENGTH = 500
@@ -35,8 +39,38 @@ QUALITY_MAX_HEIGHT = {"720p": 720, "1080p": 1080}
 DEFAULT_QUALITY = "1080p"
 
 _shutdown_requested = False
-_active_clip_id: str | None = None
-_active_config: dict[str, Any] | None = None
+
+
+class JobAborted(Exception):
+    def __init__(self, clip_id: str):
+        super().__init__("helper shutting down")
+        self.clip_id = clip_id
+
+
+def remaining_budget(deadline: float, now: float) -> float:
+    return max(0.0, deadline - now)
+
+
+def ytdlp_timeout_for_budget(
+    budget: float,
+    base_timeout: float = YTDLP_SUBPROCESS_TIMEOUT_SECONDS,
+) -> float:
+    return max(0.0, min(base_timeout, budget))
+
+
+def render_config_json(
+    base_url: str,
+    helper_token: str,
+    cookies_from_browser: str,
+) -> str:
+    return json.dumps(
+        {
+            "baseUrl": base_url,
+            "helperToken": helper_token,
+            "cookiesFromBrowser": cookies_from_browser,
+        },
+        indent=2,
+    )
 
 
 def section_bounds(trim_start: float, trim_end: float) -> tuple[float, float]:
@@ -229,7 +263,7 @@ def find_downloaded_file(workdir: Path) -> Path:
     return candidates[0]
 
 
-def run_ytdlp(command: list[str], timeout_seconds: int) -> None:
+def run_ytdlp(command: list[str], timeout_seconds: float) -> None:
     try:
         result = subprocess.run(
             command,
@@ -239,7 +273,7 @@ def run_ytdlp(command: list[str], timeout_seconds: int) -> None:
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(f"yt-dlp timed out after {timeout_seconds}s") from exc
+        raise RuntimeError(f"yt-dlp timed out after {timeout_seconds:.0f}s") from exc
     if result.returncode != 0:
         stderr = (result.stderr or "").strip()
         stdout = (result.stdout or "").strip()
@@ -252,6 +286,7 @@ def upload_file_put(
     upload_url: str,
     file_path: Path,
     content_type: str,
+    timeout_seconds: float,
 ) -> None:
     resolved = resolve_upload_url(config["baseUrl"], upload_url)
     file_size = file_path.stat().st_size
@@ -273,7 +308,7 @@ def upload_file_put(
             method="PUT",
         )
         try:
-            with urllib.request.urlopen(request, timeout=600) as response:
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
                 if response.status not in (200, 201):
                     raise RuntimeError(f"Upload failed with status {response.status}")
         except urllib.error.HTTPError as exc:
@@ -282,16 +317,35 @@ def upload_file_put(
 
 
 def post_fail(config: dict[str, Any], clip_id: str, error_message: str) -> None:
-    status, body, _ = api_request(
-        config,
-        "POST",
-        f"/api/helper/jobs/{clip_id}/fail",
-        body={"errorMessage": truncate_error_message(error_message)},
-        include_helper_token=True,
-    )
-    if status not in (200, 202):
-        detail = body.decode("utf-8", errors="replace")
-        logging.error("fail request for %s returned %s: %s", clip_id, status, detail)
+    try:
+        status, body, _ = api_request(
+            config,
+            "POST",
+            f"/api/helper/jobs/{clip_id}/fail",
+            body={"errorMessage": truncate_error_message(error_message)},
+            include_helper_token=True,
+        )
+        if status not in (200, 202):
+            detail = body.decode("utf-8", errors="replace")
+            logging.error("fail request for %s returned %s: %s", clip_id, status, detail)
+    except Exception as exc:
+        logging.error(
+            "fail request for %s errored: %s (server claim sweep is the backstop)",
+            clip_id,
+            exc,
+        )
+
+
+def check_abort(clip_id: str) -> None:
+    if _shutdown_requested:
+        raise JobAborted(clip_id)
+
+
+def check_deadline(deadline: float, minimum_budget: float = 0.0) -> float:
+    budget = remaining_budget(deadline, time.monotonic())
+    if budget <= minimum_budget:
+        raise RuntimeError(DEADLINE_EXCEEDED_MESSAGE)
+    return budget
 
 
 def process_job(
@@ -300,9 +354,8 @@ def process_job(
     *,
     dry_run: bool = False,
 ) -> None:
-    global _active_clip_id
     clip_id = job["clipId"]
-    _active_clip_id = clip_id
+    deadline = time.monotonic() + JOB_DEADLINE_SECONDS
     url = job["url"]
     trim_start = float(job["trimStart"])
     trim_end = float(job["trimEnd"])
@@ -324,8 +377,9 @@ def process_job(
             cookies_from_browser=config.get("cookiesFromBrowser"),
         )
 
+        download_budget = check_deadline(deadline)
         download_started = time.monotonic()
-        run_ytdlp(command, YTDLP_SUBPROCESS_TIMEOUT_SECONDS)
+        run_ytdlp(command, ytdlp_timeout_for_budget(download_budget))
         source_path = find_downloaded_file(workdir)
         size_bytes = source_path.stat().st_size
         size_mb = size_bytes / (1024 * 1024)
@@ -337,6 +391,7 @@ def process_job(
             size_mb,
         )
 
+        check_abort(clip_id)
         content_type = content_type_for_path(source_path)
         if content_type is None:
             raise RuntimeError(
@@ -349,6 +404,8 @@ def process_job(
             logging.info("failed clipId=%s: dry run", clip_id)
             return
 
+        check_abort(clip_id)
+        check_deadline(deadline)
         status, body, _ = api_request(
             config,
             "POST",
@@ -376,9 +433,13 @@ def process_job(
                 f"Section too large for helper upload ({size_mb:.0f}MB)",
             )
 
-        upload_file_put(config, upload_url, source_path, content_type)
+        check_abort(clip_id)
+        put_budget = check_deadline(deadline, MIN_PUT_BUDGET_SECONDS)
+        upload_file_put(config, upload_url, source_path, content_type, put_budget)
         logging.info("uploaded clipId=%s key=%s", clip_id, upload_key)
 
+        check_abort(clip_id)
+        check_deadline(deadline)
         fulfill_status, fulfill_body, _ = api_request(
             config,
             "POST",
@@ -391,12 +452,13 @@ def process_job(
             raise RuntimeError(f"fulfill request failed ({fulfill_status}): {detail}")
 
         logging.info("fulfilled clipId=%s sectionStart=%.1f", clip_id, section_start)
+    except JobAborted:
+        raise
     except Exception as exc:
         logging.exception("job failed clipId=%s", clip_id)
         post_fail(config, clip_id, str(exc))
         logging.info("failed clipId=%s: %s", clip_id, truncate_error_message(str(exc)))
     finally:
-        _active_clip_id = None
         if workdir and workdir.exists():
             shutil.rmtree(workdir, ignore_errors=True)
 
@@ -438,12 +500,9 @@ def update_ytdlp(config: dict[str, Any]) -> None:
         logging.warning("yt-dlp update error: %s", exc)
 
 
-def handle_shutdown_signal(signum: int, _frame: Any) -> None:
+def handle_shutdown_signal(_signum: int, _frame: Any) -> None:
     global _shutdown_requested
-    logging.info("received signal %s, shutting down", signum)
     _shutdown_requested = True
-    if _active_clip_id and _active_config:
-        post_fail(_active_config, _active_clip_id, "helper shutting down")
 
 
 def configure_logging() -> None:
@@ -456,32 +515,36 @@ def configure_logging() -> None:
 
 
 def run_loop(config: dict[str, Any], *, once: bool = False, dry_run: bool = False) -> None:
-    global _active_config
-    _active_config = config
-
     update_ytdlp(config)
     last_update = time.monotonic()
     backoff_seconds = config["pollIntervalSeconds"]
 
     while not _shutdown_requested:
         try:
-            job = try_claim(config)
-            backoff_seconds = config["pollIntervalSeconds"]
-        except (urllib.error.URLError, TimeoutError, RuntimeError) as exc:
-            logging.error("claim error: %s", exc)
-            time.sleep(backoff_seconds)
-            backoff_seconds = min(backoff_seconds * 2, 60.0)
-            if once:
-                return
-            continue
+            try:
+                job = try_claim(config)
+                backoff_seconds = config["pollIntervalSeconds"]
+            except Exception as exc:
+                logging.error("claim error: %s", exc)
+                time.sleep(backoff_seconds)
+                backoff_seconds = min(backoff_seconds * 2, 60.0)
+                if once:
+                    return
+                continue
 
-        if job is None:
-            if once:
-                return
-            time.sleep(config["pollIntervalSeconds"])
-            continue
+            if job is None:
+                if once:
+                    return
+                time.sleep(config["pollIntervalSeconds"])
+                continue
 
-        process_job(config, job, dry_run=dry_run)
+            process_job(config, job, dry_run=dry_run)
+        except JobAborted as exc:
+            logging.info("shutdown requested; failing claimed clipId=%s", exc.clip_id)
+            post_fail(config, exc.clip_id, "helper shutting down")
+            return
+        except Exception:
+            logging.exception("unexpected error in job cycle; continuing")
 
         if once:
             return

@@ -4,19 +4,27 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 from carpo_helper import (
+    JOB_DEADLINE_SECONDS,
+    MIN_PUT_BUDGET_SECONDS,
+    YTDLP_SUBPROCESS_TIMEOUT_SECONDS,
     build_ytdlp_command,
     content_type_for_path,
     load_config,
+    remaining_budget,
+    render_config_json,
     resolve_upload_url,
     section_bounds,
     truncate_error_message,
     validate_config,
     ytdlp_format_for_quality,
+    ytdlp_timeout_for_budget,
 )
 
 
@@ -176,6 +184,68 @@ class ErrorTruncationTests(unittest.TestCase):
         truncated = truncate_error_message(message)
         self.assertEqual(len(truncated), 500)
         self.assertTrue(truncated.endswith("..."))
+
+
+class DeadlineBudgetTests(unittest.TestCase):
+    def test_remaining_budget_positive(self) -> None:
+        self.assertEqual(remaining_budget(100.0, 40.0), 60.0)
+
+    def test_remaining_budget_clamped_at_zero(self) -> None:
+        self.assertEqual(remaining_budget(100.0, 150.0), 0.0)
+
+    def test_ytdlp_timeout_capped_by_base(self) -> None:
+        self.assertEqual(ytdlp_timeout_for_budget(500.0), YTDLP_SUBPROCESS_TIMEOUT_SECONDS)
+
+    def test_ytdlp_timeout_capped_by_budget(self) -> None:
+        self.assertEqual(ytdlp_timeout_for_budget(42.0), 42.0)
+
+    def test_ytdlp_timeout_never_negative(self) -> None:
+        self.assertEqual(ytdlp_timeout_for_budget(-5.0), 0.0)
+
+    def test_deadline_leaves_safety_margin_under_claim_ttl(self) -> None:
+        self.assertLessEqual(JOB_DEADLINE_SECONDS, 300.0 - 60.0)
+
+    def test_put_budget_floor(self) -> None:
+        self.assertGreater(MIN_PUT_BUDGET_SECONDS, 0.0)
+
+
+class RenderConfigJsonTests(unittest.TestCase):
+    def test_round_trips_plain_values(self) -> None:
+        rendered = render_config_json("https://carpo.example.com", "tok", "chrome")
+        parsed = json.loads(rendered)
+        self.assertEqual(parsed["baseUrl"], "https://carpo.example.com")
+        self.assertEqual(parsed["helperToken"], "tok")
+        self.assertEqual(parsed["cookiesFromBrowser"], "chrome")
+
+    def test_escapes_quotes_and_backslashes(self) -> None:
+        token = 'we"ird\\to"ken'
+        rendered = render_config_json("https://x.example", token, "chrome")
+        self.assertEqual(json.loads(rendered)["helperToken"], token)
+
+    def test_install_sh_invocation_produces_valid_json(self) -> None:
+        helper_dir = str(Path(__file__).resolve().parent)
+        snippet = (
+            "import sys; sys.path.insert(0, sys.argv[1]); "
+            "from carpo_helper import render_config_json; "
+            "print(render_config_json(sys.argv[2], sys.argv[3], sys.argv[4]))"
+        )
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                snippet,
+                helper_dir,
+                "https://carpo.example.com",
+                'tok"en\\with$pecial`chars',
+                "firefox",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        parsed = json.loads(result.stdout)
+        self.assertEqual(parsed["helperToken"], 'tok"en\\with$pecial`chars')
+        self.assertEqual(parsed["cookiesFromBrowser"], "firefox")
 
 
 class ContentTypeTests(unittest.TestCase):
