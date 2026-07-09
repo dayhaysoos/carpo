@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { JOB_SECRET_HEADER } from "../src/auth";
 import type { Env } from "../src/env";
+import { applyStatusUpdate } from "../src/jobs";
 import type { EncoderJobSpec } from "../src/types";
 
 const FAKE_MP4 = new Uint8Array([
@@ -22,6 +23,12 @@ export const STUB_VERIFY_WORKER_BASE_URL =
   "https://www.youtube.com/watch?v=stub-verify-worker-base-url";
 export const STUB_NO_CALLBACKS_SLOW_RUN_URL =
   "https://www.youtube.com/watch?v=stub-no-callbacks-slow-run";
+export const STUB_DEFERRED_COPY_FAILURE_UPLOAD_KEY =
+  "uploads/stub-deferred-copy-failure.mp4";
+export const STUB_DEFERRED_SLOW_UPLOAD_KEY =
+  "uploads/stub-deferred-slow-upload.mp4";
+export const STUB_DEFERRED_AMBIGUOUS_FAILURE_UPLOAD_KEY =
+  "uploads/stub-deferred-ambiguous-failure.mp4";
 
 /**
  * Test double for the encoder container binding.
@@ -69,6 +76,11 @@ export class EncoderStub extends DurableObject<Env> {
       "Content-Type": "application/json",
       [JOB_SECRET_HEADER]: job.callbackSecret,
     };
+
+    if (job.source.type === "upload") {
+      return this.handleDeferredUploadRun(job);
+    }
+
     const sourceUrl =
       job.source.type === "youtube" ? job.source.url : "";
     const skipCompleteCallback = sourceUrl.includes(
@@ -144,6 +156,75 @@ export class EncoderStub extends DurableObject<Env> {
         body: JSON.stringify({ status: "complete" }),
       });
     }
+
+    return Response.json({
+      status: "complete",
+      outputs: job.outputs,
+    });
+  }
+
+  private async handleDeferredUploadRun(
+    job: EncoderJobSpec,
+  ): Promise<Response> {
+    for (const status of ["downloading", "encoding", "uploading"] as const) {
+      await applyStatusUpdate(this.env, job.jobId, status);
+    }
+
+    const slowDeferredCopy = job.source.key.includes("stub-deferred-slow-upload");
+    if (slowDeferredCopy) {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+
+    const copyFailure = job.source.key.includes("stub-deferred-copy-failure");
+    const ambiguousFailure = job.source.key.includes(
+      "stub-deferred-ambiguous-failure",
+    );
+
+    if (copyFailure) {
+      await this.env.CLIPS_BUCKET.put(job.outputs.mp4Key, FAKE_MP4, {
+        httpMetadata: { contentType: "video/mp4" },
+      });
+      return Response.json(
+        {
+          status: "failed",
+          errorMessage: "Failed to read encoded thumbnail (simulated)",
+        },
+        { status: 500 },
+      );
+    }
+
+    await this.env.CLIPS_BUCKET.put(job.outputs.mp4Key, FAKE_MP4, {
+      httpMetadata: { contentType: "video/mp4" },
+    });
+    await this.env.CLIPS_BUCKET.put(job.outputs.thumbnailKey, FAKE_JPEG, {
+      httpMetadata: { contentType: "image/jpeg" },
+    });
+
+    const [mp4Head, thumbHead] = await Promise.all([
+      this.env.CLIPS_BUCKET.head(job.outputs.mp4Key),
+      this.env.CLIPS_BUCKET.head(job.outputs.thumbnailKey),
+    ]);
+    if (!mp4Head || !thumbHead) {
+      return Response.json(
+        {
+          status: "failed",
+          errorMessage: "Encoded artifacts were not durably stored in R2",
+        },
+        { status: 500 },
+      );
+    }
+
+    if (ambiguousFailure) {
+      // Mirror production DO: signal complete after R2 verify, but lose /run
+      // response so the worker marks ambiguous-failed and recovers via the signal.
+      void (async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        await applyStatusUpdate(this.env, job.jobId, "complete");
+      })();
+      return new Response("upstream timeout", { status: 502 });
+    }
+
+    await applyStatusUpdate(this.env, job.jobId, "complete");
 
     return Response.json({
       status: "complete",

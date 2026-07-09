@@ -186,6 +186,16 @@ export async function deleteClipArtifacts(
   await Promise.all([...keysToDelete].map((key) => bucket.delete(key)));
 }
 
+export async function deleteUploadSource(
+  bucket: R2Bucket,
+  record: Pick<ClipRecord, "source_type" | "source_ref">,
+): Promise<void> {
+  if (record.source_type !== "upload") {
+    return;
+  }
+  await bucket.delete(record.source_ref);
+}
+
 export function outputKeysForClip(clipId: string): {
   mp4Key: string;
   thumbnailKey: string;

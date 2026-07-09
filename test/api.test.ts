@@ -10,6 +10,9 @@ import { dispatchEncodingJob, failClipAmbiguous } from "../src/jobs";
 import {
   STUB_AMBIGUOUS_FAILURE_URL,
   STUB_CONTAINER_START_FAILURE_URL,
+  STUB_DEFERRED_COPY_FAILURE_UPLOAD_KEY,
+  STUB_DEFERRED_AMBIGUOUS_FAILURE_UPLOAD_KEY,
+  STUB_DEFERRED_SLOW_UPLOAD_KEY,
   STUB_NO_CALLBACKS_SLOW_RUN_URL,
   STUB_SKIP_COMPLETE_CALLBACK_URL,
   STUB_VERIFY_WORKER_BASE_URL,
@@ -24,6 +27,16 @@ async function workerFetch(
   const response = await exports.default.fetch(request, env, ctx);
   await waitOnExecutionContext(ctx);
   return response;
+}
+
+async function workerFetchWithoutWaitingForBackground(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<{ response: Response; ctx: ExecutionContext }> {
+  const request = new Request(input, init);
+  const ctx = createExecutionContext();
+  const response = await exports.default.fetch(request, env, ctx);
+  return { response, ctx };
 }
 
 async function createYoutubeClip(title = "test clip") {
@@ -48,6 +61,409 @@ async function createYoutubeClip(title = "test clip") {
   expect(record?.callback_secret).toBeTruthy();
   return { clipId: body.id, secret: record!.callback_secret };
 }
+
+describe("POST /api/upload-url", () => {
+  it("issues an upload URL for supported video types and sizes", async () => {
+    const response = await workerFetch("http://example.com/api/upload-url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contentType: "video/mp4",
+        sizeBytes: 1024,
+        filename: "clip.mp4",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      key: string;
+      uploadUrl: string;
+      maxSizeBytes: number;
+      contentType: string;
+      method: string;
+    };
+    expect(body.key).toMatch(/^uploads\/[0-9a-f-]+\.mp4$/i);
+    expect(body.uploadUrl).toContain(encodeURIComponent(body.key));
+    expect(body.maxSizeBytes).toBeGreaterThan(0);
+    expect(body.contentType).toBe("video/mp4");
+    expect(body.method).toBe("PUT");
+  });
+
+  it("rejects unsupported content types", async () => {
+    const response = await workerFetch("http://example.com/api/upload-url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contentType: "image/png",
+        sizeBytes: 1024,
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as {
+      error: string;
+      details: Array<{ field: string; message: string }>;
+    };
+    expect(body.error).toBe("Validation failed");
+    expect(body.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ field: "contentType" }),
+      ]),
+    );
+  });
+
+  it("rejects oversized uploads at issuance time", async () => {
+    const response = await workerFetch("http://example.com/api/upload-url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contentType: "video/mp4",
+        sizeBytes: 96 * 1024 * 1024,
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as {
+      error: string;
+      details: Array<{ field: string; message: string }>;
+    };
+    expect(body.error).toBe("Validation failed");
+    expect(body.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ field: "sizeBytes" }),
+      ]),
+    );
+  });
+});
+
+describe("PUT /api/uploads/:key", () => {
+  it("streams an uploaded video into R2 and enforces size/type limits", async () => {
+    const slotResponse = await workerFetch("http://example.com/api/upload-url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contentType: "video/mp4",
+        sizeBytes: 128,
+        filename: "tiny.mp4",
+      }),
+    });
+    expect(slotResponse.status).toBe(200);
+    const slot = (await slotResponse.json()) as {
+      key: string;
+      uploadUrl: string;
+    };
+
+    const payload = new Uint8Array([0x00, 0x00, 0x00, 0x1c, 0x66, 0x74, 0x79, 0x70]);
+    const upload = await workerFetch(slot.uploadUrl, {
+      method: "PUT",
+      headers: { "Content-Type": "video/mp4" },
+      body: payload,
+    });
+    expect(upload.status).toBe(201);
+
+    const stored = await env.CLIPS_BUCKET.get(slot.key);
+    expect(stored).not.toBeNull();
+    expect(stored?.httpMetadata?.contentType).toBe("video/mp4");
+  });
+
+  it("rejects non-video content types on upload", async () => {
+    const slotResponse = await workerFetch("http://example.com/api/upload-url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contentType: "video/mp4",
+        sizeBytes: 64,
+      }),
+    });
+    const slot = (await slotResponse.json()) as { uploadUrl: string };
+
+    const upload = await workerFetch(slot.uploadUrl, {
+      method: "PUT",
+      headers: { "Content-Type": "text/plain" },
+      body: new Uint8Array([1, 2, 3]),
+    });
+    expect(upload.status).toBe(415);
+  });
+});
+
+describe("upload source cleanup", () => {
+  it("deletes the uploaded source object after a job completes", async () => {
+    const uploadKey = "uploads/cleanup-on-complete.mp4";
+    await env.CLIPS_BUCKET.put(uploadKey, new Uint8Array([0, 1, 2, 3]), {
+      httpMetadata: { contentType: "video/mp4" },
+    });
+
+    const response = await workerFetch("http://example.com/api/clips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "upload cleanup complete",
+        source: { type: "upload", key: uploadKey },
+        trimStart: 0,
+        trimEnd: 5,
+      }),
+    });
+    expect(response.status).toBe(201);
+    const created = (await response.json()) as { id: string };
+    const clipId = created.id;
+    const keys = outputKeysForClip(clipId);
+
+    let lastBody: Record<string, unknown> = { status: "queued" };
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const statusResponse = await workerFetch(
+        `http://example.com/api/clips/${clipId}`,
+      );
+      expect(statusResponse.status).toBe(200);
+      lastBody = (await statusResponse.json()) as Record<string, unknown>;
+      if (lastBody.status === "complete" || lastBody.status === "failed") {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    expect(lastBody.status).toBe("complete");
+    expect(await env.CLIPS_BUCKET.get(uploadKey)).toBeNull();
+    expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).not.toBeNull();
+  });
+
+  it("deletes the uploaded source object after a confirmed failure", async () => {
+    const uploadKey = "uploads/cleanup-on-failure.mp4";
+    await env.CLIPS_BUCKET.put(uploadKey, new Uint8Array([0, 1, 2, 3]), {
+      httpMetadata: { contentType: "video/mp4" },
+    });
+
+    const response = await workerFetch("http://example.com/api/clips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "upload cleanup failed",
+        source: { type: "upload", key: uploadKey },
+        trimStart: 0,
+        trimEnd: 5,
+      }),
+    });
+    expect(response.status).toBe(201);
+    const created = (await response.json()) as { id: string };
+    const clipId = created.id;
+    const record = await getClipById(env.DB, clipId);
+    expect(record?.callback_secret).toBeTruthy();
+
+    const fail = await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [JOB_SECRET_HEADER]: record!.callback_secret,
+        },
+        body: JSON.stringify({
+          status: "failed",
+          errorMessage: "encoding failed",
+        }),
+      },
+    );
+    expect(fail.status).toBe(200);
+    expect(await env.CLIPS_BUCKET.get(uploadKey)).toBeNull();
+  });
+});
+
+describe("deferred upload artifact staging", () => {
+  it("completes upload-source jobs only after deferred artifacts land in R2", async () => {
+    const uploadKey = "uploads/stub-deferred-success.mp4";
+    await env.CLIPS_BUCKET.put(uploadKey, new Uint8Array([0, 1, 2, 3]), {
+      httpMetadata: { contentType: "video/mp4" },
+    });
+
+    const response = await workerFetch("http://example.com/api/clips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "deferred upload success",
+        source: { type: "upload", key: uploadKey },
+        trimStart: 0,
+        trimEnd: 5,
+        filters: [],
+      }),
+    });
+    expect(response.status).toBe(201);
+    const created = (await response.json()) as { id: string };
+    const clipId = created.id;
+    const keys = outputKeysForClip(clipId);
+
+    let lastBody: Record<string, unknown> = { status: "queued" };
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const statusResponse = await workerFetch(
+        `http://example.com/api/clips/${clipId}`,
+      );
+      expect(statusResponse.status).toBe(200);
+      lastBody = (await statusResponse.json()) as Record<string, unknown>;
+      if (lastBody.status === "complete" || lastBody.status === "failed") {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    expect(lastBody.status).toBe("complete");
+    expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).not.toBeNull();
+    expect(await env.CLIPS_BUCKET.get(keys.thumbnailKey)).not.toBeNull();
+    expect(await env.CLIPS_BUCKET.get(uploadKey)).toBeNull();
+
+    const persisted = await getClipById(env.DB, clipId);
+    expect(persisted?.status).toBe("complete");
+    expect(persisted?.output_mp4_key).toBe(keys.mp4Key);
+    expect(persisted?.output_thumbnail_key).toBe(keys.thumbnailKey);
+  });
+
+  it("fails upload-source jobs when deferred artifact copy fails", async () => {
+    const uploadKey = STUB_DEFERRED_COPY_FAILURE_UPLOAD_KEY;
+    await env.CLIPS_BUCKET.put(uploadKey, new Uint8Array([0, 1, 2, 3]), {
+      httpMetadata: { contentType: "video/mp4" },
+    });
+
+    const response = await workerFetch("http://example.com/api/clips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "deferred upload copy failure",
+        source: { type: "upload", key: uploadKey },
+        trimStart: 0,
+        trimEnd: 5,
+        filters: [],
+      }),
+    });
+    expect(response.status).toBe(201);
+    const created = (await response.json()) as { id: string };
+    const clipId = created.id;
+    const keys = outputKeysForClip(clipId);
+
+    let lastBody: Record<string, unknown> = { status: "queued" };
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const statusResponse = await workerFetch(
+        `http://example.com/api/clips/${clipId}`,
+      );
+      expect(statusResponse.status).toBe(200);
+      lastBody = (await statusResponse.json()) as Record<string, unknown>;
+      if (lastBody.status === "complete" || lastBody.status === "failed") {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    expect(lastBody.status).toBe("failed");
+    expect(lastBody.errorMessage).toBeTruthy();
+
+    const persisted = await getClipById(env.DB, clipId);
+    expect(persisted?.status).toBe("failed");
+    expect(persisted?.failure_mode).toBe("confirmed");
+    expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).toBeNull();
+    expect(await env.CLIPS_BUCKET.get(keys.thumbnailKey)).toBeNull();
+    expect(await env.CLIPS_BUCKET.get(uploadKey)).toBeNull();
+  });
+
+  it("reports uploading during deferred artifact copy", async () => {
+    const uploadKey = STUB_DEFERRED_SLOW_UPLOAD_KEY;
+    await env.CLIPS_BUCKET.put(uploadKey, new Uint8Array([0, 1, 2, 3]), {
+      httpMetadata: { contentType: "video/mp4" },
+    });
+
+    const { response, ctx } = await workerFetchWithoutWaitingForBackground(
+      "http://example.com/api/clips",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: "deferred upload slow copy",
+          source: { type: "upload", key: uploadKey },
+          trimStart: 0,
+          trimEnd: 5,
+          filters: [],
+        }),
+      },
+    );
+    expect(response.status).toBe(201);
+    const created = (await response.json()) as { id: string };
+    const clipId = created.id;
+
+    const seenStatuses = new Set<string>();
+    let lastBody: Record<string, unknown> = { status: "queued" };
+
+    const dispatchDone = waitOnExecutionContext(ctx);
+    while (true) {
+      const statusResponse = await workerFetch(
+        `http://example.com/api/clips/${clipId}`,
+      );
+      expect(statusResponse.status).toBe(200);
+      lastBody = (await statusResponse.json()) as Record<string, unknown>;
+      if (typeof lastBody.status === "string") {
+        seenStatuses.add(lastBody.status);
+      }
+      if (lastBody.status === "complete" || lastBody.status === "failed") {
+        break;
+      }
+      await Promise.race([
+        dispatchDone,
+        new Promise((resolve) => setTimeout(resolve, 10)),
+      ]);
+    }
+
+    await dispatchDone;
+
+    expect(seenStatuses.has("uploading")).toBe(true);
+    expect(lastBody.status).toBe("complete");
+  });
+
+  it("recovers ambiguous-failed deferred upload jobs via DO complete signal", async () => {
+    const uploadKey = STUB_DEFERRED_AMBIGUOUS_FAILURE_UPLOAD_KEY;
+    await env.CLIPS_BUCKET.put(uploadKey, new Uint8Array([0, 1, 2, 3]), {
+      httpMetadata: { contentType: "video/mp4" },
+    });
+
+    const response = await workerFetch("http://example.com/api/clips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "deferred ambiguous recovery",
+        source: { type: "upload", key: uploadKey },
+        trimStart: 0,
+        trimEnd: 5,
+        filters: [],
+      }),
+    });
+    expect(response.status).toBe(201);
+    const created = (await response.json()) as { id: string };
+    const clipId = created.id;
+    const keys = outputKeysForClip(clipId);
+
+    let failedRecord: Awaited<ReturnType<typeof getClipById>> = null;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      failedRecord = await getClipById(env.DB, clipId);
+      if (failedRecord?.status === "failed") {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    expect(failedRecord?.status).toBe("failed");
+    expect(failedRecord?.failure_mode).toBe("ambiguous");
+    expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).not.toBeNull();
+    expect(await env.CLIPS_BUCKET.get(keys.thumbnailKey)).not.toBeNull();
+
+    let recovered: Awaited<ReturnType<typeof getClipById>> = null;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      recovered = await getClipById(env.DB, clipId);
+      if (recovered?.status === "complete") {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    expect(recovered?.status).toBe("complete");
+    expect(recovered?.failure_mode).toBeNull();
+    expect(recovered?.output_mp4_key).toBe(keys.mp4Key);
+    expect(recovered?.output_thumbnail_key).toBe(keys.thumbnailKey);
+    expect(await env.CLIPS_BUCKET.get(uploadKey)).toBeNull();
+  });
+});
 
 describe("POST /api/clips", () => {
   it("creates a clip job for a valid YouTube URL and trim window", async () => {
@@ -150,13 +566,62 @@ describe("POST /api/clips", () => {
     );
   });
 
-  it("rejects upload sources until slice 6", async () => {
+  it("accepts upload sources when the object exists in R2", async () => {
+    const uploadKey = "uploads/test-source.mp4";
+    await env.CLIPS_BUCKET.put(uploadKey, new Uint8Array([0, 1, 2, 3]), {
+      httpMetadata: { contentType: "video/mp4" },
+    });
+
     const response = await workerFetch("http://example.com/api/clips", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         title: "upload clip",
-        source: { type: "upload", key: "uploads/some-key.mp4" },
+        source: { type: "upload", key: uploadKey },
+        trimStart: 0,
+        trimEnd: 5,
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as {
+      source: { type: string; key: string };
+    };
+    expect(body.source).toEqual({ type: "upload", key: uploadKey });
+  });
+
+  it("rejects upload sources when the object is missing from R2", async () => {
+    const response = await workerFetch("http://example.com/api/clips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "missing upload",
+        source: { type: "upload", key: "uploads/does-not-exist.mp4" },
+        trimStart: 0,
+        trimEnd: 5,
+      }),
+    });
+
+    expect(response.status).toBe(404);
+    const body = (await response.json()) as {
+      error: string;
+      details: Array<{ field: string; message: string }>;
+    };
+    expect(body.error).toBe("Upload not found");
+    expect(body.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ field: "source.key" }),
+      ]),
+    );
+  });
+
+  it("rejects invalid upload keys", async () => {
+    const response = await workerFetch("http://example.com/api/clips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "bad upload key",
+        source: { type: "upload", key: "clips/not-an-upload.mp4" },
         trimStart: 0,
         trimEnd: 5,
       }),
@@ -170,10 +635,7 @@ describe("POST /api/clips", () => {
     expect(body.error).toBe("Validation failed");
     expect(body.details).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({
-          field: "source.type",
-          message: expect.stringContaining("not supported"),
-        }),
+        expect.objectContaining({ field: "source.key" }),
       ]),
     );
   });

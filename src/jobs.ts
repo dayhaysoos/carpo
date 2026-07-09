@@ -1,5 +1,6 @@
 import {
   deleteClipArtifacts,
+  deleteUploadSource,
   getClipById,
   insertClip,
   markClipComplete,
@@ -136,11 +137,21 @@ export async function dispatchEncodingJob(
         return;
       }
 
+      if (result.status !== "complete") {
+        await failClipAmbiguous(
+          env,
+          clipId,
+          `Unexpected encoder status: ${result.status ?? "unknown"}`,
+        );
+        return;
+      }
+
       // Authoritative completion: trust the successful /run body over callbacks.
       const mp4Key = result.outputs?.mp4Key ?? outputKeys.mp4Key;
       const thumbnailKey =
         result.outputs?.thumbnailKey ?? outputKeys.thumbnailKey;
       await markClipComplete(env.DB, clipId, mp4Key, thumbnailKey);
+      await cleanupUploadSource(env, clipId);
     } finally {
       clearInterval(keepAlive);
       await markContainerJobRunningSafe(container, false);
@@ -167,6 +178,7 @@ export async function failClip(
   clipId: string,
   errorMessage: string,
 ): Promise<void> {
+  const record = await getClipById(env.DB, clipId);
   const marked = await markClipFailed(
     env.DB,
     clipId,
@@ -178,6 +190,9 @@ export async function failClip(
   }
 
   await deleteClipArtifacts(env.CLIPS_BUCKET, clipId);
+  if (record) {
+    await deleteUploadSource(env.CLIPS_BUCKET, record);
+  }
 }
 
 export async function failClipAmbiguous(
@@ -222,6 +237,7 @@ export async function applyStatusUpdate(
     if (status === "complete") {
       const keys = outputKeysForClip(clipId);
       await markClipComplete(env.DB, clipId, keys.mp4Key, keys.thumbnailKey);
+      await cleanupUploadSource(env, clipId);
       return;
     }
     if (status === "failed") {
@@ -234,6 +250,7 @@ export async function applyStatusUpdate(
   if (status === "complete") {
     const keys = outputKeysForClip(clipId);
     await markClipComplete(env.DB, clipId, keys.mp4Key, keys.thumbnailKey);
+    await cleanupUploadSource(env, clipId);
     return;
   }
 
@@ -278,4 +295,12 @@ function startActivityRenewal(
       method: "POST",
     });
   }, ACTIVITY_RENEWAL_MS);
+}
+
+async function cleanupUploadSource(env: Env, clipId: string): Promise<void> {
+  const record = await getClipById(env.DB, clipId);
+  if (!record) {
+    return;
+  }
+  await deleteUploadSource(env.CLIPS_BUCKET, record);
 }

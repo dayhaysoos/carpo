@@ -21,6 +21,8 @@ from typing import Any
 MAX_CLIP_LENGTH_SECONDS = 60
 HOST = "0.0.0.0"
 PORT = int(os.environ.get("PORT", "8080"))
+STAGED_UPLOAD_PATH = "/tmp/carpo-upload-source.mp4"
+STAGE_SOURCE_CHUNK_SIZE = 1024 * 1024
 JOB_SECRET_HEADER = "X-Carpo-Job-Secret"
 MAX_CALLBACK_ATTEMPTS = 5
 MAX_INTERMEDIATE_CALLBACK_ATTEMPTS = 3
@@ -29,6 +31,7 @@ DOWNLOAD_TIMEOUT_SECONDS = 600
 ENCODE_TIMEOUT_SECONDS = 600
 UPLOAD_TIMEOUT_SECONDS = 600
 VIDEO_CONTAINER_EXTENSIONS = ("mp4", "mkv", "webm")
+DEFERRED_OUTPUT_DIR = Path("/tmp/carpo-output")
 DEJAVU_FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 KNOWN_FILTER_TYPES = frozenset({"caption"})
 
@@ -193,7 +196,9 @@ def validate_job(job: dict[str, Any]) -> str | None:
         if not isinstance(path, str) or not Path(path).exists():
             return "Local file path is required for file source"
     elif source_type == "upload":
-        return "Upload sources are not supported in slice 1"
+        fetch_url = job.get("sourceFetchUrl")
+        if not isinstance(fetch_url, str) or not fetch_url.strip():
+            return "sourceFetchUrl is required for upload sources"
     else:
         return "source.type must be youtube, upload, or file"
 
@@ -245,6 +250,44 @@ def select_source_file(candidates: list[Path]) -> Path:
             return len(VIDEO_CONTAINER_EXTENSIONS)
 
     return min(video_files, key=preference_key)
+
+
+def download_upload(
+    fetch_url: str,
+    workdir: Path,
+    *,
+    secret: str | None = None,
+) -> Path:
+    headers: dict[str, str] = {}
+    if secret:
+        headers[JOB_SECRET_HEADER] = secret
+
+    request = urllib.request.Request(fetch_url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=DOWNLOAD_TIMEOUT_SECONDS) as response:
+            content_type = response.headers.get("Content-Type", "video/mp4")
+            ext = "mp4"
+            normalized = content_type.split(";")[0].strip().lower()
+            if normalized == "video/webm":
+                ext = "webm"
+            elif normalized == "video/quicktime":
+                ext = "mov"
+            elif normalized == "video/x-matroska":
+                ext = "mkv"
+
+            destination = workdir / f"source.{ext}"
+            with destination.open("wb") as handle:
+                shutil.copyfileobj(response, handle)
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(
+            f"Failed to fetch upload source ({exc.code}): {exc.reason}",
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Failed to fetch upload source: {exc}") from exc
+
+    if not destination.exists() or destination.stat().st_size == 0:
+        raise RuntimeError("Upload source download produced an empty file")
+    return destination
 
 
 def download_youtube(url: str, workdir: Path) -> Path:
@@ -436,6 +479,36 @@ def copy_outputs_locally(job: dict[str, Any], mp4_path: Path, thumb_path: Path) 
     shutil.copy2(thumb_path, out_dir / Path(outputs.get("thumbnailKey", "thumbnail.jpg")).name)
 
 
+class TruncatedBodyError(ValueError):
+    """Raised when fewer bytes were received than Content-Length declared."""
+
+
+def stream_upload_source(rfile, length: int) -> None:
+    path = Path(STAGED_UPLOAD_PATH)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    received = 0
+    try:
+        with path.open("wb") as handle:
+            while received < length:
+                to_read = min(STAGE_SOURCE_CHUNK_SIZE, length - received)
+                chunk = rfile.read(to_read)
+                if not chunk:
+                    break
+                handle.write(chunk)
+                received += len(chunk)
+
+        if received != length:
+            raise TruncatedBodyError(
+                f"Expected {length} bytes, received {received}",
+            )
+        if received == 0:
+            raise RuntimeError("Staged upload source is empty")
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+
+
 def run_result(
     status: str,
     job: dict[str, Any],
@@ -445,7 +518,7 @@ def run_result(
     result: dict[str, Any] = {"status": status}
     if error_message is not None:
         result["errorMessage"] = error_message
-    if status == "complete":
+    if status in ("complete", "staged"):
         outputs = job.get("outputs", {})
         result["outputs"] = {
             "mp4Key": outputs.get("mp4Key", ""),
@@ -490,7 +563,14 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
             elif source_type == "file":
                 source_path = Path(source["path"])
             elif source_type == "upload":
-                raise RuntimeError("Upload sources are not supported in slice 1")
+                fetch_url = job.get("sourceFetchUrl")
+                if not isinstance(fetch_url, str) or not fetch_url.strip():
+                    raise RuntimeError("sourceFetchUrl is required for upload sources")
+                source_path = download_upload(
+                    fetch_url,
+                    workdir,
+                    secret=callback_secret,
+                )
             else:
                 raise RuntimeError(f"Unsupported source type: {source_type}")
 
@@ -517,6 +597,8 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
                 workdir=workdir,
             )
 
+            defer_upload = bool(job.get("deferArtifactUpload"))
+
             if callback_url:
                 progress.post_resync_if_needed(
                     callback_url,
@@ -530,6 +612,10 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
 
             if job.get("localOutputDir"):
                 copy_outputs_locally(job, output_mp4, output_thumb)
+            elif defer_upload:
+                DEFERRED_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(output_mp4, DEFERRED_OUTPUT_DIR / "clip.mp4")
+                shutil.copy2(output_thumb, DEFERRED_OUTPUT_DIR / "thumbnail.jpg")
             else:
                 upload_artifacts(
                     job,
@@ -543,14 +629,17 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
                     callback_url,
                     secret=callback_secret,
                 )
-                # Terminal state is carried by the /run response; callbacks are
-                # a best-effort fast-path for polling clients.
-                progress.post(
-                    callback_url,
-                    "complete",
-                    secret=callback_secret,
-                )
+                if not defer_upload:
+                    # Terminal state is carried by the /run response; callbacks are
+                    # a best-effort fast-path for polling clients.
+                    progress.post(
+                        callback_url,
+                        "complete",
+                        secret=callback_secret,
+                    )
 
+            if defer_upload:
+                return run_result("staged", job)
             return run_result("complete", job)
         except Exception as exc:  # noqa: BLE001 - report encoder failures to caller
             message = str(exc) or "Encoding failed"
@@ -590,9 +679,53 @@ class EncoderHandler(BaseHTTPRequestHandler):
         if self.path == "/health":
             self._send_json(200, {"ok": True})
             return
+        if self.path == "/outputs/clip.mp4":
+            return self._send_file(DEFERRED_OUTPUT_DIR / "clip.mp4", "video/mp4")
+        if self.path == "/outputs/thumbnail.jpg":
+            return self._send_file(
+                DEFERRED_OUTPUT_DIR / "thumbnail.jpg",
+                "image/jpeg",
+            )
         self.send_error(404, "Not found")
 
+    def _send_file(self, path: Path, content_type: str) -> None:
+        if not path.exists():
+            self.send_error(404, "Not found")
+            return
+        file_size = path.stat().st_size
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(file_size))
+        self.end_headers()
+        with path.open("rb") as handle:
+            shutil.copyfileobj(handle, self.wfile)
+
     def do_POST(self) -> None:  # noqa: N802
+        if self.path == "/stage-source":
+            content_length = self.headers.get("Content-Length")
+            if content_length is None or not content_length.strip():
+                self.send_error(411, "Length Required")
+                return
+            try:
+                length = int(content_length)
+            except ValueError:
+                self.send_error(411, "Length Required")
+                return
+            if length < 0:
+                self.send_error(411, "Length Required")
+                return
+            try:
+                stream_upload_source(self.rfile, length)
+            except TruncatedBodyError:
+                self.send_error(400, "Bad Request")
+                return
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(500, {"status": "failed", "errorMessage": str(exc)})
+                return
+            self.send_response(204)
+            self.end_headers()
+            return
+
         if self.path != "/run":
             self.send_error(404, "Not found")
             return
@@ -604,7 +737,7 @@ class EncoderHandler(BaseHTTPRequestHandler):
             return
 
         result = process_job(job)
-        status_code = 200 if result.get("status") == "complete" else 500
+        status_code = 200 if result.get("status") in ("complete", "staged") else 500
         self._send_json(status_code, result)
 
 

@@ -3,7 +3,8 @@ import {
   MAX_CAPTION_LENGTH,
   MAX_CLIP_LENGTH_SECONDS,
 } from "./types";
-import type { CreateClipRequest, FilterSpec } from "./types";
+import type { ClipSource, CreateClipRequest, FilterSpec } from "./types";
+import { isValidUploadKey } from "./uploads";
 
 const YOUTUBE_HOSTS = new Set([
   "youtube.com",
@@ -53,14 +54,19 @@ export function validateCreateClipRequest(
         });
       }
     } else if (sourceType === "upload") {
-      errors.push({
-        field: "source.type",
-        message: "Upload sources are not supported yet; use a YouTube URL",
-      });
+      const key = typeof sourceObj.key === "string" ? sourceObj.key.trim() : "";
+      if (!key) {
+        errors.push({ field: "source.key", message: "Upload key is required" });
+      } else if (!isValidUploadKey(key)) {
+        errors.push({
+          field: "source.key",
+          message: "Upload key must be an uploads/ object key with a supported video extension",
+        });
+      }
     } else {
       errors.push({
         field: "source.type",
-        message: "Source type must be 'youtube'",
+        message: "Source type must be 'youtube' or 'upload'",
       });
     }
   }
@@ -106,10 +112,16 @@ export function validateCreateClipRequest(
   }
 
   const sourceObj = source as Record<string, unknown>;
-  const parsedSource = {
-    type: "youtube" as const,
-    url: (sourceObj.url as string).trim(),
-  };
+  const parsedSource: ClipSource =
+    sourceObj.type === "upload"
+      ? {
+          type: "upload",
+          key: (sourceObj.key as string).trim(),
+        }
+      : {
+          type: "youtube",
+          url: (sourceObj.url as string).trim(),
+        };
 
   return {
     ok: true,
