@@ -443,6 +443,10 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
     fixturesDir,
     "fake-ytdlp-multi-stream-stall.sh",
   );
+  const betweenStreamsSilenceFixture = path.join(
+    fixturesDir,
+    "fake-ytdlp-between-streams-silence.sh",
+  );
   const sectionsFixture = path.join(fixturesDir, "fake-ytdlp-sections.sh");
   const sectionsLateStartFixture = path.join(
     fixturesDir,
@@ -712,6 +716,63 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
     console.log(`  Elapsed: ${silentMerge.elapsedMs}ms`);
   } finally {
     run("docker", ["rm", "-f", `${containerName}-youtube-silent-merge`]);
+  }
+
+  const betweenStreamsSilenceJobPath = path.join(
+    failFastOutputDir,
+    "between-streams-silence-job.json",
+  );
+  fs.writeFileSync(
+    betweenStreamsSilenceJobPath,
+    JSON.stringify({ ...baseJob, jobId: "youtube-between-streams-silence" }),
+  );
+
+  try {
+    const betweenStreamsSilence = runEncoderYoutubeJob(
+      `${containerName}-youtube-between-streams-silence`,
+      18092,
+      betweenStreamsSilenceJobPath,
+      {
+        fakeYtdlpPath: betweenStreamsSilenceFixture,
+        outputDir: failFastOutputDir,
+        env: {
+          YOUTUBE_STALL_TIMEOUT_SECONDS: "5",
+          YOUTUBE_POST_100_GRACE_TIMEOUT_SECONDS: "5",
+        },
+      },
+    );
+    if (betweenStreamsSilence.result.status !== "failed") {
+      throw new Error(
+        `Expected failed status for between-streams silence fixture, got ${betweenStreamsSilence.result.status}`,
+      );
+    }
+    if (
+      betweenStreamsSilence.result.errorMessage !==
+      "YouTube appears to be blocking/stalling downloads from this server. Try uploading the video file instead."
+    ) {
+      throw new Error(
+        `Unexpected between-streams silence error message: ${betweenStreamsSilence.result.errorMessage ?? "(missing)"}`,
+      );
+    }
+    if (
+      betweenStreamsSilence.elapsedMs < 4_000 ||
+      betweenStreamsSilence.elapsedMs > 20_000
+    ) {
+      throw new Error(
+        `Between-streams silence kill timing unexpected (${betweenStreamsSilence.elapsedMs}ms); expected roughly 5-15s after video 100%`,
+      );
+    }
+    console.log(
+      "Encoder YouTube between-streams silence stall-kill contract test passed",
+    );
+    console.log(`  Elapsed: ${betweenStreamsSilence.elapsedMs}ms`);
+    console.log(`  Message: ${betweenStreamsSilence.result.errorMessage}`);
+  } finally {
+    run("docker", [
+      "rm",
+      "-f",
+      `${containerName}-youtube-between-streams-silence`,
+    ]);
   }
 
   const multiStreamStallJobPath = path.join(

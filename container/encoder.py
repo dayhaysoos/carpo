@@ -34,6 +34,9 @@ YOUTUBE_SOCKET_TIMEOUT_SECONDS = 15
 YOUTUBE_STALL_TIMEOUT_SECONDS = int(
     os.environ.get("YOUTUBE_STALL_TIMEOUT_SECONDS", "45"),
 )
+YOUTUBE_POST_100_GRACE_TIMEOUT_SECONDS = int(
+    os.environ.get("YOUTUBE_POST_100_GRACE_TIMEOUT_SECONDS", "90"),
+)
 YOUTUBE_DOWNLOAD_MAX_SECONDS = int(
     os.environ.get("YOUTUBE_DOWNLOAD_MAX_SECONDS", "600"),
 )
@@ -583,6 +586,7 @@ def run_ytdlp(command: list[str], workdir: Path) -> None:
     last_activity = time.monotonic()
     started = time.monotonic()
     stall_detection_enabled = True
+    post_process_latched = False
 
     def mark_activity() -> None:
         nonlocal last_activity
@@ -590,9 +594,10 @@ def run_ytdlp(command: list[str], workdir: Path) -> None:
             last_activity = time.monotonic()
 
     def note_ytdlp_line(line: str) -> None:
-        nonlocal stall_detection_enabled
+        nonlocal stall_detection_enabled, post_process_latched
         if _ytdlp_line_indicates_postprocess(line):
             with activity_lock:
+                post_process_latched = True
                 stall_detection_enabled = False
             return
         if _ytdlp_download_line_enables_stall_detection(line):
@@ -646,10 +651,17 @@ def run_ytdlp(command: list[str], workdir: Path) -> None:
         with activity_lock:
             idle_seconds = now - last_activity
             stall_enabled = stall_detection_enabled
-        if stall_enabled and idle_seconds > YOUTUBE_STALL_TIMEOUT_SECONDS:
-            stall_killed = True
-            _kill_process_group(proc.pid)
-            break
+            latched = post_process_latched
+        if not latched:
+            idle_limit = (
+                YOUTUBE_STALL_TIMEOUT_SECONDS
+                if stall_enabled
+                else YOUTUBE_POST_100_GRACE_TIMEOUT_SECONDS
+            )
+            if idle_seconds > idle_limit:
+                stall_killed = True
+                _kill_process_group(proc.pid)
+                break
         if now - started > YOUTUBE_DOWNLOAD_MAX_SECONDS:
             overall_timeout = True
             _kill_process_group(proc.pid)
