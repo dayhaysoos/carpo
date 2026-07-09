@@ -1,0 +1,49 @@
+{
+  "name": "carpo",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-07-09",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
+  "vars": {
+    "MAX_CLIP_LENGTH_SECONDS": "60",
+    "R2_PUBLIC_PREFIX": "/artifacts"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "carpo",
+      "database_id": "c130b680-e7fc-489e-927f-3c2139bc0afb",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "CLIPS_BUCKET",
+      "bucket_name": "carpo-clips"
+    }
+  ],
+  "containers": [
+    {
+      "class_name": "EncoderContainer",
+      "image": "./container/Dockerfile",
+      "max_instances": 10
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ENCODER_CONTAINER",
+        "class_name": "EncoderContainer"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["EncoderContainer"]
+    }
+  ]
+}

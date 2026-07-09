@@ -1,0 +1,43 @@
+{
+  "name": "carpo-test",
+  "main": "test/worker.ts",
+  "compatibility_date": "2025-07-09",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
+  "vars": {
+    "MAX_CLIP_LENGTH_SECONDS": "60",
+    "R2_PUBLIC_PREFIX": "/artifacts",
+    "WORKER_BASE_URL": "http://example.com"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "carpo",
+      "database_id": "00000000-0000-0000-0000-000000000002",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "CLIPS_BUCKET",
+      "bucket_name": "carpo-clips-test"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ENCODER_CONTAINER",
+        "class_name": "EncoderContainer"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["EncoderContainer"]
+    }
+  ]
+}
