@@ -47,7 +47,8 @@ export async function dispatchEncodingJob(
 
   const container = env.ENCODER_CONTAINER.getByName(clipId);
   const outputKeys = outputKeysForClip(clipId);
-  const workerBaseUrl = workerOrigin || env.WORKER_BASE_URL || "http://localhost:8787";
+  const workerBaseUrl =
+    env.WORKER_BASE_URL || workerOrigin || "http://localhost:8787";
   const callbackUrl = `${workerBaseUrl}/api/internal/jobs/${clipId}/status`;
 
   const jobSpec: EncoderJobSpec = {

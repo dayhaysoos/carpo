@@ -18,6 +18,8 @@ export const STUB_AMBIGUOUS_FAILURE_URL =
   "https://www.youtube.com/watch?v=stub-ambiguous-failure";
 export const STUB_CONTAINER_START_FAILURE_URL =
   "https://www.youtube.com/watch?v=stub-container-start-failure";
+export const STUB_VERIFY_WORKER_BASE_URL =
+  "https://www.youtube.com/watch?v=stub-verify-worker-base-url";
 
 /**
  * Test double for the encoder container binding.
@@ -71,6 +73,35 @@ export class EncoderStub extends DurableObject<Env> {
       "stub-skip-complete-callback",
     );
     const ambiguousFailure = sourceUrl.includes("stub-ambiguous-failure");
+    const verifyWorkerBaseUrl = sourceUrl.includes("stub-verify-worker-base-url");
+
+    if (verifyWorkerBaseUrl) {
+      const base = this.env.WORKER_BASE_URL ?? "http://localhost:8787";
+      const expectedCallback = `${base}/api/internal/jobs/${job.jobId}/status`;
+      const expectedMp4 = `${base}/api/internal/jobs/${job.jobId}/artifacts/mp4`;
+      const expectedThumb = `${base}/api/internal/jobs/${job.jobId}/artifacts/thumbnail`;
+      if (
+        job.callbackUrl !== expectedCallback ||
+        job.artifactUploadUrls.mp4 !== expectedMp4 ||
+        job.artifactUploadUrls.thumbnail !== expectedThumb
+      ) {
+        return new Response(
+          JSON.stringify({
+            error: "WORKER_BASE_URL mismatch",
+            got: {
+              callbackUrl: job.callbackUrl,
+              artifactUploadUrls: job.artifactUploadUrls,
+            },
+            expected: {
+              callbackUrl: expectedCallback,
+              mp4: expectedMp4,
+              thumbnail: expectedThumb,
+            },
+          }),
+          { status: 502 },
+        );
+      }
+    }
 
     for (const status of ["downloading", "encoding", "uploading"] as const) {
       const callbackTarget = job.callbackUrl.startsWith("http")

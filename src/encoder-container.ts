@@ -3,7 +3,11 @@ import { Container } from "@cloudflare/containers";
 // Hard ceiling for stale jobRunning keepalive. If the worker isolate dies
 // mid-/run, dispatchEncodingJob's finally never clears the flag; without a
 // TTL the container would renew forever and leak a max_instances slot.
-const JOB_RUNNING_TTL_MS = 30 * 60 * 1000;
+//
+// Budget (container/encoder.py): download 600s + encode pass 600s + encode
+// pass 600s + upload 600s + upload 600s = 3000s (~50 min) sequential worst
+// case. TTL must exceed that; 70 min gives headroom.
+const JOB_RUNNING_TTL_MS = 70 * 60 * 1000;
 
 export class EncoderContainer extends Container {
   defaultPort = 8080;
