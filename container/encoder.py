@@ -378,18 +378,46 @@ def _ytdlp_command_with_newline(command: list[str]) -> list[str]:
     return [command[0], "--newline", *command[1:]]
 
 
+_YTDLP_POSTPROCESS_MARKERS = (
+    "[Merger]",
+    "[ExtractAudio]",
+    "[FixupM3u8]",
+    "[ffmpeg]",
+)
+
+
 def _ytdlp_line_indicates_postprocess(line: str) -> bool:
     text = line.strip()
     if not text:
         return False
-    if any(
-        marker in text
-        for marker in ("[Merger]", "[ExtractAudio]", "[FixupM3u8]", "[ffmpeg]")
-    ):
+    return any(marker in text for marker in _YTDLP_POSTPROCESS_MARKERS)
+
+
+def _ytdlp_line_is_download_destination(line: str) -> bool:
+    text = line.strip()
+    return "[download]" in text and "Destination:" in text
+
+
+def _ytdlp_line_download_percent(line: str) -> float | None:
+    text = line.strip()
+    if "[download]" not in text:
+        return None
+    match = re.search(r"\b(\d+(?:\.\d+)?)%", text)
+    if not match:
+        return None
+    return float(match.group(1))
+
+
+def _ytdlp_download_line_enables_stall_detection(line: str) -> bool:
+    if _ytdlp_line_is_download_destination(line):
         return True
-    if "[download]" in text and re.search(r"\b100(?:\.\d+)?%", text):
-        return True
-    return False
+    percent = _ytdlp_line_download_percent(line)
+    return percent is not None and percent < 100
+
+
+def _ytdlp_download_line_disables_stall_detection(line: str) -> bool:
+    percent = _ytdlp_line_download_percent(line)
+    return percent is not None and percent >= 100
 
 
 def _combined_ytdlp_output(
@@ -407,7 +435,9 @@ def _classify_stall_error(
     if not combined_text.strip():
         return YOUTUBE_STALL_MESSAGE
     classified = classify_ytdlp_error(combined_text)
-    if classified == "Failed to download YouTube video.":
+    if classified == "Failed to download YouTube video." or classified.startswith(
+        "Failed to download YouTube video:",
+    ):
         return YOUTUBE_STALL_MESSAGE
     return classified
 
@@ -543,18 +573,26 @@ def run_ytdlp(command: list[str], workdir: Path) -> None:
     activity_lock = threading.Lock()
     last_activity = time.monotonic()
     started = time.monotonic()
-    postprocess_phase = False
+    stall_detection_enabled = True
 
     def mark_activity() -> None:
         nonlocal last_activity
         with activity_lock:
             last_activity = time.monotonic()
 
-    def note_postprocess(line: str) -> None:
-        nonlocal postprocess_phase
+    def note_ytdlp_line(line: str) -> None:
+        nonlocal stall_detection_enabled
         if _ytdlp_line_indicates_postprocess(line):
             with activity_lock:
-                postprocess_phase = True
+                stall_detection_enabled = False
+            return
+        if _ytdlp_download_line_enables_stall_detection(line):
+            with activity_lock:
+                stall_detection_enabled = True
+            return
+        if _ytdlp_download_line_disables_stall_detection(line):
+            with activity_lock:
+                stall_detection_enabled = False
 
     def read_stream(stream: Any, *, is_stderr: bool) -> None:
         if stream is None:
@@ -572,7 +610,7 @@ def run_ytdlp(command: list[str], workdir: Path) -> None:
                     line.rstrip("\n"),
                     YOUTUBE_STDERR_MAX_LINES,
                 )
-            note_postprocess(line)
+            note_ytdlp_line(line)
             if line.strip():
                 mark_activity()
 
@@ -598,10 +636,8 @@ def run_ytdlp(command: list[str], workdir: Path) -> None:
         now = time.monotonic()
         with activity_lock:
             idle_seconds = now - last_activity
-        if (
-            not postprocess_phase
-            and idle_seconds > YOUTUBE_STALL_TIMEOUT_SECONDS
-        ):
+            stall_enabled = stall_detection_enabled
+        if stall_enabled and idle_seconds > YOUTUBE_STALL_TIMEOUT_SECONDS:
             stall_killed = True
             _kill_process_group(proc.pid)
             break

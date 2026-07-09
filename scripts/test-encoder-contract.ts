@@ -233,6 +233,46 @@ print("YouTube error classification test passed")
   run("python3", ["-c", script]);
 }
 
+function testYtdlpStallLineDetection() {
+  const script = `
+import sys
+
+sys.path.insert(0, ${JSON.stringify(path.join(root, "container"))})
+from encoder import (
+    _ytdlp_download_line_disables_stall_detection,
+    _ytdlp_download_line_enables_stall_detection,
+    _ytdlp_line_indicates_postprocess,
+)
+
+assert _ytdlp_line_indicates_postprocess("[Merger] Merging formats into \\"source.mp4\\"")
+assert _ytdlp_line_indicates_postprocess("[ffmpeg] Merging formats")
+assert not _ytdlp_line_indicates_postprocess(
+    "[download] 100.0% of ~5.00MiB at 1.00MiB/s ETA 00:00"
+)
+
+assert _ytdlp_download_line_enables_stall_detection(
+    "[download] Destination: source.f399.mp4"
+)
+assert _ytdlp_download_line_enables_stall_detection(
+    "[download]  50.0% of ~5.00MiB at 1.00MiB/s ETA 00:05"
+)
+assert not _ytdlp_download_line_enables_stall_detection(
+    "[download] 100.0% of ~5.00MiB at 1.00MiB/s ETA 00:00"
+)
+
+assert _ytdlp_download_line_disables_stall_detection(
+    "[download] 100.0% of ~5.00MiB at 1.00MiB/s ETA 00:00"
+)
+assert not _ytdlp_download_line_disables_stall_detection(
+    "[download]  10.0% of ~1.00MiB at 1.00MiB/s ETA 00:09"
+)
+
+print("yt-dlp stall line detection test passed")
+`;
+
+  run("python3", ["-c", script]);
+}
+
 function testSectionEncodeBounds() {
   const script = `
 import sys
@@ -391,6 +431,10 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
   const stall403Fixture = path.join(fixturesDir, "fake-ytdlp-stall-403.sh");
   const slowProgressFixture = path.join(fixturesDir, "fake-ytdlp-slow-progress.sh");
   const silentMergeFixture = path.join(fixturesDir, "fake-ytdlp-silent-merge.sh");
+  const multiStreamStallFixture = path.join(
+    fixturesDir,
+    "fake-ytdlp-multi-stream-stall.sh",
+  );
   const sectionsFixture = path.join(fixturesDir, "fake-ytdlp-sections.sh");
   const sectionsLateStartFixture = path.join(
     fixturesDir,
@@ -649,13 +693,58 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
     }
     if (silentMerge.elapsedMs < 14_000) {
       throw new Error(
-        `Silent-merge fixture finished too quickly (${silentMerge.elapsedMs}ms); expected >14s silent post-download phase (longer than scaled 180s budget)`,
+        `Silent-merge fixture finished too quickly (${silentMerge.elapsedMs}ms); expected >14s silent post-merge phase`,
       );
     }
     console.log("Encoder YouTube silent-merge contract test passed");
     console.log(`  Elapsed: ${silentMerge.elapsedMs}ms`);
   } finally {
     run("docker", ["rm", "-f", `${containerName}-youtube-silent-merge`]);
+  }
+
+  const multiStreamStallJobPath = path.join(
+    failFastOutputDir,
+    "multi-stream-stall-job.json",
+  );
+  fs.writeFileSync(
+    multiStreamStallJobPath,
+    JSON.stringify({ ...baseJob, jobId: "youtube-multi-stream-stall" }),
+  );
+
+  try {
+    const multiStreamStall = runEncoderYoutubeJob(
+      `${containerName}-youtube-multi-stream-stall`,
+      18093,
+      multiStreamStallJobPath,
+      {
+        fakeYtdlpPath: multiStreamStallFixture,
+        outputDir: failFastOutputDir,
+        env: { YOUTUBE_STALL_TIMEOUT_SECONDS: "5" },
+      },
+    );
+    if (multiStreamStall.result.status !== "failed") {
+      throw new Error(
+        `Expected failed status for multi-stream stall fixture, got ${multiStreamStall.result.status}`,
+      );
+    }
+    if (
+      multiStreamStall.result.errorMessage !==
+      "YouTube appears to be blocking/stalling downloads from this server. Try uploading the video file instead."
+    ) {
+      throw new Error(
+        `Unexpected multi-stream stall error message: ${multiStreamStall.result.errorMessage ?? "(missing)"}`,
+      );
+    }
+    if (multiStreamStall.elapsedMs < 4_000 || multiStreamStall.elapsedMs > 20_000) {
+      throw new Error(
+        `Multi-stream stall kill timing unexpected (${multiStreamStall.elapsedMs}ms); expected roughly 5-15s after audio stream starts`,
+      );
+    }
+    console.log("Encoder YouTube multi-stream stall-kill contract test passed");
+    console.log(`  Elapsed: ${multiStreamStall.elapsedMs}ms`);
+    console.log(`  Message: ${multiStreamStall.result.errorMessage}`);
+  } finally {
+    run("docker", ["rm", "-f", `${containerName}-youtube-multi-stream-stall`]);
   }
 
   const trimStart = 7.5;
@@ -1994,6 +2083,7 @@ function main() {
   testSourceFileSelection();
   testEncodeErrorClassification();
   testYoutubeErrorClassification();
+  testYtdlpStallLineDetection();
   testSectionEncodeBounds();
   buildImage();
   testProcessGroupKill();
