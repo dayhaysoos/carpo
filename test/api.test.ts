@@ -210,6 +210,41 @@ describe("POST /api/clips", () => {
     );
   });
 
+  it("rejects multiple caption filters", async () => {
+    const response = await workerFetch("http://example.com/api/clips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "dual caption",
+        source: {
+          type: "youtube",
+          url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        },
+        trimStart: 0,
+        trimEnd: 5,
+        filters: [
+          { type: "caption", text: "First caption" },
+          { type: "caption", text: "Second caption" },
+        ],
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as {
+      error: string;
+      details: Array<{ field: string; message: string }>;
+    };
+    expect(body.error).toBe("Validation failed");
+    expect(body.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: "filters[1]",
+          message: "only one caption filter is supported",
+        }),
+      ]),
+    );
+  });
+
   it("rejects over-length caption text", async () => {
     const response = await workerFetch("http://example.com/api/clips", {
       method: "POST",

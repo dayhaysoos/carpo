@@ -126,6 +126,7 @@ export function validateCreateClipRequest(
 
 function validateFilters(filters: unknown[], errors: ValidationError[]): FilterSpec[] {
   const validated: FilterSpec[] = [];
+  let captionCount = 0;
 
   for (let index = 0; index < filters.length; index += 1) {
     const item = filters[index];
@@ -140,6 +141,15 @@ function validateFilters(filters: unknown[], errors: ValidationError[]): FilterS
     const filterType = filter.type;
 
     if (filterType === "caption") {
+      captionCount += 1;
+      if (captionCount > 1) {
+        errors.push({
+          field: fieldPrefix,
+          message: "only one caption filter is supported",
+        });
+        continue;
+      }
+
       const text = typeof filter.text === "string" ? filter.text : "";
       if (!text.trim()) {
         errors.push({
