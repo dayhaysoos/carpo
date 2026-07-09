@@ -394,6 +394,12 @@ with patch("encoder.probe_media_height", return_value=240), \\
     ), "small trim_start must not stream-copy"
 
 with patch("encoder.probe_media_height", return_value=240), \\
+     patch("encoder.probe_media_duration", return_value=2.7):
+    assert not _can_stream_copy_encode(
+        source, 0, 3.0, caption_filters=None, max_output_height=1080
+    ), "short source must re-encode, not silently truncate"
+
+with patch("encoder.probe_media_height", return_value=240), \\
      patch("encoder.probe_media_duration", return_value=2.5):
     assert not _can_stream_copy_encode(
         source, 2.5, 5.0, caption_filters=None, max_output_height=1080

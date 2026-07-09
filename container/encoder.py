@@ -74,6 +74,8 @@ YOUTUBE_DOWNLOAD_TIMEOUT_MESSAGE = (
 )
 YOUTUBE_FORCE_KEYFRAMES_FFMPEG_PRESET = "veryfast"
 ENCODE_DURATION_TOLERANCE_SECONDS = 0.5
+# Probe rounding slack only; anything meaningfully shorter must re-encode.
+STREAM_COPY_SHORT_SOURCE_EPSILON_SECONDS = 0.05
 
 
 def resolve_quality(value: Any) -> str:
@@ -1117,8 +1119,13 @@ def _can_stream_copy_encode(
     if source_duration is None:
         return False
     expected_duration = trim_end - trim_start
+    # Longer sources are safe: the -c copy invocation caps output with -t.
+    # Shorter sources would silently truncate the clip, so force a re-encode
+    # path there, which surfaces the mismatch instead of hiding it.
+    if source_duration < expected_duration - STREAM_COPY_SHORT_SOURCE_EPSILON_SECONDS:
+        return False
     return (
-        abs(source_duration - expected_duration)
+        source_duration - expected_duration
         <= ENCODE_DURATION_TOLERANCE_SECONDS
     )
 
