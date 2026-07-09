@@ -506,18 +506,18 @@ def resolve_section_encode_bounds(
     trim_end: float,
     section_start: float,
 ) -> tuple[float, float]:
-    """Map requested trim bounds to offsets within a section download.
-
-    With --force-keyframes-at-cuts, yt-dlp re-encodes the section to start
-    exactly at section_start with rebased timestamps (start_time=0), so the
-    offset math is section_start-relative by construction.
-    """
-    del source_path  # retained for call-site clarity and future diagnostics
+    """Map requested trim bounds to offsets within a section download."""
     if not YOUTUBE_USE_DOWNLOAD_SECTIONS:
         return trim_start, trim_end
 
-    encode_trim_start = max(0.0, trim_start - section_start)
-    encode_trim_end = trim_end - section_start
+    probed_start = probe_media_start_time(source_path)
+    if probed_start is not None and probed_start > 0:
+        base = probed_start
+    else:
+        base = section_start
+
+    encode_trim_start = max(0.0, trim_start - base)
+    encode_trim_end = trim_end - base
     if encode_trim_end <= encode_trim_start:
         raise RuntimeError(
             "Downloaded section does not contain the requested trim range. "
@@ -702,15 +702,14 @@ def youtube_section_bounds(trim_start: float, trim_end: float) -> tuple[float, f
     return section_start, section_end
 
 
-def download_youtube(
+def _ytdlp_download_command(
     url: str,
-    workdir: Path,
+    output_template: str,
     *,
     trim_start: float,
     trim_end: float,
-) -> tuple[Path, float, float]:
-    """Download a YouTube source and return encode trim bounds relative to the file."""
-    output_template = str(workdir / "source.%(ext)s")
+    use_sections: bool,
+) -> tuple[list[str], float]:
     section_start = 0.0
     command = [
         "yt-dlp",
@@ -732,13 +731,12 @@ def download_youtube(
         "-f",
         YTDLP_FORMAT_SELECTOR,
     ]
-    if YOUTUBE_USE_DOWNLOAD_SECTIONS:
+    if use_sections:
         section_start, section_end = youtube_section_bounds(trim_start, trim_end)
         command.extend(
             [
                 "--download-sections",
                 f"*{section_start}-{section_end}",
-                "--force-keyframes-at-cuts",
             ],
         )
     command.extend(
@@ -748,24 +746,76 @@ def download_youtube(
             url,
         ],
     )
-    run_ytdlp(command, workdir)
+    return command, section_start
 
+
+def _resolve_ytdlp_source_path(workdir: Path) -> Path:
     merged = workdir / "source.mp4"
     if merged.exists():
-        source_path = merged
-    else:
-        candidates = list(workdir.glob("source.*"))
-        if not candidates:
-            raise RuntimeError("yt-dlp did not produce a source file")
-        source_path = select_source_file(candidates)
+        return merged
 
-    encode_trim_start, encode_trim_end = resolve_section_encode_bounds(
-        source_path,
-        trim_start,
-        trim_end,
-        section_start,
+    candidates = list(workdir.glob("source.*"))
+    if not candidates:
+        raise RuntimeError("yt-dlp did not produce a source file")
+    return select_source_file(candidates)
+
+
+def _clear_ytdlp_source_files(workdir: Path) -> None:
+    for stale in workdir.glob("source.*"):
+        stale.unlink(missing_ok=True)
+
+
+def download_youtube(
+    url: str,
+    workdir: Path,
+    *,
+    trim_start: float,
+    trim_end: float,
+) -> tuple[Path, float, float]:
+    """Download a YouTube source and return encode trim bounds relative to the file."""
+    output_template = str(workdir / "source.%(ext)s")
+
+    if YOUTUBE_USE_DOWNLOAD_SECTIONS:
+        section_command, section_start = _ytdlp_download_command(
+            url,
+            output_template,
+            trim_start=trim_start,
+            trim_end=trim_end,
+            use_sections=True,
+        )
+        run_ytdlp(section_command, workdir)
+        source_path = _resolve_ytdlp_source_path(workdir)
+
+        probed_start = probe_media_start_time(source_path)
+        if probed_start is not None and probed_start > 0:
+            encode_trim_start, encode_trim_end = resolve_section_encode_bounds(
+                source_path,
+                trim_start,
+                trim_end,
+                section_start,
+            )
+            return source_path, encode_trim_start, encode_trim_end
+
+        if probed_start is None:
+            alignment_detail = "unavailable"
+        else:
+            alignment_detail = f"{probed_start}"
+        log(
+            "YouTube section download has unknown alignment "
+            f"(start_time={alignment_detail}); re-downloading full video",
+        )
+        _clear_ytdlp_source_files(workdir)
+
+    full_command, _ = _ytdlp_download_command(
+        url,
+        output_template,
+        trim_start=trim_start,
+        trim_end=trim_end,
+        use_sections=False,
     )
-    return source_path, encode_trim_start, encode_trim_end
+    run_ytdlp(full_command, workdir)
+    source_path = _resolve_ytdlp_source_path(workdir)
+    return source_path, trim_start, trim_end
 
 
 def build_video_filter_chain(filters: list[Any], workdir: Path) -> str | None:

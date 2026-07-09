@@ -237,24 +237,23 @@ function testSectionEncodeBounds() {
   const script = `
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, ${JSON.stringify(path.join(root, "container"))})
 from encoder import resolve_section_encode_bounds
 
-start, end = resolve_section_encode_bounds(Path("source.mp4"), 7.5, 10.0, 4.5)
-assert start == 3.0, start
-assert end == 5.5, end
+with patch("encoder.probe_media_start_time", return_value=8.0):
+    start, end = resolve_section_encode_bounds(Path("source.mp4"), 7.5, 10.0, 4.5)
+    assert start == 0.0, start
+    assert end == 2.0, end
 
-start, end = resolve_section_encode_bounds(Path("source.mp4"), 1.0, 4.0, 0.0)
-assert start == 1.0, start
-assert end == 4.0, end
-
-try:
-    resolve_section_encode_bounds(Path("source.mp4"), 7.5, 10.0, 11.0)
-except RuntimeError as exc:
-    assert "does not contain the requested trim range" in str(exc)
-else:
-    raise AssertionError("expected empty trim window to fail")
+with patch("encoder.probe_media_start_time", return_value=11.0):
+    try:
+        resolve_section_encode_bounds(Path("source.mp4"), 7.5, 10.0, 4.5)
+    except RuntimeError as exc:
+        assert "does not contain the requested trim range" in str(exc)
+    else:
+        raise AssertionError("expected empty trim window to fail")
 
 print("Section encode bounds test passed")
 `;
@@ -695,8 +694,10 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
     if (!sections.logs.includes("--download-sections")) {
       throw new Error("Encoder logs did not show --download-sections");
     }
-    if (!sections.logs.includes("--force-keyframes-at-cuts")) {
-      throw new Error("Encoder logs did not show --force-keyframes-at-cuts");
+    if (sections.logs.includes("--force-keyframes-at-cuts")) {
+      throw new Error(
+        "Encoder logs still show --force-keyframes-at-cuts after revert",
+      );
     }
     if (
       !sections.logs.includes("-S") ||
@@ -774,11 +775,30 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
     );
     if (lateStart.result.status !== "complete") {
       throw new Error(
-        `Expected complete status for zero-start sections fixture, got ${lateStart.result.status}: ${lateStart.result.errorMessage ?? ""}`,
+        `Expected complete status for rebased-timestamp sections fixture, got ${lateStart.result.status}: ${lateStart.result.errorMessage ?? ""}`,
       );
     }
-    if (!lateStart.logs.includes("--force-keyframes-at-cuts")) {
-      throw new Error("Encoder logs did not show --force-keyframes-at-cuts");
+    const ytdlpRuns = lateStart.logs.match(/running: yt-dlp/g) ?? [];
+    if (ytdlpRuns.length !== 2) {
+      throw new Error(
+        `Expected 2 yt-dlp invocations (section + full fallback), got ${ytdlpRuns.length}`,
+      );
+    }
+    const sectionRuns = lateStart.logs.match(/--download-sections/g) ?? [];
+    if (sectionRuns.length !== 1) {
+      throw new Error(
+        `Expected exactly one --download-sections invocation, got ${sectionRuns.length}`,
+      );
+    }
+    if (!lateStart.logs.includes("re-downloading full video")) {
+      throw new Error(
+        "Encoder logs did not show full-download fallback for unknown alignment",
+      );
+    }
+    if (lateStart.logs.includes("--force-keyframes-at-cuts")) {
+      throw new Error(
+        "Encoder logs still show --force-keyframes-at-cuts after revert",
+      );
     }
     if (lateStart.logs.includes("-ss -")) {
       throw new Error("Encoder logs contained a negative ffmpeg -ss offset");
@@ -814,7 +834,9 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
       thumbPath,
       zeroTrimStart,
     );
-    console.log("Encoder YouTube zero-start sections contract test passed");
+    console.log(
+      "Encoder YouTube rebased-timestamp sections fallback contract test passed",
+    );
     console.log(`  Duration: ${duration.toFixed(2)}s (expected ${expectedDuration}s)`);
   } finally {
     run("docker", ["rm", "-f", `${containerName}-youtube-sections-zero`]);
