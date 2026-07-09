@@ -55,6 +55,20 @@ YOUTUBE_STALL_MESSAGE = (
     "YouTube appears to be blocking/stalling downloads from this server. "
     "Try uploading the video file instead."
 )
+# Prefer h264 up to 1080p; cap AV1 to 720p when it is the only option.
+YTDLP_FORMAT_SORT = "res:1080,+codec:h264"
+YTDLP_FORMAT_SELECTOR = (
+    "bestvideo[height<=1080][vcodec^=avc1]+bestaudio/"
+    "bestvideo[height<=1080]+bestaudio/"
+    "best[height<=1080]/"
+    "bestvideo[vcodec^=av01][height<=720]+bestaudio/"
+    "bestvideo[height<=720]+bestaudio/"
+    "best"
+)
+ENCODE_FAILURE_MESSAGE = (
+    "Encoding failed for this video format. "
+    "Try a shorter clip or upload the file instead."
+)
 
 
 def log(message: str) -> None:
@@ -245,11 +259,18 @@ def validate_gif_job(job: dict[str, Any]) -> str | None:
     return None
 
 
+def classify_encode_error(_output: str, *, timed_out: bool = False) -> str:
+    """Map ffmpeg stderr/stdout to a user-facing encode error."""
+    del timed_out  # reserved for future timeout-specific copy
+    return ENCODE_FAILURE_MESSAGE
+
+
 def run_command(
     command: list[str],
     cwd: Path | None = None,
     *,
     timeout_seconds: int = ENCODE_TIMEOUT_SECONDS,
+    friendly_failure: bool = False,
 ) -> None:
     log(f"running: {' '.join(command)}")
     try:
@@ -262,11 +283,21 @@ def run_command(
         )
     except subprocess.TimeoutExpired as exc:
         cmd = " ".join(command)
+        if friendly_failure:
+            log(f"encode command timed out after {timeout_seconds}s: {cmd}")
+            raise RuntimeError(
+                classify_encode_error("", timed_out=True),
+            ) from exc
         raise RuntimeError(
             f"Command timed out after {timeout_seconds}s: {cmd}",
         ) from exc
     if completed.returncode != 0:
         stderr = completed.stderr.strip() or completed.stdout.strip()
+        if friendly_failure:
+            log(f"encode command failed: {' '.join(command)}")
+            if stderr:
+                log(f"ffmpeg stderr:\n{stderr}")
+            raise RuntimeError(classify_encode_error(stderr))
         raise RuntimeError(stderr or f"command failed: {' '.join(command)}")
 
 
@@ -519,8 +550,10 @@ def download_youtube(
         str(YOUTUBE_SOCKET_TIMEOUT_SECONDS),
         "--merge-output-format",
         "mp4",
+        "-S",
+        YTDLP_FORMAT_SORT,
         "-f",
-        "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        YTDLP_FORMAT_SELECTOR,
     ]
     if YOUTUBE_USE_DOWNLOAD_SECTIONS:
         section_start, section_end = youtube_section_bounds(trim_start, trim_end)
@@ -642,7 +675,7 @@ def encode_clip(
     # Input seeking (-ss before -i) is frame-accurate when re-encoding (not stream
     # copy); verified by scripts/test-encoder-contract.ts against a frame-counter
     # fixture trimmed at a non-keyframe offset (±1 frame).
-    run_command(encode_command)
+    run_command(encode_command, friendly_failure=True)
 
     thumb_command = [
         "ffmpeg",
@@ -660,7 +693,7 @@ def encode_clip(
         thumb_command.extend(["-vf", video_filters])
     thumb_command.append(str(output_thumb))
     # Same input-seek pattern; thumbnail spot-check included in contract test.
-    run_command(thumb_command)
+    run_command(thumb_command, friendly_failure=True)
 
 
 def encode_gif(source_mp4: Path, output_gif: Path, workdir: Path) -> None:

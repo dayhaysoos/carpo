@@ -180,6 +180,22 @@ print("Null maxClipLengthSeconds validation test passed")
   run("python3", ["-c", script]);
 }
 
+function testEncodeErrorClassification() {
+  const script = `
+import sys
+
+sys.path.insert(0, ${JSON.stringify(path.join(root, "container"))})
+from encoder import ENCODE_FAILURE_MESSAGE, classify_encode_error
+
+assert classify_encode_error("Invalid data found when processing input") == ENCODE_FAILURE_MESSAGE
+assert classify_encode_error("", timed_out=True) == ENCODE_FAILURE_MESSAGE
+
+print("Encode error classification test passed")
+`;
+
+  run("python3", ["-c", script]);
+}
+
 function testYoutubeErrorClassification() {
   const stderrFixture = fs.readFileSync(
     path.join(fixturesDir, "ytdlp-403.stderr"),
@@ -478,6 +494,18 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
     if (!sections.logs.includes("--download-sections")) {
       throw new Error("Encoder logs did not show --download-sections");
     }
+    if (
+      !sections.logs.includes("-S") ||
+      !sections.logs.includes("res:1080") ||
+      !sections.logs.includes("+codec:h264")
+    ) {
+      throw new Error("Encoder logs did not show yt-dlp format sort flags");
+    }
+    if (
+      !sections.logs.includes("bestvideo[height<=1080][vcodec^=avc1]+bestaudio")
+    ) {
+      throw new Error("Encoder logs did not show yt-dlp h264 format selector");
+    }
     const sectionMatch = sections.logs.match(
       /--download-sections \*([0-9.]+)-([0-9.]+)/,
     );
@@ -502,6 +530,95 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
     console.log("Encoder YouTube sections trim contract test passed");
   } finally {
     run("docker", ["rm", "-f", `${containerName}-youtube-sections`]);
+  }
+}
+
+function runEncoderEncodeFailureContract() {
+  const encodeFailureDir = path.join(outputDir, "encode-failure");
+  fs.rmSync(encodeFailureDir, { recursive: true, force: true });
+  fs.mkdirSync(encodeFailureDir, { recursive: true });
+
+  const corruptPath = path.join(encodeFailureDir, "corrupt.mp4");
+  fs.writeFileSync(corruptPath, "not-a-valid-mp4");
+
+  const job = {
+    jobId: "encode-failure-contract",
+    source: {
+      type: "file",
+      path: "/fixture/corrupt.mp4",
+    },
+    trimStart: 0,
+    trimEnd: 2,
+    maxClipLengthSeconds: 60,
+    outputs: {
+      mp4Key: "failed.mp4",
+      thumbnailKey: "failed.jpg",
+    },
+    localOutputDir: "/output",
+  };
+  const jobPath = path.join(encodeFailureDir, "job.json");
+  fs.writeFileSync(jobPath, JSON.stringify(job));
+
+  const encodeFailureContainer = `${containerName}-encode-failure`;
+  run("docker", ["rm", "-f", encodeFailureContainer]);
+  run("docker", [
+    "run",
+    "-d",
+    "--name",
+    encodeFailureContainer,
+    "-p",
+    "18089:8080",
+    "-v",
+    `${corruptPath}:/fixture/corrupt.mp4:ro`,
+    "-v",
+    `${encodeFailureDir}:/output`,
+    imageName,
+  ]);
+
+  try {
+    waitForHealth(18089);
+
+    const encode = spawnSync(
+      "curl",
+      [
+        "-sS",
+        "-X",
+        "POST",
+        "http://127.0.0.1:18089/run",
+        "-H",
+        "Content-Type: application/json",
+        "-d",
+        `@${jobPath}`,
+      ],
+      { encoding: "utf-8" },
+    );
+
+    const logs = run("docker", ["logs", encodeFailureContainer]);
+    const result = JSON.parse(encode.stdout || "{}") as {
+      status: string;
+      errorMessage?: string;
+    };
+
+    if (result.status !== "failed") {
+      throw new Error(
+        `Expected failed status for corrupt source, got ${result.status}`,
+      );
+    }
+    const expectedMessage =
+      "Encoding failed for this video format. Try a shorter clip or upload the file instead.";
+    if (result.errorMessage !== expectedMessage) {
+      throw new Error(
+        `Unexpected encode failure message: ${result.errorMessage ?? "(missing)"}`,
+      );
+    }
+    if (!logs.includes("ffmpeg stderr:")) {
+      throw new Error("Encoder logs did not retain detailed ffmpeg stderr");
+    }
+
+    console.log("Encoder encode-failure contract test passed");
+    console.log(`  Message: ${result.errorMessage}`);
+  } finally {
+    run("docker", ["rm", "-f", encodeFailureContainer]);
   }
 }
 
@@ -1473,10 +1590,12 @@ function main() {
   const { barsPath, frameCounterPath } = ensureFixtureVideo();
   testNullMaxClipLengthValidation();
   testSourceFileSelection();
+  testEncodeErrorClassification();
   testYoutubeErrorClassification();
   buildImage();
   runStageSourceContract(frameCounterPath);
   runEncoderYoutubeFailFastContract(frameCounterPath);
+  runEncoderEncodeFailureContract();
   runEncoderContract(barsPath, frameCounterPath);
   runEncoderGifContract(barsPath);
   runEncoderUploadContract(frameCounterPath);
