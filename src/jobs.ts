@@ -40,37 +40,39 @@ export async function dispatchEncodingJob(
   request: CreateClipRequest,
   workerOrigin: string,
 ): Promise<void> {
-  const record = await getClipById(env.DB, clipId);
-  if (!record) {
-    throw new Error(`Clip ${clipId} not found for encoding dispatch`);
-  }
-
-  const container = env.ENCODER_CONTAINER.getByName(clipId);
-  const outputKeys = outputKeysForClip(clipId);
-  const workerBaseUrl =
-    env.WORKER_BASE_URL || workerOrigin || "http://localhost:8787";
-  const callbackUrl = `${workerBaseUrl}/api/internal/jobs/${clipId}/status`;
-
-  const jobSpec: EncoderJobSpec = {
-    jobId: clipId,
-    source: request.source,
-    trimStart: request.trimStart,
-    trimEnd: request.trimEnd,
-    caption: request.caption ?? null,
-    filters: request.filters ?? [],
-    maxClipLengthSeconds: Number(env.MAX_CLIP_LENGTH_SECONDS) || 60,
-    outputs: outputKeys,
-    callbackUrl,
-    callbackSecret: record.callback_secret,
-    artifactUploadUrls: {
-      mp4: `${workerBaseUrl}/api/internal/jobs/${clipId}/artifacts/mp4`,
-      thumbnail: `${workerBaseUrl}/api/internal/jobs/${clipId}/artifacts/thumbnail`,
-    },
-  };
-
   let runPosted = false;
 
   try {
+    const record = await getClipById(env.DB, clipId);
+    if (!record) {
+      console.warn(
+        `Clip ${clipId} not found for encoding dispatch; skipping`,
+      );
+      return;
+    }
+
+    const container = env.ENCODER_CONTAINER.getByName(clipId);
+    const outputKeys = outputKeysForClip(clipId);
+    const workerBaseUrl =
+      env.WORKER_BASE_URL || workerOrigin || "http://localhost:8787";
+    const callbackUrl = `${workerBaseUrl}/api/internal/jobs/${clipId}/status`;
+
+    const jobSpec: EncoderJobSpec = {
+      jobId: clipId,
+      source: request.source,
+      trimStart: request.trimStart,
+      trimEnd: request.trimEnd,
+      caption: request.caption ?? null,
+      filters: request.filters ?? [],
+      maxClipLengthSeconds: Number(env.MAX_CLIP_LENGTH_SECONDS) || 60,
+      outputs: outputKeys,
+      callbackUrl,
+      callbackSecret: record.callback_secret,
+      artifactUploadUrls: {
+        mp4: `${workerBaseUrl}/api/internal/jobs/${clipId}/artifacts/mp4`,
+        thumbnail: `${workerBaseUrl}/api/internal/jobs/${clipId}/artifacts/thumbnail`,
+      },
+    };
     const startResponse = await container.fetch("http://encoder/__carpo/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -86,6 +88,9 @@ export async function dispatchEncodingJob(
     const keepAlive = startActivityRenewal(container);
 
     try {
+      // Set before fetch, not after response: a thrown fetch does not prove the
+      // encoder never received /run (the connection may drop after delivery).
+      // Ambiguous failure preserves artifacts and allows late callback recovery.
       runPosted = true;
       const response = await container.fetch("http://encoder/run", {
         method: "POST",
@@ -139,7 +144,11 @@ export async function dispatchEncodingJob(
       error instanceof Error ? error.message : "Unknown encoding error";
     if (runPosted) {
       // Transport/parse failures after /run was posted are ambiguous; keep artifacts.
-      await failClipAmbiguous(env, clipId, message);
+      await failClipAmbiguous(
+        env,
+        clipId,
+        `Dispatch error — encoding may not have started: ${message}`,
+      );
     } else {
       // Pre-/run failures (container start, etc.) cannot have produced artifacts.
       await failClip(env, clipId, message);

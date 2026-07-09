@@ -6,7 +6,7 @@ import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { JOB_SECRET_HEADER } from "../src/auth";
 import { getClipById, outputKeysForClip } from "../src/db";
-import { failClipAmbiguous } from "../src/jobs";
+import { dispatchEncodingJob, failClipAmbiguous } from "../src/jobs";
 import {
   STUB_AMBIGUOUS_FAILURE_URL,
   STUB_CONTAINER_START_FAILURE_URL,
@@ -854,6 +854,33 @@ describe("clip job lifecycle", () => {
     expect(persisted?.status).toBe("complete");
     expect(persisted?.output_mp4_key).toBe(`clips/${clipId}/clip.mp4`);
     expect(persisted?.output_thumbnail_key).toBe(`clips/${clipId}/thumbnail.jpg`);
+  });
+});
+
+describe("dispatchEncodingJob", () => {
+  it("logs and returns when the clip record is missing", async () => {
+    const missingClipId = crypto.randomUUID();
+    expect(await getClipById(env.DB, missingClipId)).toBeNull();
+
+    await expect(
+      dispatchEncodingJob(
+        env,
+        missingClipId,
+        {
+          title: "ghost clip",
+          source: {
+            type: "youtube",
+            url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+          },
+          trimStart: 1,
+          trimEnd: 5,
+          filters: [],
+        },
+        "http://example.com",
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(await getClipById(env.DB, missingClipId)).toBeNull();
   });
 });
 
