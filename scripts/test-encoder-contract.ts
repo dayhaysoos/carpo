@@ -31,6 +31,13 @@ function ensureDockerHost() {
   );
   if (fs.existsSync(desktopSocket)) {
     process.env.DOCKER_HOST = `unix://${desktopSocket}`;
+    const probe = spawnSync("docker", ["info"], {
+      encoding: "utf-8",
+      env: process.env,
+    });
+    if (probe.status !== 0) {
+      delete process.env.DOCKER_HOST;
+    }
   }
 }
 
@@ -631,6 +638,161 @@ function runEncoderContract(fixturePath: string, frameCounterPath: string) {
   }
 }
 
+function runEncoderUploadContract(frameCounterPath: string) {
+  const uploadOutputDir = path.join(outputDir, "upload-contract");
+  fs.rmSync(uploadOutputDir, { recursive: true, force: true });
+  fs.mkdirSync(uploadOutputDir, { recursive: true });
+
+  const trimStart = 2.5;
+  const trimEnd = 5;
+  const callbackSecret = "upload-contract-secret";
+  const encoderPort = 18083;
+  const networkName = `carpo-upload-${Date.now()}`;
+  const fixtureServerName = `${containerName}-fixture-server`;
+  const uploadContainer = `${containerName}-upload`;
+  const fixtureServerScript = `
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import os
+
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.headers.get("X-Carpo-Job-Secret") != os.environ["SECRET"]:
+            self.send_response(401)
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "video/mp4")
+        self.end_headers()
+        with open("/source.mp4", "rb") as handle:
+            self.wfile.write(handle.read())
+
+    def log_message(self, format, *args):
+        return
+
+HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+`.trim();
+
+  run("docker", ["network", "create", networkName]);
+  run("docker", ["rm", "-f", fixtureServerName]);
+  run("docker", [
+    "run",
+    "-d",
+    "--name",
+    fixtureServerName,
+    "--network",
+    networkName,
+    "-e",
+    `SECRET=${callbackSecret}`,
+    "-v",
+    `${frameCounterPath}:/source.mp4:ro`,
+    "python:3.12-slim",
+    "python",
+    "-c",
+    fixtureServerScript,
+  ]);
+
+  const job = {
+    jobId: "upload-contract-test",
+    source: {
+      type: "upload",
+      key: "uploads/contract-fixture.mp4",
+    },
+    sourceFetchUrl: `http://${fixtureServerName}:8080/source`,
+    trimStart,
+    trimEnd,
+    caption: null,
+    filters: [],
+    maxClipLengthSeconds: 60,
+    callbackSecret,
+    outputs: {
+      mp4Key: "upload-clip.mp4",
+      thumbnailKey: "upload-thumbnail.jpg",
+    },
+    localOutputDir: "/output",
+  };
+
+  const jobPath = path.join(uploadOutputDir, "upload-job.json");
+  fs.writeFileSync(jobPath, JSON.stringify(job));
+
+  run("docker", ["rm", "-f", uploadContainer]);
+  run("docker", [
+    "run",
+    "-d",
+    "--name",
+    uploadContainer,
+    "--network",
+    networkName,
+    "-p",
+    `${encoderPort}:8080`,
+    "-v",
+    `${uploadOutputDir}:/output`,
+    imageName,
+  ]);
+
+  try {
+    waitForHealth(encoderPort);
+
+    const encode = spawnSync(
+      "curl",
+      [
+        "-sS",
+        "-X",
+        "POST",
+        "http://127.0.0.1:18083/run",
+        "-H",
+        "Content-Type: application/json",
+        "-d",
+        `@${jobPath}`,
+      ],
+      { encoding: "utf-8" },
+    );
+
+    const result = JSON.parse(encode.stdout || "{}") as {
+      status: string;
+      errorMessage?: string;
+    };
+    if (encode.status !== 0) {
+      const logs = run("docker", ["logs", uploadContainer]);
+      throw new Error(
+        `Upload-source encoder /run request failed\n${encode.stderr}\ncontainer logs:\n${logs}`,
+      );
+    }
+    if (result.status !== "complete") {
+      const logs = run("docker", ["logs", uploadContainer]);
+      throw new Error(
+        `Upload-source encoder returned failure: ${result.errorMessage ?? encode.stdout ?? "unknown error"}\ncontainer logs:\n${logs}`,
+      );
+    }
+
+    const mp4Path = path.join(uploadOutputDir, "upload-clip.mp4");
+    const thumbPath = path.join(uploadOutputDir, "upload-thumbnail.jpg");
+    if (!fs.existsSync(mp4Path) || !fs.existsSync(thumbPath)) {
+      throw new Error("Expected upload-source MP4 and thumbnail artifacts");
+    }
+
+    const mp4Size = fs.statSync(mp4Path).size;
+    const thumbSize = fs.statSync(thumbPath).size;
+    if (mp4Size < 1000 || thumbSize < 100) {
+      throw new Error("Upload-source artifacts look too small");
+    }
+
+    assertTrimFrameAccuracy(frameCounterPath, mp4Path, thumbPath, trimStart);
+
+    const logs = run("docker", ["logs", uploadContainer]);
+    if (logs.includes("yt-dlp")) {
+      throw new Error("Upload-source job should not invoke yt-dlp");
+    }
+
+    console.log("Encoder upload-source contract test passed");
+    console.log(`  MP4: ${mp4Path} (${mp4Size} bytes)`);
+    console.log(`  Thumbnail: ${thumbPath} (${thumbSize} bytes)`);
+  } finally {
+    run("docker", ["rm", "-f", uploadContainer]);
+    run("docker", ["rm", "-f", fixtureServerName]);
+    run("docker", ["network", "rm", networkName]);
+  }
+}
+
 function main() {
   assertDockerAvailable();
   assertFfmpegAvailable();
@@ -639,6 +801,7 @@ function main() {
   testSourceFileSelection();
   buildImage();
   runEncoderContract(barsPath, frameCounterPath);
+  runEncoderUploadContract(frameCounterPath);
   runEncoderCaptionContract(barsPath, frameCounterPath);
 }
 
