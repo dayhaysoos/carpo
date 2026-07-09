@@ -282,10 +282,18 @@ from unittest.mock import patch
 sys.path.insert(0, ${JSON.stringify(path.join(root, "container"))})
 from encoder import resolve_section_encode_bounds
 
-with patch("encoder.probe_media_start_time", return_value=8.0):
+with patch("encoder.probe_media_start_time", return_value=7.6):
     start, end = resolve_section_encode_bounds(Path("source.mp4"), 7.5, 10.0, 4.5)
     assert start == 0.0, start
-    assert end == 2.0, end
+    assert abs(end - 2.4) < 0.001, end
+
+with patch("encoder.probe_media_start_time", return_value=8.0):
+    try:
+        resolve_section_encode_bounds(Path("source.mp4"), 7.5, 10.0, 4.5)
+    except RuntimeError as exc:
+        assert "does not contain the requested trim range" in str(exc)
+    else:
+        raise AssertionError("expected late keyframe snap after trimStart to fail")
 
 with patch("encoder.probe_media_start_time", return_value=11.0):
     try:
@@ -439,6 +447,10 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
   const sectionsLateStartFixture = path.join(
     fixturesDir,
     "fake-ytdlp-sections-late-start.sh",
+  );
+  const sectionsLateKeyframeFixture = path.join(
+    fixturesDir,
+    "fake-ytdlp-sections-late-keyframe.sh",
   );
   const sectionsRejectedFixture = path.join(
     fixturesDir,
@@ -916,6 +928,102 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
     );
   } finally {
     run("docker", ["rm", "-f", `${containerName}-youtube-sections-rejected`]);
+  }
+
+  const lateKeyframeTrimStart = 7.5;
+  const lateKeyframeTrimEnd = 10;
+  const lateKeyframeOutputDir = path.join(
+    outputDir,
+    "youtube-sections-late-keyframe",
+  );
+  fs.rmSync(lateKeyframeOutputDir, { recursive: true, force: true });
+  fs.mkdirSync(lateKeyframeOutputDir, { recursive: true });
+  const lateKeyframeJobPath = path.join(
+    lateKeyframeOutputDir,
+    "late-keyframe-job.json",
+  );
+  fs.writeFileSync(
+    lateKeyframeJobPath,
+    JSON.stringify({
+      jobId: "youtube-sections-late-keyframe",
+      source: {
+        type: "youtube",
+        url: "https://www.youtube.com/watch?v=section-late-keyframe",
+      },
+      trimStart: lateKeyframeTrimStart,
+      trimEnd: lateKeyframeTrimEnd,
+      maxClipLengthSeconds: 60,
+      outputs: {
+        mp4Key: "late-keyframe.mp4",
+        thumbnailKey: "late-keyframe.jpg",
+      },
+      localOutputDir: "/output",
+    }),
+  );
+
+  try {
+    const lateKeyframe = runEncoderYoutubeJob(
+      `${containerName}-youtube-sections-late-keyframe`,
+      18096,
+      lateKeyframeJobPath,
+      {
+        fakeYtdlpPath: sectionsLateKeyframeFixture,
+        outputDir: lateKeyframeOutputDir,
+        frameCounterPath,
+      },
+    );
+    if (lateKeyframe.result.status !== "complete") {
+      throw new Error(
+        `Expected complete status for late-keyframe fixture, got ${lateKeyframe.result.status}: ${lateKeyframe.result.errorMessage ?? ""}`,
+      );
+    }
+    const ytdlpRuns = lateKeyframe.logs.match(/running: yt-dlp/g) ?? [];
+    if (ytdlpRuns.length !== 2) {
+      throw new Error(
+        `Expected 2 yt-dlp invocations (section + full fallback), got ${ytdlpRuns.length}`,
+      );
+    }
+    const sectionRuns = lateKeyframe.logs.match(/--download-sections/g) ?? [];
+    if (sectionRuns.length !== 1) {
+      throw new Error(
+        `Expected exactly one --download-sections invocation, got ${sectionRuns.length}`,
+      );
+    }
+    if (
+      !lateKeyframe.logs.includes("does not contain the requested trim range")
+    ) {
+      throw new Error(
+        "Encoder logs did not show rejected section for late keyframe snap",
+      );
+    }
+    if (!lateKeyframe.logs.includes("re-downloading full video")) {
+      throw new Error(
+        "Encoder logs did not show full-download fallback for late keyframe snap",
+      );
+    }
+    const mp4Path = path.join(lateKeyframeOutputDir, "late-keyframe.mp4");
+    const thumbPath = path.join(lateKeyframeOutputDir, "late-keyframe.jpg");
+    if (!fs.existsSync(mp4Path) || !fs.existsSync(thumbPath)) {
+      throw new Error(
+        "Expected late-keyframe trim artifacts on host output dir",
+      );
+    }
+    assertTrimFrameAccuracy(
+      frameCounterPath,
+      mp4Path,
+      thumbPath,
+      lateKeyframeTrimStart,
+    );
+
+    console.log(
+      "Encoder YouTube late-keyframe full-download fallback contract test passed",
+    );
+  } finally {
+    run("docker", [
+      "rm",
+      "-f",
+      `${containerName}-youtube-sections-late-keyframe`,
+    ]);
   }
 
   const lateStartOutputDir = path.join(outputDir, "youtube-sections-zero-start");

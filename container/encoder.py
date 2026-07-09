@@ -39,6 +39,7 @@ YOUTUBE_DOWNLOAD_MAX_SECONDS = int(
 )
 YOUTUBE_STDERR_MAX_LINES = 200
 YOUTUBE_SECTION_PADDING_SECONDS = 3
+YOUTUBE_SECTION_START_DRIFT_TOLERANCE_SECONDS = 0.25
 YOUTUBE_USE_DOWNLOAD_SECTIONS = True
 ENCODE_TIMEOUT_SECONDS = 600
 UPLOAD_TIMEOUT_SECONDS = 600
@@ -539,6 +540,14 @@ def resolve_section_encode_bounds(
 
     probed_start = probe_media_start_time(source_path)
     if probed_start is not None and probed_start > 0:
+        if (
+            probed_start
+            > trim_start + YOUTUBE_SECTION_START_DRIFT_TOLERANCE_SECONDS
+        ):
+            raise RuntimeError(
+                "Downloaded section does not contain the requested trim range. "
+                "Try a wider trim range or upload the video file instead.",
+            )
         base = probed_start
     else:
         base = section_start
