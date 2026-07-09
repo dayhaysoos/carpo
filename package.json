@@ -3,13 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "web"
+  ],
   "scripts": {
     "dev": "npm run build:web && wrangler dev",
-    "dev:web": "npm run dev --prefix web",
-    "build:web": "npm run build --prefix web",
+    "dev:web": "npm run dev -w web",
+    "build:web": "npm run build -w web",
     "build": "npm run build:web && tsc --noEmit",
     "deploy": "npm run build:web && wrangler deploy",
-    "typecheck": "tsc --noEmit && npm run typecheck --prefix web",
+    "typecheck": "tsc --noEmit && npm run typecheck -w web",
     "test": "vitest run",
     "test:api": "vitest run test/api.test.ts",
     "test:encoder": "node --experimental-strip-types scripts/test-encoder-contract.ts",
