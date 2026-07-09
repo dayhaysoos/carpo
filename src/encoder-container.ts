@@ -120,13 +120,14 @@ export class EncoderContainer extends Container<Env> {
       return response;
     }
 
-    if (result.status !== "complete") {
+    if (result.status !== "staged" && result.status !== "complete") {
       return Response.json(result, { status: response.status });
     }
 
     try {
       await this.uploadDeferredArtifacts(job.outputs);
     } catch (error) {
+      await this.cleanupDeferredArtifacts(job.outputs);
       const message =
         error instanceof Error ? error.message : "Failed to upload encoded artifacts";
       return Response.json(
@@ -135,7 +136,16 @@ export class EncoderContainer extends Container<Env> {
       );
     }
 
-    return Response.json(result, { status: 200 });
+    return Response.json(
+      {
+        status: "complete",
+        outputs: {
+          mp4Key: job.outputs.mp4Key,
+          thumbnailKey: job.outputs.thumbnailKey,
+        },
+      },
+      { status: 200 },
+    );
   }
 
   private async stageUploadSource(
@@ -198,5 +208,22 @@ export class EncoderContainer extends Container<Env> {
     await this.env.CLIPS_BUCKET.put(outputs.thumbnailKey, thumbResponse.body, {
       httpMetadata: { contentType: "image/jpeg" },
     });
+
+    const [mp4Head, thumbHead] = await Promise.all([
+      this.env.CLIPS_BUCKET.head(outputs.mp4Key),
+      this.env.CLIPS_BUCKET.head(outputs.thumbnailKey),
+    ]);
+    if (!mp4Head || !thumbHead) {
+      throw new Error("Encoded artifacts were not durably stored in R2");
+    }
+  }
+
+  private async cleanupDeferredArtifacts(
+    outputs: EncoderJobSpec["outputs"],
+  ): Promise<void> {
+    await Promise.all([
+      this.env.CLIPS_BUCKET.delete(outputs.mp4Key),
+      this.env.CLIPS_BUCKET.delete(outputs.thumbnailKey),
+    ]);
   }
 }

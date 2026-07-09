@@ -22,6 +22,8 @@ export const STUB_VERIFY_WORKER_BASE_URL =
   "https://www.youtube.com/watch?v=stub-verify-worker-base-url";
 export const STUB_NO_CALLBACKS_SLOW_RUN_URL =
   "https://www.youtube.com/watch?v=stub-no-callbacks-slow-run";
+export const STUB_DEFERRED_COPY_FAILURE_UPLOAD_KEY =
+  "uploads/stub-deferred-copy-failure.mp4";
 
 /**
  * Test double for the encoder container binding.
@@ -69,6 +71,11 @@ export class EncoderStub extends DurableObject<Env> {
       "Content-Type": "application/json",
       [JOB_SECRET_HEADER]: job.callbackSecret,
     };
+
+    if (job.source.type === "upload") {
+      return this.handleDeferredUploadRun(job, authHeaders);
+    }
+
     const sourceUrl =
       job.source.type === "youtube" ? job.source.url : "";
     const skipCompleteCallback = sourceUrl.includes(
@@ -143,6 +150,64 @@ export class EncoderStub extends DurableObject<Env> {
         headers: authHeaders,
         body: JSON.stringify({ status: "complete" }),
       });
+    }
+
+    return Response.json({
+      status: "complete",
+      outputs: job.outputs,
+    });
+  }
+
+  private async handleDeferredUploadRun(
+    job: EncoderJobSpec,
+    authHeaders: Record<string, string>,
+  ): Promise<Response> {
+    const callbackTarget = job.callbackUrl.startsWith("http")
+      ? job.callbackUrl
+      : `http://example.com${job.callbackUrl}`;
+
+    for (const status of ["downloading", "encoding"] as const) {
+      await fetch(callbackTarget, {
+        method: "POST",
+        headers: authHeaders,
+        body: JSON.stringify({ status }),
+      });
+    }
+
+    const copyFailure = job.source.key.includes("stub-deferred-copy-failure");
+
+    if (copyFailure) {
+      await this.env.CLIPS_BUCKET.put(job.outputs.mp4Key, FAKE_MP4, {
+        httpMetadata: { contentType: "video/mp4" },
+      });
+      return Response.json(
+        {
+          status: "failed",
+          errorMessage: "Failed to read encoded thumbnail (simulated)",
+        },
+        { status: 500 },
+      );
+    }
+
+    await this.env.CLIPS_BUCKET.put(job.outputs.mp4Key, FAKE_MP4, {
+      httpMetadata: { contentType: "video/mp4" },
+    });
+    await this.env.CLIPS_BUCKET.put(job.outputs.thumbnailKey, FAKE_JPEG, {
+      httpMetadata: { contentType: "image/jpeg" },
+    });
+
+    const [mp4Head, thumbHead] = await Promise.all([
+      this.env.CLIPS_BUCKET.head(job.outputs.mp4Key),
+      this.env.CLIPS_BUCKET.head(job.outputs.thumbnailKey),
+    ]);
+    if (!mp4Head || !thumbHead) {
+      return Response.json(
+        {
+          status: "failed",
+          errorMessage: "Encoded artifacts were not durably stored in R2",
+        },
+        { status: 500 },
+      );
     }
 
     return Response.json({

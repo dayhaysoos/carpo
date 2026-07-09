@@ -137,6 +137,15 @@ export async function dispatchEncodingJob(
         return;
       }
 
+      if (result.status !== "complete") {
+        await failClipAmbiguous(
+          env,
+          clipId,
+          `Unexpected encoder status: ${result.status ?? "unknown"}`,
+        );
+        return;
+      }
+
       // Authoritative completion: trust the successful /run body over callbacks.
       const mp4Key = result.outputs?.mp4Key ?? outputKeys.mp4Key;
       const thumbnailKey =

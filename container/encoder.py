@@ -495,7 +495,7 @@ def run_result(
     result: dict[str, Any] = {"status": status}
     if error_message is not None:
         result["errorMessage"] = error_message
-    if status == "complete":
+    if status in ("complete", "staged"):
         outputs = job.get("outputs", {})
         result["outputs"] = {
             "mp4Key": outputs.get("mp4Key", ""),
@@ -574,7 +574,9 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
                 workdir=workdir,
             )
 
-            if callback_url:
+            defer_upload = bool(job.get("deferArtifactUpload"))
+
+            if callback_url and not defer_upload:
                 progress.post_resync_if_needed(
                     callback_url,
                     secret=callback_secret,
@@ -587,7 +589,7 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
 
             if job.get("localOutputDir"):
                 copy_outputs_locally(job, output_mp4, output_thumb)
-            elif job.get("deferArtifactUpload"):
+            elif defer_upload:
                 DEFERRED_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(output_mp4, DEFERRED_OUTPUT_DIR / "clip.mp4")
                 shutil.copy2(output_thumb, DEFERRED_OUTPUT_DIR / "thumbnail.jpg")
@@ -604,14 +606,17 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
                     callback_url,
                     secret=callback_secret,
                 )
-                # Terminal state is carried by the /run response; callbacks are
-                # a best-effort fast-path for polling clients.
-                progress.post(
-                    callback_url,
-                    "complete",
-                    secret=callback_secret,
-                )
+                if not defer_upload:
+                    # Terminal state is carried by the /run response; callbacks are
+                    # a best-effort fast-path for polling clients.
+                    progress.post(
+                        callback_url,
+                        "complete",
+                        secret=callback_secret,
+                    )
 
+            if defer_upload:
+                return run_result("staged", job)
             return run_result("complete", job)
         except Exception as exc:  # noqa: BLE001 - report encoder failures to caller
             message = str(exc) or "Encoding failed"
@@ -695,7 +700,7 @@ class EncoderHandler(BaseHTTPRequestHandler):
             return
 
         result = process_job(job)
-        status_code = 200 if result.get("status") == "complete" else 500
+        status_code = 200 if result.get("status") in ("complete", "staged") else 500
         self._send_json(status_code, result)
 
 
