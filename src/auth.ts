@@ -1,4 +1,5 @@
 export const JOB_SECRET_HEADER = "X-Carpo-Job-Secret";
+export const HELPER_TOKEN_HEADER = "X-Carpo-Helper-Token";
 
 export function generateCallbackSecret(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
@@ -20,4 +21,11 @@ export function verifyJobSecret(
     mismatch |= provided.charCodeAt(i) ^ expected.charCodeAt(i);
   }
   return mismatch === 0;
+}
+
+export function verifyHelperToken(
+  provided: string | null | undefined,
+  expected: string,
+): boolean {
+  return verifyJobSecret(provided, expected);
 }

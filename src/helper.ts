@@ -1,0 +1,312 @@
+import {
+  HELPER_TOKEN_HEADER,
+  verifyHelperToken,
+} from "./auth";
+import {
+  claimOldestPendingHelperJob,
+  expireClaimedHelperJob,
+  expirePendingHelperJob,
+  fulfillHelperJob,
+  getClipById,
+  markClipQueuedFromDownloading,
+} from "./db";
+import type { Env } from "./env";
+import { dispatchEncodingJob } from "./jobs";
+import { parseFilters, recordToResponse } from "./serialize";
+import type { ClipRecord, CreateClipRequest } from "./types";
+import { isValidUploadKey } from "./uploads";
+
+export function isHelperEnabled(env: Env): boolean {
+  return Boolean(env.HELPER_TOKEN);
+}
+
+export function helperClaimWindowMs(env: Env): number {
+  const raw = env.HELPER_CLAIM_WINDOW_SECONDS;
+  if (raw === undefined || raw === "") {
+    return 10_000;
+  }
+  const seconds = Number(raw);
+  return (Number.isFinite(seconds) ? seconds : 10) * 1000;
+}
+
+export function recordToCreateClipRequest(record: ClipRecord): CreateClipRequest {
+  const source =
+    record.source_type === "youtube"
+      ? { type: "youtube" as const, url: record.source_ref }
+      : { type: "upload" as const, key: record.source_ref };
+  return {
+    title: record.title,
+    source,
+    trimStart: record.trim_start,
+    trimEnd: record.trim_end,
+    quality: record.quality,
+    filters: parseFilters(record.filters_json),
+  };
+}
+
+export async function scheduleHelperClaimWindowFallback(
+  env: Env,
+  clipId: string,
+  request: CreateClipRequest,
+  origin: string,
+): Promise<void> {
+  const windowMs = helperClaimWindowMs(env);
+  if (windowMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, windowMs));
+  }
+  const expired = await expirePendingHelperJob(env.DB, clipId);
+  if (expired) {
+    await dispatchEncodingJob(env, clipId, request, origin);
+  }
+}
+
+export async function recoverStaleHelperClaim(
+  env: Env,
+  clipId: string,
+  origin: string,
+): Promise<void> {
+  await markClipQueuedFromDownloading(env.DB, clipId);
+  const record = await getClipById(env.DB, clipId);
+  if (!record) {
+    return;
+  }
+  await dispatchEncodingJob(
+    env,
+    clipId,
+    recordToCreateClipRequest(record),
+    origin,
+  );
+}
+
+function helperAuthError(request: Request, env: Env): Response | null {
+  if (!isHelperEnabled(env)) {
+    return json({ error: "Not found" }, 404);
+  }
+  const provided = request.headers.get(HELPER_TOKEN_HEADER);
+  if (!verifyHelperToken(provided, env.HELPER_TOKEN!)) {
+    return json({ error: "Unauthorized" }, 401);
+  }
+  return null;
+}
+
+export async function handleHelperClaim(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  const authError = helperAuthError(request, env);
+  if (authError) {
+    return authError;
+  }
+
+  const record = await claimOldestPendingHelperJob(env.DB);
+  if (!record) {
+    return new Response(null, { status: 204 });
+  }
+
+  return json({
+    clipId: record.id,
+    url: record.source_ref,
+    trimStart: record.trim_start,
+    trimEnd: record.trim_end,
+    quality: record.quality,
+    maxClipLengthSeconds: Number(env.MAX_CLIP_LENGTH_SECONDS) || 60,
+  });
+}
+
+interface FulfillBody {
+  uploadKey?: string;
+  sectionStart?: number;
+}
+
+export async function handleHelperFulfill(
+  request: Request,
+  clipId: string,
+  env: Env,
+  ctx: ExecutionContext,
+  origin: string,
+): Promise<Response> {
+  const authError = helperAuthError(request, env);
+  if (authError) {
+    return authError;
+  }
+
+  if (!clipId) {
+    return json({ error: "Clip id is required" }, 400);
+  }
+
+  let body: FulfillBody;
+  try {
+    body = (await request.json()) as FulfillBody;
+  } catch {
+    return json({ error: "Invalid JSON body" }, 400);
+  }
+
+  const uploadKey =
+    typeof body.uploadKey === "string" ? body.uploadKey.trim() : "";
+  if (!uploadKey || !isValidUploadKey(uploadKey)) {
+    return json(
+      {
+        error: "Validation failed",
+        details: [
+          {
+            field: "uploadKey",
+            message: "uploadKey must be a valid uploads/ object key",
+          },
+        ],
+      },
+      400,
+    );
+  }
+
+  if (
+    typeof body.sectionStart !== "number" ||
+    !Number.isFinite(body.sectionStart) ||
+    body.sectionStart < 0
+  ) {
+    return json(
+      {
+        error: "Validation failed",
+        details: [
+          {
+            field: "sectionStart",
+            message: "sectionStart must be a finite number >= 0",
+          },
+        ],
+      },
+      400,
+    );
+  }
+
+  const record = await getClipById(env.DB, clipId);
+  if (!record) {
+    return json({ error: "Clip not found" }, 404);
+  }
+  if (record.helper_state !== "claimed") {
+    return json({ error: "Clip is not in a claimed helper state" }, 409);
+  }
+  if (body.sectionStart > record.trim_start) {
+    return json(
+      {
+        error: "Validation failed",
+        details: [
+          {
+            field: "sectionStart",
+            message: "sectionStart must be <= trimStart",
+          },
+        ],
+      },
+      400,
+    );
+  }
+
+  const object = await env.CLIPS_BUCKET.head(uploadKey);
+  if (!object) {
+    return json(
+      {
+        error: "Upload not found",
+        details: [
+          {
+            field: "uploadKey",
+            message: "Uploaded source object was not found in R2",
+          },
+        ],
+      },
+      404,
+    );
+  }
+
+  const adjStart = record.trim_start - body.sectionStart;
+  const adjEnd = record.trim_end - body.sectionStart;
+  if (adjEnd <= adjStart) {
+    return json(
+      {
+        error: "Validation failed",
+        details: [
+          {
+            field: "sectionStart",
+            message: "Adjusted trim window must be positive",
+          },
+        ],
+      },
+      400,
+    );
+  }
+
+  const fulfilled = await fulfillHelperJob(env.DB, clipId, uploadKey);
+  if (!fulfilled) {
+    return json({ error: "Clip is not in a claimed helper state" }, 409);
+  }
+
+  const syntheticRequest: CreateClipRequest = {
+    title: record.title,
+    source: { type: "upload", key: uploadKey },
+    trimStart: adjStart,
+    trimEnd: adjEnd,
+    quality: record.quality,
+    filters: parseFilters(record.filters_json),
+  };
+
+  ctx.waitUntil(dispatchEncodingJob(env, clipId, syntheticRequest, origin));
+
+  const updated = await getClipById(env.DB, clipId);
+  return json(recordToResponse(updated!, env.R2_PUBLIC_PREFIX), 202);
+}
+
+interface FailBody {
+  errorMessage?: string;
+}
+
+export async function handleHelperFail(
+  request: Request,
+  clipId: string,
+  env: Env,
+  ctx: ExecutionContext,
+  origin: string,
+): Promise<Response> {
+  const authError = helperAuthError(request, env);
+  if (authError) {
+    return authError;
+  }
+
+  if (!clipId) {
+    return json({ error: "Clip id is required" }, 400);
+  }
+
+  const record = await getClipById(env.DB, clipId);
+  if (!record) {
+    return json({ error: "Clip not found" }, 404);
+  }
+  if (record.helper_state !== "claimed") {
+    return json({ error: "Clip is not in a claimed helper state" }, 409);
+  }
+
+  const expired = await expireClaimedHelperJob(env.DB, clipId);
+  if (!expired) {
+    return json({ error: "Clip is not in a claimed helper state" }, 409);
+  }
+
+  await markClipQueuedFromDownloading(env.DB, clipId);
+  const refreshed = await getClipById(env.DB, clipId);
+  if (refreshed) {
+    ctx.waitUntil(
+      dispatchEncodingJob(
+        env,
+        clipId,
+        recordToCreateClipRequest(refreshed),
+        origin,
+      ),
+    );
+  }
+
+  const updated = await getClipById(env.DB, clipId);
+  return json(recordToResponse(updated!, env.R2_PUBLIC_PREFIX), 202);
+}
+
+function json(data: unknown, status = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+    },
+  });
+}

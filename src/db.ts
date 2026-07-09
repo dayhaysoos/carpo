@@ -4,28 +4,35 @@ import type {
   CreateClipRequest,
   FailureMode,
   GifStatus,
+  HelperState,
 } from "./types";
 import { DEFAULT_CLIP_QUALITY } from "./types";
 import { generateCallbackSecret } from "./auth";
 import { extractCaptionFromFilters } from "./validation";
 
+export interface InsertClipOptions {
+  helperState?: HelperState;
+}
+
 export async function insertClip(
   db: D1Database,
   id: string,
   request: CreateClipRequest,
+  options?: InsertClipOptions,
 ): Promise<ClipRecord> {
   const sourceType = request.source.type;
   const sourceRef =
     request.source.type === "youtube" ? request.source.url : request.source.key;
   const filtersJson = JSON.stringify(request.filters ?? []);
   const callbackSecret = generateCallbackSecret();
+  const helperState = options?.helperState ?? null;
 
   await db
     .prepare(
       `INSERT INTO clips (
         id, title, source_type, source_ref, trim_start, trim_end,
-        quality, caption, filters_json, status, callback_secret
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`,
+        quality, caption, filters_json, status, callback_secret, helper_state
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
     )
     .bind(
       id,
@@ -38,6 +45,7 @@ export async function insertClip(
       extractCaptionFromFilters(request.filters),
       filtersJson,
       callbackSecret,
+      helperState,
     )
     .run();
 
@@ -202,7 +210,10 @@ export async function deleteClipArtifacts(
   clipId: string,
   record?: Pick<
     ClipRecord,
-    "output_mp4_key" | "output_thumbnail_key" | "output_gif_key"
+    | "output_mp4_key"
+    | "output_thumbnail_key"
+    | "output_gif_key"
+    | "helper_upload_key"
   > | null,
 ): Promise<void> {
   const keys = outputKeysForClip(clipId);
@@ -216,17 +227,25 @@ export async function deleteClipArtifacts(
   if (record?.output_gif_key) {
     keysToDelete.add(record.output_gif_key);
   }
+  if (record?.helper_upload_key) {
+    keysToDelete.add(record.helper_upload_key);
+  }
   await Promise.all([...keysToDelete].map((key) => bucket.delete(key)));
 }
 
 export async function deleteUploadSource(
   bucket: R2Bucket,
-  record: Pick<ClipRecord, "source_type" | "source_ref">,
+  record: Pick<
+    ClipRecord,
+    "source_type" | "source_ref" | "helper_upload_key"
+  >,
 ): Promise<void> {
-  if (record.source_type !== "upload") {
-    return;
+  if (record.source_type === "upload") {
+    await bucket.delete(record.source_ref);
   }
-  await bucket.delete(record.source_ref);
+  if (record.helper_upload_key) {
+    await bucket.delete(record.helper_upload_key);
+  }
 }
 
 export function outputKeysForClip(clipId: string): {
@@ -303,4 +322,118 @@ export async function markGifFailed(
 
 export function gifStatusForRecord(record: ClipRecord): GifStatus {
   return record.gif_status ?? "none";
+}
+
+export async function expirePendingHelperJob(
+  db: D1Database,
+  id: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE clips
+       SET helper_state = 'expired',
+           updated_at = datetime('now')
+       WHERE id = ?
+         AND helper_state = 'pending'`,
+    )
+    .bind(id)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function claimOldestPendingHelperJob(
+  db: D1Database,
+): Promise<ClipRecord | null> {
+  return db
+    .prepare(
+      `UPDATE clips
+       SET helper_state = 'claimed',
+           helper_claimed_at = datetime('now'),
+           status = 'downloading',
+           updated_at = datetime('now')
+       WHERE id = (
+         SELECT id
+         FROM clips
+         WHERE helper_state = 'pending'
+           AND status = 'queued'
+           AND source_type = 'youtube'
+         ORDER BY created_at ASC
+         LIMIT 1
+       )
+         AND helper_state = 'pending'
+       RETURNING *`,
+    )
+    .first<ClipRecord>();
+}
+
+export async function fulfillHelperJob(
+  db: D1Database,
+  id: string,
+  uploadKey: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE clips
+       SET helper_state = 'fulfilled',
+           helper_upload_key = ?,
+           updated_at = datetime('now')
+       WHERE id = ?
+         AND helper_state = 'claimed'`,
+    )
+    .bind(uploadKey, id)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function expireClaimedHelperJob(
+  db: D1Database,
+  id: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE clips
+       SET helper_state = 'expired',
+           updated_at = datetime('now')
+       WHERE id = ?
+         AND helper_state = 'claimed'`,
+    )
+    .bind(id)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function markClipQueuedFromDownloading(
+  db: D1Database,
+  id: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE clips
+       SET status = 'queued',
+           error_message = NULL,
+           failure_mode = NULL,
+           updated_at = datetime('now')
+       WHERE id = ?
+         AND status = 'downloading'`,
+    )
+    .bind(id)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+const STALE_HELPER_CLAIM_CEILING_MINUTES = 5;
+
+export async function sweepStaleHelperClaims(db: D1Database): Promise<string[]> {
+  const result = await db
+    .prepare(
+      `UPDATE clips
+       SET helper_state = 'expired',
+           updated_at = datetime('now')
+       WHERE helper_state = 'claimed'
+         AND helper_claimed_at < datetime('now', ?)
+       RETURNING id`,
+    )
+    .bind(`-${STALE_HELPER_CLAIM_CEILING_MINUTES} minutes`)
+    .all<{ id: string }>();
+  return (result.results ?? []).map((row) => row.id);
 }

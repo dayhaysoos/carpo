@@ -10,4 +10,6 @@ export interface Env {
   R2_SECRET_ACCESS_KEY?: string;
   R2_BUCKET_NAME?: string;
   WORKER_BASE_URL?: string;
+  HELPER_TOKEN?: string;
+  HELPER_CLAIM_WINDOW_SECONDS?: string;
 }

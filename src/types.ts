@@ -19,6 +19,8 @@ export type GifStatus = (typeof GIF_STATUSES)[number];
 
 export type SourceType = "youtube" | "upload";
 
+export type HelperState = "pending" | "claimed" | "fulfilled" | "expired";
+
 export const MAX_CAPTION_LENGTH = 200;
 
 export const FILTER_TYPES = ["caption"] as const;
@@ -76,6 +78,9 @@ export interface ClipRecord {
   gif_status: GifStatus;
   gif_error_message: string | null;
   callback_secret: string;
+  helper_state: HelperState | null;
+  helper_claimed_at: string | null;
+  helper_upload_key: string | null;
   created_at: string;
   updated_at: string;
 }
