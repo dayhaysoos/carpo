@@ -444,6 +444,33 @@ def _kill_process_group(pid: int) -> None:
     _signal_process_group(pid, signal.SIGKILL)
 
 
+def _wait_for_process_after_kill(proc: subprocess.Popen[Any]) -> None:
+    """Wait for a killed yt-dlp process; retry SIGKILL if it does not exit."""
+    try:
+        proc.wait(timeout=10)
+        return
+    except subprocess.TimeoutExpired:
+        log(
+            f"WARNING: yt-dlp process {proc.pid} did not exit within 10s "
+            "after kill; retrying SIGKILL",
+        )
+
+    if proc.poll() is None and proc.pid is not None:
+        _signal_process_group(proc.pid, signal.SIGKILL)
+
+    try:
+        proc.wait(timeout=3)
+        return
+    except subprocess.TimeoutExpired:
+        log(
+            f"CRITICAL: yt-dlp process {proc.pid} is unkillable after SIGKILL",
+        )
+        raise RuntimeError(
+            "YouTube download process could not be terminated. "
+            "Try uploading the video file instead.",
+        )
+
+
 def probe_media_start_time(path: Path) -> float | None:
     """Return container start_time from ffprobe when present."""
     try:
@@ -479,18 +506,18 @@ def resolve_section_encode_bounds(
     trim_end: float,
     section_start: float,
 ) -> tuple[float, float]:
-    """Map requested trim bounds to offsets within a section download."""
+    """Map requested trim bounds to offsets within a section download.
+
+    With --force-keyframes-at-cuts, yt-dlp re-encodes the section to start
+    exactly at section_start with rebased timestamps (start_time=0), so the
+    offset math is section_start-relative by construction.
+    """
+    del source_path  # retained for call-site clarity and future diagnostics
     if not YOUTUBE_USE_DOWNLOAD_SECTIONS:
         return trim_start, trim_end
 
-    probed_start = probe_media_start_time(source_path)
-    if probed_start is not None and probed_start > 0:
-        base = probed_start
-    else:
-        base = section_start
-
-    encode_trim_start = max(0.0, trim_start - base)
-    encode_trim_end = trim_end - base
+    encode_trim_start = max(0.0, trim_start - section_start)
+    encode_trim_end = trim_end - section_start
     if encode_trim_end <= encode_trim_start:
         raise RuntimeError(
             "Downloaded section does not contain the requested trim range. "
@@ -589,7 +616,10 @@ def run_ytdlp(command: list[str], workdir: Path) -> None:
             break
         time.sleep(0.25)
 
-    proc.wait()
+    if stall_killed or overall_timeout:
+        _wait_for_process_after_kill(proc)
+    else:
+        proc.wait()
     stdout_thread.join(timeout=2)
     stderr_thread.join(timeout=2)
 
@@ -708,6 +738,7 @@ def download_youtube(
             [
                 "--download-sections",
                 f"*{section_start}-{section_end}",
+                "--force-keyframes-at-cuts",
             ],
         )
     command.extend(

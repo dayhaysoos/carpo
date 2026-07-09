@@ -237,23 +237,24 @@ function testSectionEncodeBounds() {
   const script = `
 import sys
 from pathlib import Path
-from unittest.mock import patch
 
 sys.path.insert(0, ${JSON.stringify(path.join(root, "container"))})
 from encoder import resolve_section_encode_bounds
 
-with patch("encoder.probe_media_start_time", return_value=8.0):
-    start, end = resolve_section_encode_bounds(Path("source.mp4"), 7.5, 10.0, 4.5)
-    assert start == 0.0, start
-    assert end == 2.0, end
+start, end = resolve_section_encode_bounds(Path("source.mp4"), 7.5, 10.0, 4.5)
+assert start == 3.0, start
+assert end == 5.5, end
 
-with patch("encoder.probe_media_start_time", return_value=11.0):
-    try:
-        resolve_section_encode_bounds(Path("source.mp4"), 7.5, 10.0, 4.5)
-    except RuntimeError as exc:
-        assert "does not contain the requested trim range" in str(exc)
-    else:
-        raise AssertionError("expected empty trim window to fail")
+start, end = resolve_section_encode_bounds(Path("source.mp4"), 1.0, 4.0, 0.0)
+assert start == 1.0, start
+assert end == 4.0, end
+
+try:
+    resolve_section_encode_bounds(Path("source.mp4"), 7.5, 10.0, 11.0)
+except RuntimeError as exc:
+    assert "does not contain the requested trim range" in str(exc)
+else:
+    raise AssertionError("expected empty trim window to fail")
 
 print("Section encode bounds test passed")
 `;
@@ -694,6 +695,9 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
     if (!sections.logs.includes("--download-sections")) {
       throw new Error("Encoder logs did not show --download-sections");
     }
+    if (!sections.logs.includes("--force-keyframes-at-cuts")) {
+      throw new Error("Encoder logs did not show --force-keyframes-at-cuts");
+    }
     if (
       !sections.logs.includes("-S") ||
       !sections.logs.includes("res:1080") ||
@@ -732,24 +736,26 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
     run("docker", ["rm", "-f", `${containerName}-youtube-sections`]);
   }
 
-  const lateStartOutputDir = path.join(outputDir, "youtube-sections-late-start");
+  const lateStartOutputDir = path.join(outputDir, "youtube-sections-zero-start");
   fs.rmSync(lateStartOutputDir, { recursive: true, force: true });
   fs.mkdirSync(lateStartOutputDir, { recursive: true });
-  const lateStartJobPath = path.join(lateStartOutputDir, "late-start-job.json");
+  const zeroTrimStart = 1;
+  const zeroTrimEnd = 4;
+  const lateStartJobPath = path.join(lateStartOutputDir, "zero-start-job.json");
   fs.writeFileSync(
     lateStartJobPath,
     JSON.stringify({
-      jobId: "youtube-sections-late-start",
+      jobId: "youtube-sections-zero-start",
       source: {
         type: "youtube",
-        url: "https://www.youtube.com/watch?v=section-late-start",
+        url: "https://www.youtube.com/watch?v=section-zero-start",
       },
-      trimStart,
-      trimEnd,
+      trimStart: zeroTrimStart,
+      trimEnd: zeroTrimEnd,
       maxClipLengthSeconds: 60,
       outputs: {
-        mp4Key: "late-start.mp4",
-        thumbnailKey: "late-start.jpg",
+        mp4Key: "zero-start.mp4",
+        thumbnailKey: "zero-start.jpg",
       },
       localOutputDir: "/output",
     }),
@@ -757,7 +763,7 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
 
   try {
     const lateStart = runEncoderYoutubeJob(
-      `${containerName}-youtube-sections-late`,
+      `${containerName}-youtube-sections-zero`,
       18094,
       lateStartJobPath,
       {
@@ -768,13 +774,20 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
     );
     if (lateStart.result.status !== "complete") {
       throw new Error(
-        `Expected complete status for late-start sections fixture, got ${lateStart.result.status}: ${lateStart.result.errorMessage ?? ""}`,
+        `Expected complete status for zero-start sections fixture, got ${lateStart.result.status}: ${lateStart.result.errorMessage ?? ""}`,
       );
+    }
+    if (!lateStart.logs.includes("--force-keyframes-at-cuts")) {
+      throw new Error("Encoder logs did not show --force-keyframes-at-cuts");
     }
     if (lateStart.logs.includes("-ss -")) {
       throw new Error("Encoder logs contained a negative ffmpeg -ss offset");
     }
-    const mp4Path = path.join(lateStartOutputDir, "late-start.mp4");
+    const mp4Path = path.join(lateStartOutputDir, "zero-start.mp4");
+    const thumbPath = path.join(lateStartOutputDir, "zero-start.jpg");
+    if (!fs.existsSync(mp4Path) || !fs.existsSync(thumbPath)) {
+      throw new Error("Expected zero-start sections trim artifacts on host output dir");
+    }
     const probe = run("ffprobe", [
       "-v",
       "error",
@@ -785,20 +798,26 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
       mp4Path,
     ]);
     const duration = Number.parseFloat(probe.trim());
-    const expectedDuration = 2.0;
+    const expectedDuration = zeroTrimEnd - zeroTrimStart;
     if (
       !Number.isFinite(duration) ||
       duration < expectedDuration - 0.5 ||
       duration > expectedDuration + 0.5
     ) {
       throw new Error(
-        `Late-start sections clip duration ${probe.trim()}s; expected ~${expectedDuration}s after clamp`,
+        `Zero-start sections clip duration ${probe.trim()}s; expected ~${expectedDuration}s`,
       );
     }
-    console.log("Encoder YouTube late-start sections clamp contract test passed");
-    console.log(`  Duration: ${duration.toFixed(2)}s (clamped from ${trimEnd - trimStart}s)`);
+    assertTrimFrameAccuracy(
+      frameCounterPath,
+      mp4Path,
+      thumbPath,
+      zeroTrimStart,
+    );
+    console.log("Encoder YouTube zero-start sections contract test passed");
+    console.log(`  Duration: ${duration.toFixed(2)}s (expected ${expectedDuration}s)`);
   } finally {
-    run("docker", ["rm", "-f", `${containerName}-youtube-sections-late`]);
+    run("docker", ["rm", "-f", `${containerName}-youtube-sections-zero`]);
   }
 }
 
