@@ -61,16 +61,40 @@ YOUTUBE_STALL_MESSAGE = (
     "YouTube appears to be blocking/stalling downloads from this server. "
     "Try uploading the video file instead."
 )
-# Prefer h264 up to 1080p; cap AV1 to 720p when it is the only option.
-YTDLP_FORMAT_SORT = "res:1080,+codec:h264"
-YTDLP_FORMAT_SELECTOR = (
-    "bestvideo[height<=1080][vcodec^=avc1]+bestaudio/"
-    "bestvideo[height<=1080]+bestaudio/"
-    "best[height<=1080]/"
-    "bestvideo[vcodec^=av01][height<=720]+bestaudio/"
-    "bestvideo[height<=720]+bestaudio/"
-    "best"
+VALID_QUALITIES = frozenset({"720p", "1080p"})
+DEFAULT_QUALITY = "1080p"
+QUALITY_MAX_HEIGHT = {"720p": 720, "1080p": 1080}
+YOUTUBE_SECTION_EXACT_FALLBACK_MESSAGE = (
+    "Section-only download failed after retry with exact cuts. "
+    "Try a wider trim range or upload the video file instead."
 )
+
+
+def resolve_quality(value: Any) -> str:
+    if value is None:
+        return DEFAULT_QUALITY
+    if isinstance(value, str) and value in VALID_QUALITIES:
+        return value
+    return DEFAULT_QUALITY
+
+
+def ytdlp_format_for_quality(quality: str) -> tuple[str, str]:
+    max_height = QUALITY_MAX_HEIGHT.get(quality, 1080)
+    av1_cap = min(max_height, 720)
+    format_sort = f"res:{max_height},+codec:h264"
+    format_selector = (
+        f"bestvideo[height<={max_height}][vcodec^=avc1]+bestaudio/"
+        f"bestvideo[height<={max_height}]+bestaudio/"
+        f"best[height<={max_height}]/"
+        f"bestvideo[vcodec^=av01][height<={av1_cap}]+bestaudio/"
+        f"bestvideo[height<={av1_cap}]+bestaudio/"
+        "best"
+    )
+    return format_sort, format_selector
+
+
+def output_scale_filter(max_height: int) -> str:
+    return f"scale=-2:'min(ih\\,{max_height})'"
 ENCODE_FAILURE_MESSAGE = (
     "Encoding failed for this video format. "
     "Try a shorter clip or upload the file instead."
@@ -242,6 +266,12 @@ def validate_job(job: dict[str, Any]) -> str | None:
             return "sourceFetchUrl is required for upload sources"
     else:
         return "source.type must be youtube, upload, or file"
+
+    quality = job.get("quality")
+    if quality is not None and (
+        not isinstance(quality, str) or quality not in VALID_QUALITIES
+    ):
+        return "quality must be '720p' or '1080p'"
 
     return None
 
@@ -566,6 +596,22 @@ def resolve_section_encode_bounds(
     return encode_trim_start, encode_trim_end
 
 
+def section_exact_encode_bounds(
+    trim_start: float,
+    trim_end: float,
+    section_start: float,
+) -> tuple[float, float]:
+    """Map trim bounds using exact section-start math (force-keyframes path)."""
+    encode_trim_start = max(0.0, trim_start - section_start)
+    encode_trim_end = trim_end - section_start
+    if encode_trim_end <= encode_trim_start:
+        raise RuntimeError(
+            "Downloaded section does not contain the requested trim range. "
+            "Try a wider trim range or upload the video file instead.",
+        )
+    return encode_trim_start, encode_trim_end
+
+
 def run_ytdlp(command: list[str], workdir: Path) -> None:
     command = _ytdlp_command_with_newline(command)
     log(f"running: {' '.join(command)}")
@@ -761,8 +807,11 @@ def _ytdlp_download_command(
     trim_start: float,
     trim_end: float,
     use_sections: bool,
+    force_keyframes: bool = False,
+    quality: str = DEFAULT_QUALITY,
 ) -> tuple[list[str], float]:
     section_start = 0.0
+    format_sort, format_selector = ytdlp_format_for_quality(quality)
     command = [
         "yt-dlp",
         "--no-playlist",
@@ -774,14 +823,16 @@ def _ytdlp_download_command(
         "1",
         "--file-access-retries",
         "1",
+        "--concurrent-fragments",
+        "8",
         "--socket-timeout",
         str(YOUTUBE_SOCKET_TIMEOUT_SECONDS),
         "--merge-output-format",
         "mp4",
         "-S",
-        YTDLP_FORMAT_SORT,
+        format_sort,
         "-f",
-        YTDLP_FORMAT_SELECTOR,
+        format_selector,
     ]
     if use_sections:
         section_start, section_end = youtube_section_bounds(trim_start, trim_end)
@@ -791,6 +842,8 @@ def _ytdlp_download_command(
                 f"*{section_start}-{section_end}",
             ],
         )
+        if force_keyframes:
+            command.append("--force-keyframes-at-cuts")
     command.extend(
         [
             "-o",
@@ -823,60 +876,77 @@ def download_youtube(
     *,
     trim_start: float,
     trim_end: float,
+    quality: str = DEFAULT_QUALITY,
 ) -> tuple[Path, float, float]:
     """Download a YouTube source and return encode trim bounds relative to the file."""
-    output_template = str(workdir / "source.%(ext)s")
-
-    if YOUTUBE_USE_DOWNLOAD_SECTIONS:
-        section_command, section_start = _ytdlp_download_command(
-            url,
-            output_template,
-            trim_start=trim_start,
-            trim_end=trim_end,
-            use_sections=True,
+    if not YOUTUBE_USE_DOWNLOAD_SECTIONS:
+        raise RuntimeError(
+            "YouTube section downloads are required; full-video download is disabled",
         )
-        run_ytdlp(section_command, workdir)
-        source_path = _resolve_ytdlp_source_path(workdir)
 
-        probed_start = probe_media_start_time(source_path)
-        if probed_start is not None and probed_start > 0:
-            try:
-                encode_trim_start, encode_trim_end = resolve_section_encode_bounds(
-                    source_path,
-                    trim_start,
-                    trim_end,
-                    section_start,
-                )
-                return source_path, encode_trim_start, encode_trim_end
-            except RuntimeError as exc:
-                if "does not contain the requested trim range" not in str(exc):
-                    raise
-                log(
-                    "YouTube section download does not contain the requested "
-                    f"trim range (start_time={probed_start}); re-downloading full video",
-                )
-                _clear_ytdlp_source_files(workdir)
-        else:
-            if probed_start is None:
-                alignment_detail = "unavailable"
-            else:
-                alignment_detail = f"{probed_start}"
-            log(
-                "YouTube section download has unknown alignment "
-                f"(start_time={alignment_detail}); re-downloading full video",
-            )
-            _clear_ytdlp_source_files(workdir)
-
-    full_command, _ = _ytdlp_download_command(
+    output_template = str(workdir / "source.%(ext)s")
+    section_command, section_start = _ytdlp_download_command(
         url,
         output_template,
         trim_start=trim_start,
         trim_end=trim_end,
-        use_sections=False,
+        use_sections=True,
+        quality=quality,
     )
-    run_ytdlp(full_command, workdir)
+    run_ytdlp(section_command, workdir)
     source_path = _resolve_ytdlp_source_path(workdir)
-    return source_path, trim_start, trim_end
+
+    probed_start = probe_media_start_time(source_path)
+    if probed_start is not None and probed_start > 0:
+        try:
+            encode_trim_start, encode_trim_end = resolve_section_encode_bounds(
+                source_path,
+                trim_start,
+                trim_end,
+                section_start,
+            )
+            return source_path, encode_trim_start, encode_trim_end
+        except RuntimeError as exc:
+            if "does not contain the requested trim range" not in str(exc):
+                raise
+            log(
+                "YouTube section download does not contain the requested "
+                f"trim range (start_time={probed_start}); "
+                "re-downloading section with force-keyframes-at-cuts",
+            )
+    else:
+        if probed_start is None:
+            alignment_detail = "unavailable"
+        else:
+            alignment_detail = f"{probed_start}"
+        log(
+            "YouTube section download has unknown alignment "
+            f"(start_time={alignment_detail}); "
+            "re-downloading section with force-keyframes-at-cuts",
+        )
+
+    _clear_ytdlp_source_files(workdir)
+    exact_command, section_start = _ytdlp_download_command(
+        url,
+        output_template,
+        trim_start=trim_start,
+        trim_end=trim_end,
+        use_sections=True,
+        force_keyframes=True,
+        quality=quality,
+    )
+    try:
+        run_ytdlp(exact_command, workdir)
+    except RuntimeError as exc:
+        raise RuntimeError(YOUTUBE_SECTION_EXACT_FALLBACK_MESSAGE) from exc
+
+    source_path = _resolve_ytdlp_source_path(workdir)
+    encode_trim_start, encode_trim_end = section_exact_encode_bounds(
+        trim_start,
+        trim_end,
+        section_start,
+    )
+    return source_path, encode_trim_start, encode_trim_end
 
 
 def build_video_filter_chain(filters: list[Any], workdir: Path) -> str | None:
@@ -933,10 +1003,17 @@ def encode_clip(
     *,
     filters: list[Any] | None = None,
     workdir: Path | None = None,
+    max_output_height: int = 1080,
 ) -> None:
     duration = trim_end - trim_start
     filter_workdir = workdir or source.parent
-    video_filters = build_video_filter_chain(filters or [], filter_workdir)
+    caption_filters = build_video_filter_chain(filters or [], filter_workdir)
+    scale_filter = output_scale_filter(max_output_height)
+    video_filters = (
+        f"{scale_filter},{caption_filters}"
+        if caption_filters
+        else scale_filter
+    )
 
     encode_command = [
         "ffmpeg",
@@ -1183,6 +1260,8 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
 
         trim_start = float(job["trimStart"])
         trim_end = float(job["trimEnd"])
+        quality = resolve_quality(job.get("quality"))
+        max_output_height = QUALITY_MAX_HEIGHT[quality]
     except Exception as exc:  # noqa: BLE001 - validation bugs become confirmed failures
         message = str(exc) or "Job validation failed"
         return run_result("failed", job, error_message=message)
@@ -1210,6 +1289,7 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
                     workdir,
                     trim_start=trim_start,
                     trim_end=trim_end,
+                    quality=quality,
                 )
             elif source_type == "file":
                 source_path = Path(source["path"])
@@ -1246,6 +1326,7 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
                 output_thumb,
                 filters=job.get("filters") or [],
                 workdir=workdir,
+                max_output_height=max_output_height,
             )
 
             defer_upload = bool(job.get("deferArtifactUpload"))

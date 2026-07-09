@@ -1,9 +1,10 @@
 #!/bin/sh
 # Fake yt-dlp where a section download has known alignment (start_time > 0)
 # but the keyframe snap lands after trimEnd, so encode bounds are rejected.
-# Full-video fallback (no --download-sections) copies the complete fixture.
+# Fallback (--force-keyframes-at-cuts) produces an exact section cut.
 OUTPUT=""
 SECTIONS=""
+FORCE_KEYFRAMES=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -o)
@@ -13,6 +14,10 @@ while [ $# -gt 0 ]; do
     --download-sections)
       SECTIONS="$2"
       shift 2
+      ;;
+    --force-keyframes-at-cuts)
+      FORCE_KEYFRAMES=1
+      shift
       ;;
     *)
       shift
@@ -34,13 +39,28 @@ if [ ! -f /fixture/framecounter.mp4 ]; then
 fi
 
 if [ -n "$SECTIONS" ]; then
-  SECTION_START=$(printf '%s' "$SECTIONS" | sed 's/^\*//' | cut -d- -f1)
-  # Keyframe snap late enough that probed start_time exceeds trimEnd (9.5).
-  KEYFRAME_SNAP=$(awk -v start="$SECTION_START" 'BEGIN {
-    snap = start + 5.5
-    printf "%.3f", snap
+  SECTION_RANGE=$(printf '%s' "$SECTIONS" | sed 's/^\*//')
+  SECTION_START=$(printf '%s' "$SECTION_RANGE" | cut -d- -f1)
+  SECTION_END=$(printf '%s' "$SECTION_RANGE" | cut -d- -f2)
+  SECTION_DURATION=$(awk -v start="$SECTION_START" -v end="$SECTION_END" 'BEGIN {
+    printf "%.3f", end - start
   }')
-  ffmpeg -y -loglevel error -ss "$KEYFRAME_SNAP" -i /fixture/framecounter.mp4 -c copy -copyts "$OUTFILE"
+
+  if [ "$FORCE_KEYFRAMES" -eq 1 ]; then
+    ffmpeg -y -loglevel error \
+      -ss "$SECTION_START" \
+      -i /fixture/framecounter.mp4 \
+      -t "$SECTION_DURATION" \
+      -c copy \
+      "$OUTFILE"
+  else
+    KEYFRAME_SNAP=$(awk -v start="$SECTION_START" 'BEGIN {
+      snap = start + 5.5
+      printf "%.3f", snap
+    }')
+    ffmpeg -y -loglevel error -ss "$KEYFRAME_SNAP" -i /fixture/framecounter.mp4 -c copy -copyts "$OUTFILE"
+  fi
 else
-  cp /fixture/framecounter.mp4 "$OUTFILE"
+  echo "ERROR: --download-sections is required for this contract fixture" >&2
+  exit 1
 fi
