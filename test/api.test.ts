@@ -1072,3 +1072,316 @@ describe("GET /api/clips/:id", () => {
     expect(response.status).toBe(404);
   });
 });
+
+describe("GET /api/clips", () => {
+  it("returns clips newest-first with correct shapes for complete, failed, and in-flight clips", async () => {
+    const complete = await createYoutubeClip("complete list clip");
+    const failed = await createYoutubeClip("failed list clip");
+    const inFlight = await createYoutubeClip("in-flight list clip");
+
+    const completeKeys = outputKeysForClip(complete.clipId);
+    const fakeMp4 = new Uint8Array([0x00, 0x00, 0x00, 0x1c]);
+    const fakeJpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+
+    await workerFetch(
+      `http://example.com/api/internal/jobs/${complete.clipId}/artifacts/mp4`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "video/mp4",
+          [JOB_SECRET_HEADER]: complete.secret,
+        },
+        body: fakeMp4,
+      },
+    );
+    await workerFetch(
+      `http://example.com/api/internal/jobs/${complete.clipId}/artifacts/thumbnail`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "image/jpeg",
+          [JOB_SECRET_HEADER]: complete.secret,
+        },
+        body: fakeJpeg,
+      },
+    );
+    await workerFetch(
+      `http://example.com/api/internal/jobs/${complete.clipId}/status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [JOB_SECRET_HEADER]: complete.secret,
+        },
+        body: JSON.stringify({ status: "complete" }),
+      },
+    );
+
+    await workerFetch(
+      `http://example.com/api/internal/jobs/${failed.clipId}/status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [JOB_SECRET_HEADER]: failed.secret,
+        },
+        body: JSON.stringify({
+          status: "failed",
+          errorMessage: "encoding blew up",
+        }),
+      },
+    );
+
+    await workerFetch(
+      `http://example.com/api/internal/jobs/${inFlight.clipId}/status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [JOB_SECRET_HEADER]: inFlight.secret,
+        },
+        body: JSON.stringify({ status: "encoding" }),
+      },
+    );
+
+    const response = await workerFetch("http://example.com/api/clips");
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      clips: Array<{
+        id: string;
+        title: string;
+        status: string;
+        caption: string | null;
+        outputs: { mp4: string | null; thumbnail: string | null };
+        createdAt: string;
+        errorMessage: string | null;
+      }>;
+      total: number;
+      limit: number;
+      offset: number;
+    };
+
+    expect(body.total).toBeGreaterThanOrEqual(3);
+    expect(body.limit).toBe(50);
+    expect(body.offset).toBe(0);
+
+    const ids = body.clips.map((clip) => clip.id);
+    expect(ids).toEqual(expect.arrayContaining([
+      complete.clipId,
+      failed.clipId,
+      inFlight.clipId,
+    ]));
+
+    for (let i = 1; i < body.clips.length; i += 1) {
+      expect(body.clips[i - 1].createdAt >= body.clips[i].createdAt).toBe(true);
+    }
+
+    const completeClip = body.clips.find((clip) => clip.id === complete.clipId);
+    expect(completeClip).toMatchObject({
+      title: "complete list clip",
+      status: "complete",
+      errorMessage: null,
+    });
+    expect(completeClip?.outputs.mp4).toBe(`/artifacts/${completeKeys.mp4Key}`);
+    expect(completeClip?.outputs.thumbnail).toBe(
+      `/artifacts/${completeKeys.thumbnailKey}`,
+    );
+    expect(completeClip?.createdAt).toBeTruthy();
+
+    const failedClip = body.clips.find((clip) => clip.id === failed.clipId);
+    expect(failedClip).toMatchObject({
+      title: "failed list clip",
+      status: "failed",
+      errorMessage: "encoding blew up",
+    });
+    expect(failedClip?.outputs.mp4).toBeNull();
+    expect(failedClip?.outputs.thumbnail).toBeNull();
+
+    const inFlightClip = body.clips.find((clip) => clip.id === inFlight.clipId);
+    expect(inFlightClip).toMatchObject({
+      title: "in-flight list clip",
+      status: "encoding",
+    });
+    expect(inFlightClip?.outputs.mp4).toBeNull();
+    expect(inFlightClip?.outputs.thumbnail).toBeNull();
+  });
+
+  it("supports limit and offset pagination", async () => {
+    await createYoutubeClip("page clip a");
+    await createYoutubeClip("page clip b");
+    await createYoutubeClip("page clip c");
+
+    const page = await workerFetch("http://example.com/api/clips?limit=2&offset=1");
+    expect(page.status).toBe(200);
+    const body = (await page.json()) as {
+      clips: Array<{ id: string }>;
+      total: number;
+      limit: number;
+      offset: number;
+    };
+
+    expect(body.limit).toBe(2);
+    expect(body.offset).toBe(1);
+    expect(body.clips).toHaveLength(2);
+    expect(body.total).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("DELETE /api/clips/:id", () => {
+  it("removes the D1 row and R2 artifacts for a complete clip", async () => {
+    const { clipId, secret } = await createYoutubeClip("delete complete");
+    const keys = outputKeysForClip(clipId);
+    const fakeMp4 = new Uint8Array([0x00, 0x00, 0x00, 0x1c]);
+    const fakeJpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+
+    await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/artifacts/mp4`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "video/mp4",
+          [JOB_SECRET_HEADER]: secret,
+        },
+        body: fakeMp4,
+      },
+    );
+    await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/artifacts/thumbnail`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "image/jpeg",
+          [JOB_SECRET_HEADER]: secret,
+        },
+        body: fakeJpeg,
+      },
+    );
+    await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [JOB_SECRET_HEADER]: secret,
+        },
+        body: JSON.stringify({ status: "complete" }),
+      },
+    );
+
+    expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).not.toBeNull();
+    expect(await env.CLIPS_BUCKET.get(keys.thumbnailKey)).not.toBeNull();
+
+    const response = await workerFetch(`http://example.com/api/clips/${clipId}`, {
+      method: "DELETE",
+    });
+    expect(response.status).toBe(204);
+
+    expect(await getClipById(env.DB, clipId)).toBeNull();
+    expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).toBeNull();
+    expect(await env.CLIPS_BUCKET.get(keys.thumbnailKey)).toBeNull();
+
+    const getResponse = await workerFetch(`http://example.com/api/clips/${clipId}`);
+    expect(getResponse.status).toBe(404);
+  });
+
+  it("removes a failed clip and its artifacts when present", async () => {
+    const { clipId, secret } = await createYoutubeClip("delete failed");
+    const keys = outputKeysForClip(clipId);
+    const fakeMp4 = new Uint8Array([0x00, 0x00, 0x00, 0x1c]);
+
+    await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/artifacts/mp4`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "video/mp4",
+          [JOB_SECRET_HEADER]: secret,
+        },
+        body: fakeMp4,
+      },
+    );
+    await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [JOB_SECRET_HEADER]: secret,
+        },
+        body: JSON.stringify({
+          status: "failed",
+          errorMessage: "cleanup test",
+        }),
+      },
+    );
+
+    expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).toBeNull();
+
+    const response = await workerFetch(`http://example.com/api/clips/${clipId}`, {
+      method: "DELETE",
+    });
+    expect(response.status).toBe(204);
+    expect(await getClipById(env.DB, clipId)).toBeNull();
+  });
+
+  it("deletes an in-flight clip and rejects late authenticated callbacks without recreating records", async () => {
+    const { clipId, secret } = await createYoutubeClip("delete in-flight");
+    const keys = outputKeysForClip(clipId);
+    const fakeMp4 = new Uint8Array([0x00, 0x00, 0x00, 0x1c]);
+
+    await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [JOB_SECRET_HEADER]: secret,
+        },
+        body: JSON.stringify({ status: "encoding" }),
+      },
+    );
+
+    const response = await workerFetch(`http://example.com/api/clips/${clipId}`, {
+      method: "DELETE",
+    });
+    expect(response.status).toBe(204);
+    expect(await getClipById(env.DB, clipId)).toBeNull();
+
+    const lateStatus = await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [JOB_SECRET_HEADER]: secret,
+        },
+        body: JSON.stringify({ status: "complete" }),
+      },
+    );
+    expect(lateStatus.status).toBe(404);
+    expect(await getClipById(env.DB, clipId)).toBeNull();
+
+    const lateArtifact = await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/artifacts/mp4`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "video/mp4",
+          [JOB_SECRET_HEADER]: secret,
+        },
+        body: fakeMp4,
+      },
+    );
+    expect(lateArtifact.status).toBe(404);
+    expect(await getClipById(env.DB, clipId)).toBeNull();
+    expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).toBeNull();
+  });
+
+  it("returns 404 when deleting a nonexistent clip", async () => {
+    const response = await workerFetch(
+      "http://example.com/api/clips/does-not-exist",
+      { method: "DELETE" },
+    );
+    expect(response.status).toBe(404);
+  });
+});

@@ -1,4 +1,11 @@
-import { getClipById, insertClip, outputKeysForClip } from "./db";
+import {
+  deleteClip,
+  deleteClipArtifacts,
+  getClipById,
+  insertClip,
+  listClips,
+  outputKeysForClip,
+} from "./db";
 import type { Env } from "./env";
 import { JOB_SECRET_HEADER, verifyJobSecret } from "./auth";
 import { applyStatusUpdate, dispatchEncodingJob } from "./jobs";
@@ -17,9 +24,18 @@ export async function handleRequest(
     return handleCreateClip(request, env, ctx);
   }
 
+  if (request.method === "GET" && url.pathname === "/api/clips") {
+    return handleListClips(url, env);
+  }
+
   if (request.method === "GET" && url.pathname.startsWith("/api/clips/")) {
     const clipId = url.pathname.slice("/api/clips/".length);
     return handleGetClip(clipId, env);
+  }
+
+  if (request.method === "DELETE" && url.pathname.startsWith("/api/clips/")) {
+    const clipId = url.pathname.slice("/api/clips/".length);
+    return handleDeleteClip(clipId, env);
   }
 
   if (
@@ -73,6 +89,46 @@ async function handleCreateClip(
   );
 
   return json(recordToResponse(record, env.R2_PUBLIC_PREFIX), 201);
+}
+
+const DEFAULT_LIST_LIMIT = 50;
+const MAX_LIST_LIMIT = 100;
+
+async function handleListClips(url: URL, env: Env): Promise<Response> {
+  const limit = Math.min(
+    Math.max(parseInt(url.searchParams.get("limit") ?? "", 10) || DEFAULT_LIST_LIMIT, 1),
+    MAX_LIST_LIMIT,
+  );
+  const offset = Math.max(parseInt(url.searchParams.get("offset") ?? "", 10) || 0, 0);
+
+  const { clips, total } = await listClips(env.DB, limit, offset);
+  const prefix = env.R2_PUBLIC_PREFIX;
+
+  return json({
+    clips: clips.map((record) => recordToResponse(record, prefix)),
+    total,
+    limit,
+    offset,
+  });
+}
+
+async function handleDeleteClip(clipId: string, env: Env): Promise<Response> {
+  if (!clipId) {
+    return json({ error: "Clip id is required" }, 400);
+  }
+
+  const record = await getClipById(env.DB, clipId);
+  if (!record) {
+    return json({ error: "Clip not found" }, 404);
+  }
+
+  await deleteClipArtifacts(env.CLIPS_BUCKET, clipId, record);
+  const deleted = await deleteClip(env.DB, clipId);
+  if (!deleted) {
+    return json({ error: "Clip not found" }, 404);
+  }
+
+  return new Response(null, { status: 204 });
 }
 
 async function handleGetClip(clipId: string, env: Env): Promise<Response> {
