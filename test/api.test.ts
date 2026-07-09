@@ -6,6 +6,7 @@ import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { JOB_SECRET_HEADER } from "../src/auth";
 import { getClipById, outputKeysForClip } from "../src/db";
+import { failClipAmbiguous } from "../src/jobs";
 import {
   STUB_AMBIGUOUS_FAILURE_URL,
   STUB_SKIP_COMPLETE_CALLBACK_URL,
@@ -543,6 +544,67 @@ describe("authoritative /run response handling", () => {
 
     const persisted = await getClipById(env.DB, clipId);
     expect(persisted?.status).toBe("complete");
+    expect(persisted?.output_mp4_key).toBe(keys.mp4Key);
+    expect(persisted?.output_thumbnail_key).toBe(keys.thumbnailKey);
+    expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).not.toBeNull();
+    expect(await env.CLIPS_BUCKET.get(keys.thumbnailKey)).not.toBeNull();
+  });
+
+  it("keeps a clip complete when failClipAmbiguous runs after a complete callback", async () => {
+    const { clipId, secret } = await createYoutubeClip(
+      "complete then ambiguous failure",
+    );
+    const keys = outputKeysForClip(clipId);
+    const fakeMp4 = new Uint8Array([0x00, 0x00, 0x00, 0x1c]);
+    const fakeJpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+
+    await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/artifacts/mp4`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "video/mp4",
+          [JOB_SECRET_HEADER]: secret,
+        },
+        body: fakeMp4,
+      },
+    );
+    await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/artifacts/thumbnail`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "image/jpeg",
+          [JOB_SECRET_HEADER]: secret,
+        },
+        body: fakeJpeg,
+      },
+    );
+
+    const complete = await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [JOB_SECRET_HEADER]: secret,
+        },
+        body: JSON.stringify({ status: "complete" }),
+      },
+    );
+    expect(complete.status).toBe(200);
+
+    const completedRecord = await getClipById(env.DB, clipId);
+    expect(completedRecord?.status).toBe("complete");
+    expect(completedRecord?.output_mp4_key).toBe(keys.mp4Key);
+    expect(completedRecord?.output_thumbnail_key).toBe(keys.thumbnailKey);
+
+    await failClipAmbiguous(env, clipId, "upstream timeout");
+
+    const persisted = await getClipById(env.DB, clipId);
+    expect(persisted?.status).toBe("complete");
+    expect(persisted?.failure_mode).toBeNull();
+    expect(persisted?.error_message).toBeNull();
     expect(persisted?.output_mp4_key).toBe(keys.mp4Key);
     expect(persisted?.output_thumbnail_key).toBe(keys.thumbnailKey);
     expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).not.toBeNull();

@@ -73,13 +73,20 @@ export async function updateClipStatus(
     .run();
 }
 
+// Terminal status guards (compare-and-set): complete and confirmed-failed are
+// sticky. Writes succeed only when status != 'complete' AND NOT (status =
+// 'failed' AND failure_mode = 'confirmed'). Confirmed failure may overwrite
+// ambiguous-failed; complete may recover ambiguous-failed.
+const TERMINAL_STATUS_GUARD = `status != 'complete'
+       AND NOT (status = 'failed' AND failure_mode = 'confirmed')`;
+
 export async function markClipComplete(
   db: D1Database,
   id: string,
   mp4Key: string,
   thumbnailKey: string,
-): Promise<void> {
-  await db
+): Promise<boolean> {
+  const result = await db
     .prepare(
       `UPDATE clips
        SET status = 'complete',
@@ -88,10 +95,12 @@ export async function markClipComplete(
            output_mp4_key = ?,
            output_thumbnail_key = ?,
            updated_at = datetime('now')
-       WHERE id = ?`,
+       WHERE id = ?
+         AND ${TERMINAL_STATUS_GUARD}`,
     )
     .bind(mp4Key, thumbnailKey, id)
     .run();
+  return (result.meta.changes ?? 0) > 0;
 }
 
 export async function markClipFailed(
@@ -99,18 +108,20 @@ export async function markClipFailed(
   id: string,
   errorMessage: string,
   failureMode: FailureMode = "confirmed",
-): Promise<void> {
-  await db
+): Promise<boolean> {
+  const result = await db
     .prepare(
       `UPDATE clips
        SET status = 'failed',
            error_message = ?,
            failure_mode = ?,
            updated_at = datetime('now')
-       WHERE id = ?`,
+       WHERE id = ?
+         AND ${TERMINAL_STATUS_GUARD}`,
     )
     .bind(errorMessage, failureMode, id)
     .run();
+  return (result.meta.changes ?? 0) > 0;
 }
 
 export async function deleteClipArtifacts(

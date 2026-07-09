@@ -133,25 +133,24 @@ export async function failClip(
   clipId: string,
   errorMessage: string,
 ): Promise<void> {
-  const record = await getClipById(env.DB, clipId);
-  if (!record || isStickyTerminal(record.status, record.failure_mode)) {
+  const marked = await markClipFailed(
+    env.DB,
+    clipId,
+    errorMessage,
+    "confirmed",
+  );
+  if (!marked) {
     return;
   }
 
   await deleteClipArtifacts(env.CLIPS_BUCKET, clipId);
-  await markClipFailed(env.DB, clipId, errorMessage, "confirmed");
 }
 
-async function failClipAmbiguous(
+export async function failClipAmbiguous(
   env: Env,
   clipId: string,
   errorMessage: string,
 ): Promise<void> {
-  const record = await getClipById(env.DB, clipId);
-  if (!record || isStickyTerminal(record.status, record.failure_mode)) {
-    return;
-  }
-
   // /run outcome unknown (transport error or unreadable body). Do not delete
   // artifacts that may have been uploaded before the worker lost contact.
   await markClipFailed(env.DB, clipId, errorMessage, "ambiguous");
