@@ -115,18 +115,20 @@ def log(message: str) -> None:
 
 def log_ytdlp_environment() -> None:
     """Log yt-dlp version, EJS package, and detected JS runtime at job start."""
+    probe_timeout_seconds = 3
+
     try:
         version = subprocess.run(
             ["yt-dlp", "--version"],
             capture_output=True,
             text=True,
-            timeout=15,
+            timeout=probe_timeout_seconds,
             check=False,
         )
         if version.stdout.strip():
             log(f"yt-dlp env: version {version.stdout.strip()}")
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        log(f"yt-dlp env: failed to probe version ({exc})")
+    except (OSError, subprocess.TimeoutExpired):
+        log("yt-dlp env: version probe timed out")
         return
 
     try:
@@ -134,11 +136,11 @@ def log_ytdlp_environment() -> None:
             ["yt-dlp", "-v"],
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=probe_timeout_seconds,
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        log(f"yt-dlp env: failed to probe runtime ({exc})")
+    except (OSError, subprocess.TimeoutExpired):
+        log("yt-dlp env: runtime probe timed out")
         return
 
     combined_output = "\n".join(
