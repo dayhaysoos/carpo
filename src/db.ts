@@ -3,6 +3,7 @@ import type {
   ClipStatus,
   CreateClipRequest,
   FailureMode,
+  GifStatus,
 } from "./types";
 import { generateCallbackSecret } from "./auth";
 import { extractCaptionFromFilters } from "./validation";
@@ -173,15 +174,21 @@ export async function deleteClip(db: D1Database, id: string): Promise<boolean> {
 export async function deleteClipArtifacts(
   bucket: R2Bucket,
   clipId: string,
-  record?: Pick<ClipRecord, "output_mp4_key" | "output_thumbnail_key"> | null,
+  record?: Pick<
+    ClipRecord,
+    "output_mp4_key" | "output_thumbnail_key" | "output_gif_key"
+  > | null,
 ): Promise<void> {
   const keys = outputKeysForClip(clipId);
-  const keysToDelete = new Set([keys.mp4Key, keys.thumbnailKey]);
+  const keysToDelete = new Set([keys.mp4Key, keys.thumbnailKey, keys.gifKey]);
   if (record?.output_mp4_key) {
     keysToDelete.add(record.output_mp4_key);
   }
   if (record?.output_thumbnail_key) {
     keysToDelete.add(record.output_thumbnail_key);
+  }
+  if (record?.output_gif_key) {
+    keysToDelete.add(record.output_gif_key);
   }
   await Promise.all([...keysToDelete].map((key) => bucket.delete(key)));
 }
@@ -199,9 +206,75 @@ export async function deleteUploadSource(
 export function outputKeysForClip(clipId: string): {
   mp4Key: string;
   thumbnailKey: string;
+  gifKey: string;
 } {
   return {
     mp4Key: `clips/${clipId}/clip.mp4`,
     thumbnailKey: `clips/${clipId}/thumbnail.jpg`,
+    gifKey: `clips/${clipId}/clip.gif`,
   };
+}
+
+export async function markGifEncoding(
+  db: D1Database,
+  id: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE clips
+       SET gif_status = 'encoding',
+           gif_error_message = NULL,
+           updated_at = datetime('now')
+       WHERE id = ?
+         AND status = 'complete'
+         AND gif_status IN ('none', 'failed')`,
+    )
+    .bind(id)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function markGifComplete(
+  db: D1Database,
+  id: string,
+  gifKey: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE clips
+       SET gif_status = 'complete',
+           gif_error_message = NULL,
+           output_gif_key = ?,
+           updated_at = datetime('now')
+       WHERE id = ?
+         AND status = 'complete'
+         AND gif_status = 'encoding'`,
+    )
+    .bind(gifKey, id)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function markGifFailed(
+  db: D1Database,
+  id: string,
+  errorMessage: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE clips
+       SET gif_status = 'failed',
+           gif_error_message = ?,
+           updated_at = datetime('now')
+       WHERE id = ?
+         AND status = 'complete'
+         AND gif_status = 'encoding'`,
+    )
+    .bind(errorMessage, id)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export function gifStatusForRecord(record: ClipRecord): GifStatus {
+  return record.gif_status ?? "none";
 }

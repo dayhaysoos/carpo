@@ -12,6 +12,10 @@ export const CLIP_STATUSES = [
 
 export type ClipStatus = (typeof CLIP_STATUSES)[number];
 
+export const GIF_STATUSES = ["none", "encoding", "complete", "failed"] as const;
+
+export type GifStatus = (typeof GIF_STATUSES)[number];
+
 export interface YoutubeSource {
   type: "youtube";
   url: string;
@@ -50,6 +54,7 @@ export interface CreateClipRequest {
 export interface ClipOutputs {
   mp4: string | null;
   thumbnail: string | null;
+  gif: string | null;
 }
 
 export interface ClipResponse {
@@ -62,6 +67,8 @@ export interface ClipResponse {
   filters: FilterSpec[];
   status: ClipStatus;
   errorMessage: string | null;
+  gifStatus: GifStatus;
+  gifErrorMessage: string | null;
   outputs: ClipOutputs;
   createdAt: string;
   updatedAt: string;

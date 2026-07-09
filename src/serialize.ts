@@ -37,7 +37,12 @@ export function recordToResponse(
       thumbnail: record.output_thumbnail_key
         ? `${artifactPrefix}/${record.output_thumbnail_key}`
         : null,
+      gif: record.output_gif_key
+        ? `${artifactPrefix}/${record.output_gif_key}`
+        : null,
     },
+    gifStatus: record.gif_status ?? "none",
+    gifErrorMessage: record.gif_error_message,
     createdAt: record.created_at,
     updatedAt: record.updated_at,
   };

@@ -2,7 +2,8 @@ import {
   deleteClipArtifacts,
   deleteUploadSource,
   getClipById,
-  insertClip,
+  markGifComplete,
+  markGifFailed,
   markClipComplete,
   markClipDownloadingIfQueued,
   markClipFailed,
@@ -10,7 +11,7 @@ import {
   updateClipStatus,
 } from "./db";
 import type { Env } from "./env";
-import type { ClipStatus, CreateClipRequest, EncoderJobSpec, FailureMode } from "./types";
+import type { ClipStatus, CreateClipRequest, EncoderJobSpec, FailureMode, GifEncoderJobSpec } from "./types";
 import { extractCaptionFromFilters } from "./validation";
 
 const ACTIVITY_RENEWAL_MS = 30_000;
@@ -303,4 +304,109 @@ async function cleanupUploadSource(env: Env, clipId: string): Promise<void> {
     return;
   }
   await deleteUploadSource(env.CLIPS_BUCKET, record);
+}
+
+interface GifEncoderRunResult {
+  status?: string;
+  errorMessage?: string;
+  outputs?: {
+    gifKey?: string;
+  };
+}
+
+export async function dispatchGifExportJob(
+  env: Env,
+  clipId: string,
+): Promise<void> {
+  try {
+    const record = await getClipById(env.DB, clipId);
+    if (!record || record.status !== "complete" || !record.output_mp4_key) {
+      return;
+    }
+
+    const container = env.ENCODER_CONTAINER.getByName(`gif-${clipId}`);
+    const gifKey = outputKeysForClip(clipId).gifKey;
+
+    const startResponse = await container.fetch("http://encoder/__carpo/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    if (!startResponse.ok) {
+      const detail = await startResponse.text();
+      throw new Error(
+        detail || `GIF encoder container start failed (${startResponse.status})`,
+      );
+    }
+    await markContainerJobRunningSafe(container, true);
+    const keepAlive = startActivityRenewal(container);
+
+    try {
+      const jobSpec: GifEncoderJobSpec = {
+        jobId: clipId,
+        jobType: "gif",
+        sourceMp4Key: record.output_mp4_key,
+        source: { type: "file", path: "/tmp/carpo-upload-source.mp4" },
+        outputs: { gifKey },
+      };
+
+      const response = await container.fetch("http://encoder/__carpo/gif-run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(jobSpec),
+      });
+
+      if (!response.ok) {
+        const detail = await response.text();
+        const parsed = parseGifEncoderRunResult(detail);
+        await markGifFailed(
+          env.DB,
+          clipId,
+          parsed?.errorMessage ?? `GIF encoder rejected job: ${detail}`,
+        );
+        return;
+      }
+
+      const result = (await response.json()) as GifEncoderRunResult;
+
+      if (result.status === "failed") {
+        await markGifFailed(
+          env.DB,
+          clipId,
+          result.errorMessage ?? "GIF encoding failed",
+        );
+        return;
+      }
+
+      if (result.status !== "complete") {
+        await markGifFailed(
+          env.DB,
+          clipId,
+          `Unexpected GIF encoder status: ${result.status ?? "unknown"}`,
+        );
+        return;
+      }
+
+      const storedGifKey = result.outputs?.gifKey ?? gifKey;
+      await markGifComplete(env.DB, clipId, storedGifKey);
+    } finally {
+      clearInterval(keepAlive);
+      await markContainerJobRunningSafe(container, false);
+    }
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Unknown GIF encoding error";
+    await markGifFailed(env.DB, clipId, message);
+  }
+}
+
+function parseGifEncoderRunResult(
+  body: string,
+): GifEncoderRunResult | null {
+  try {
+    const parsed = JSON.parse(body) as GifEncoderRunResult;
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
 }

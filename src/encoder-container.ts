@@ -1,7 +1,8 @@
 import { Container } from "@cloudflare/containers";
 import type { Env } from "./env";
 import { applyStatusUpdate } from "./jobs";
-import type { EncoderJobSpec } from "./types";
+import { markGifComplete } from "./db";
+import type { EncoderJobSpec, GifEncoderJobSpec } from "./types";
 import { UPLOAD_KEY_PREFIX } from "./uploads";
 
 const COMPLETE_SIGNAL_ATTEMPTS = 3;
@@ -12,6 +13,9 @@ const STAGED_UPLOAD_PATH = "/tmp/carpo-upload-source.mp4";
 type RunJobSpec = Omit<EncoderJobSpec, "source"> & {
   deferArtifactUpload?: boolean;
   source?: EncoderJobSpec["source"] | { type: "file"; path: string };
+  jobType?: "gif";
+  sourceMp4Key?: string;
+  outputs?: EncoderJobSpec["outputs"] | GifEncoderJobSpec["outputs"];
 };
 
 // Hard ceiling for stale jobRunning keepalive. If the worker isolate dies
@@ -62,6 +66,18 @@ export class EncoderContainer extends Container<Env> {
       return new Response(null, { status: 204 });
     }
 
+    if (url.pathname === "/__carpo/gif-run" && request.method === "POST") {
+      try {
+        const job = (await request.json()) as RunJobSpec;
+        return this.handleGifRun(job);
+      } catch {
+        return Response.json(
+          { status: "failed", errorMessage: "Invalid GIF job payload" },
+          { status: 400 },
+        );
+      }
+    }
+
     if (url.pathname === "/run" && request.method === "POST") {
       return this.handleRun(request);
     }
@@ -90,6 +106,10 @@ export class EncoderContainer extends Container<Env> {
       job = (await request.json()) as RunJobSpec;
     } catch {
       return super.fetch(request);
+    }
+
+    if (job.jobType === "gif") {
+      return this.handleGifRun(job);
     }
 
     if (job.source?.type === "upload") {
@@ -199,6 +219,136 @@ export class EncoderContainer extends Container<Env> {
     }
 
     return { ok: true };
+  }
+
+  private async handleGifRun(job: RunJobSpec): Promise<Response> {
+    const sourceMp4Key = job.sourceMp4Key;
+    const gifOutputs = job.outputs as GifEncoderJobSpec["outputs"] | undefined;
+    if (!sourceMp4Key || !gifOutputs?.gifKey) {
+      return Response.json(
+        { status: "failed", errorMessage: "GIF job is missing source or outputs" },
+        { status: 400 },
+      );
+    }
+
+    const staged = await this.stageMp4Output(sourceMp4Key);
+    if (!staged.ok) {
+      return Response.json(
+        { status: "failed", errorMessage: staged.error },
+        { status: 500 },
+      );
+    }
+
+    const gifJob: GifEncoderJobSpec = {
+      jobId: job.jobId,
+      jobType: "gif",
+      sourceMp4Key,
+      source: { type: "file", path: STAGED_UPLOAD_PATH },
+      outputs: gifOutputs,
+      deferArtifactUpload: true,
+    };
+
+    const response = await super.fetch(
+      new Request("http://encoder/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(gifJob),
+      }),
+    );
+
+    let result: { status?: string; errorMessage?: string };
+    try {
+      result = (await response.json()) as typeof result;
+    } catch {
+      return response;
+    }
+
+    if (result.status !== "staged" && result.status !== "complete") {
+      return Response.json(result, { status: response.status });
+    }
+
+    try {
+      await this.uploadDeferredGif(gifOutputs.gifKey);
+    } catch (error) {
+      await this.env.CLIPS_BUCKET.delete(gifOutputs.gifKey);
+      const message =
+        error instanceof Error ? error.message : "Failed to upload GIF artifact";
+      return Response.json(
+        { status: "failed", errorMessage: message },
+        { status: 500 },
+      );
+    }
+
+    await markGifComplete(this.env.DB, job.jobId, gifOutputs.gifKey);
+
+    return Response.json(
+      {
+        status: "complete",
+        outputs: { gifKey: gifOutputs.gifKey },
+      },
+      { status: 200 },
+    );
+  }
+
+  private async stageMp4Output(
+    mp4Key: string,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    const object = await this.env.CLIPS_BUCKET.get(mp4Key);
+    if (!object) {
+      return { ok: false, error: "Clip MP4 output not found" };
+    }
+
+    const headers = new Headers();
+    object.writeHttpMetadata(headers);
+    if (!headers.get("Content-Type")) {
+      headers.set("Content-Type", "video/mp4");
+    }
+    headers.set("Content-Length", String(object.size));
+
+    if (!object.body) {
+      return { ok: false, error: "Clip MP4 body is empty" };
+    }
+
+    const { readable, writable } = new FixedLengthStream(object.size);
+    const pipePromise = object.body.pipeTo(writable);
+
+    const stageResponse = await super.fetch(
+      new Request("http://encoder/stage-source", {
+        method: "POST",
+        headers,
+        body: readable,
+      }),
+    );
+
+    await pipePromise;
+
+    if (!stageResponse.ok) {
+      const detail = await stageResponse.text();
+      return {
+        ok: false,
+        error: detail || `Failed to stage clip MP4 (${stageResponse.status})`,
+      };
+    }
+
+    return { ok: true };
+  }
+
+  private async uploadDeferredGif(gifKey: string): Promise<void> {
+    const gifResponse = await super.fetch(
+      new Request("http://encoder/outputs/clip.gif"),
+    );
+    if (!gifResponse.ok) {
+      throw new Error(`Failed to read encoded GIF (${gifResponse.status})`);
+    }
+
+    await this.env.CLIPS_BUCKET.put(gifKey, gifResponse.body, {
+      httpMetadata: { contentType: "image/gif" },
+    });
+
+    const head = await this.env.CLIPS_BUCKET.head(gifKey);
+    if (!head) {
+      throw new Error("GIF artifact was not durably stored in R2");
+    }
   }
 
   private async uploadDeferredArtifacts(

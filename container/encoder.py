@@ -32,6 +32,9 @@ ENCODE_TIMEOUT_SECONDS = 600
 UPLOAD_TIMEOUT_SECONDS = 600
 VIDEO_CONTAINER_EXTENSIONS = ("mp4", "mkv", "webm")
 DEFERRED_OUTPUT_DIR = Path("/tmp/carpo-output")
+GIF_OUTPUT_NAME = "clip.gif"
+GIF_FPS = 12
+GIF_MAX_WIDTH = 480
 DEJAVU_FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 KNOWN_FILTER_TYPES = frozenset({"caption"})
 
@@ -201,6 +204,25 @@ def validate_job(job: dict[str, Any]) -> str | None:
             return "sourceFetchUrl is required for upload sources"
     else:
         return "source.type must be youtube, upload, or file"
+
+    return None
+
+
+def validate_gif_job(job: dict[str, Any]) -> str | None:
+    source = job.get("source")
+    if not isinstance(source, dict):
+        return "source is required"
+
+    source_type = source.get("type")
+    if source_type != "file":
+        return "GIF jobs require a local file source"
+    path = source.get("path")
+    if not isinstance(path, str) or not Path(path).exists():
+        return "Local file path is required for GIF source"
+
+    outputs = job.get("outputs")
+    if not isinstance(outputs, dict) or not outputs.get("gifKey"):
+        return "outputs.gifKey is required"
 
     return None
 
@@ -428,6 +450,40 @@ def encode_clip(
     run_command(thumb_command)
 
 
+def encode_gif(source_mp4: Path, output_gif: Path, workdir: Path) -> None:
+    """Palette-optimized two-pass GIF encode from a trimmed MP4."""
+    palette_path = workdir / "palette.png"
+    scale_filter = f"fps={GIF_FPS},scale={GIF_MAX_WIDTH}:-1:flags=lanczos"
+
+    run_command(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(source_mp4),
+            "-vf",
+            f"{scale_filter},palettegen=stats_mode=diff",
+            str(palette_path),
+        ],
+    )
+
+    run_command(
+        [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(source_mp4),
+            "-i",
+            str(palette_path),
+            "-lavfi",
+            f"{scale_filter}[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=5",
+            "-loop",
+            "0",
+            str(output_gif),
+        ],
+    )
+
+
 def upload_file(
     upload_url: str,
     local_path: Path,
@@ -520,14 +576,63 @@ def run_result(
         result["errorMessage"] = error_message
     if status in ("complete", "staged"):
         outputs = job.get("outputs", {})
-        result["outputs"] = {
-            "mp4Key": outputs.get("mp4Key", ""),
-            "thumbnailKey": outputs.get("thumbnailKey", ""),
-        }
+        if job.get("jobType") == "gif":
+            result["outputs"] = {
+                "gifKey": outputs.get("gifKey", ""),
+            }
+        else:
+            result["outputs"] = {
+                "mp4Key": outputs.get("mp4Key", ""),
+                "thumbnailKey": outputs.get("thumbnailKey", ""),
+            }
     return result
 
 
+def process_gif_job(job: dict[str, Any]) -> dict[str, Any]:
+    try:
+        error = validate_gif_job(job)
+        if error:
+            return run_result("failed", job, error_message=error)
+    except Exception as exc:  # noqa: BLE001
+        message = str(exc) or "GIF job validation failed"
+        return run_result("failed", job, error_message=message)
+
+    with tempfile.TemporaryDirectory(prefix="carpo-gif-") as tmp:
+        workdir = Path(tmp)
+        try:
+            source = job["source"]
+            source_path = Path(source["path"])
+            output_gif = workdir / GIF_OUTPUT_NAME
+            encode_gif(source_path, output_gif, workdir)
+
+            defer_upload = bool(job.get("deferArtifactUpload"))
+            local_output_dir = job.get("localOutputDir")
+            if local_output_dir:
+                out_dir = Path(local_output_dir)
+                out_dir.mkdir(parents=True, exist_ok=True)
+                outputs = job.get("outputs", {})
+                shutil.copy2(
+                    output_gif,
+                    out_dir / Path(outputs.get("gifKey", GIF_OUTPUT_NAME)).name,
+                )
+            elif defer_upload:
+                DEFERRED_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(output_gif, DEFERRED_OUTPUT_DIR / GIF_OUTPUT_NAME)
+            else:
+                raise RuntimeError("GIF artifact upload is not configured")
+
+            if defer_upload:
+                return run_result("staged", job)
+            return run_result("complete", job)
+        except Exception as exc:  # noqa: BLE001
+            message = str(exc) or "GIF encoding failed"
+            return run_result("failed", job, error_message=message)
+
+
 def process_job(job: dict[str, Any]) -> dict[str, Any]:
+    if job.get("jobType") == "gif":
+        return process_gif_job(job)
+
     callback_url = job.get("callbackUrl")
     callback_secret = job.get("callbackSecret")
     progress = ProgressCallbackTracker()
@@ -686,6 +791,8 @@ class EncoderHandler(BaseHTTPRequestHandler):
                 DEFERRED_OUTPUT_DIR / "thumbnail.jpg",
                 "image/jpeg",
             )
+        if self.path == "/outputs/clip.gif":
+            return self._send_file(DEFERRED_OUTPUT_DIR / GIF_OUTPUT_NAME, "image/gif")
         self.send_error(404, "Not found")
 
     def _send_file(self, path: Path, content_type: str) -> None:
