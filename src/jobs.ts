@@ -75,11 +75,6 @@ export async function dispatchEncodingJob(
         mp4: `${workerBaseUrl}/api/internal/jobs/${clipId}/artifacts/mp4`,
         thumbnail: `${workerBaseUrl}/api/internal/jobs/${clipId}/artifacts/thumbnail`,
       },
-      ...(request.source.type === "upload"
-        ? {
-            sourceFetchUrl: `http://encoder/__carpo/source?key=${encodeURIComponent(request.source.key)}`,
-          }
-        : {}),
     };
     const startResponse = await container.fetch("http://encoder/__carpo/start", {
       method: "POST",

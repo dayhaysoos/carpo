@@ -1,6 +1,9 @@
 import { Container } from "@cloudflare/containers";
 import type { Env } from "./env";
+import type { EncoderJobSpec } from "./types";
 import { UPLOAD_KEY_PREFIX } from "./uploads";
+
+const STAGED_UPLOAD_PATH = "/tmp/carpo-upload-source.mp4";
 
 // Hard ceiling for stale jobRunning keepalive. If the worker isolate dies
 // mid-/run, dispatchEncodingJob's finally never clears the flag; without a
@@ -18,10 +21,6 @@ export class EncoderContainer extends Container<Env> {
 
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-
-    if (url.pathname === "/__carpo/source" && request.method === "GET") {
-      return this.handleUploadSourceFetch(url);
-    }
 
     if (url.pathname === "/__carpo/start" && request.method === "POST") {
       await this.startAndWaitForPorts({
@@ -54,6 +53,10 @@ export class EncoderContainer extends Container<Env> {
       return new Response(null, { status: 204 });
     }
 
+    if (url.pathname === "/run" && request.method === "POST") {
+      return this.handleRun(request);
+    }
+
     return super.fetch(request);
   }
 
@@ -72,22 +75,75 @@ export class EncoderContainer extends Container<Env> {
     await this.stop();
   }
 
-  private async handleUploadSourceFetch(url: URL): Promise<Response> {
-    const uploadKey = url.searchParams.get("key")?.trim() ?? "";
+  private async handleRun(request: Request): Promise<Response> {
+    let job: EncoderJobSpec;
+    try {
+      job = (await request.json()) as EncoderJobSpec;
+    } catch {
+      return super.fetch(request);
+    }
+
+    if (job.source.type !== "upload") {
+      return super.fetch(request);
+    }
+
+    const staged = await this.stageUploadSource(job.source.key);
+    if (!staged.ok) {
+      return Response.json(
+        { status: "failed", errorMessage: staged.error },
+        { status: 500 },
+      );
+    }
+
+    const rewritten = {
+      ...job,
+      source: { type: "file", path: STAGED_UPLOAD_PATH },
+    };
+    delete (rewritten as { sourceFetchUrl?: string }).sourceFetchUrl;
+
+    return super.fetch(
+      new Request("http://encoder/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(rewritten),
+      }),
+    );
+  }
+
+  private async stageUploadSource(
+    uploadKey: string,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
     if (!uploadKey.startsWith(UPLOAD_KEY_PREFIX)) {
-      return new Response("Invalid upload key", { status: 400 });
+      return { ok: false, error: "Invalid upload key" };
     }
 
     const object = await this.env.CLIPS_BUCKET.get(uploadKey);
     if (!object) {
-      return new Response("Upload source not found", { status: 404 });
+      return { ok: false, error: "Upload source not found" };
     }
 
     const headers = new Headers();
     object.writeHttpMetadata(headers);
-    headers.set("etag", object.httpEtag);
-    headers.set("cache-control", "private, no-store");
+    if (!headers.get("Content-Type")) {
+      headers.set("Content-Type", "video/mp4");
+    }
 
-    return new Response(object.body, { headers });
+    const stageResponse = await super.fetch(
+      new Request("http://encoder/stage-source", {
+        method: "POST",
+        headers,
+        body: object.body,
+      }),
+    );
+
+    if (!stageResponse.ok) {
+      const detail = await stageResponse.text();
+      return {
+        ok: false,
+        error: detail || `Failed to stage upload source (${stageResponse.status})`,
+      };
+    }
+
+    return { ok: true };
   }
 }

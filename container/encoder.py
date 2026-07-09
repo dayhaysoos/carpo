@@ -21,6 +21,7 @@ from typing import Any
 MAX_CLIP_LENGTH_SECONDS = 60
 HOST = "0.0.0.0"
 PORT = int(os.environ.get("PORT", "8080"))
+STAGED_UPLOAD_PATH = "/tmp/carpo-upload-source.mp4"
 JOB_SECRET_HEADER = "X-Carpo-Job-Secret"
 MAX_CALLBACK_ATTEMPTS = 5
 MAX_INTERMEDIATE_CALLBACK_ATTEMPTS = 3
@@ -476,6 +477,14 @@ def copy_outputs_locally(job: dict[str, Any], mp4_path: Path, thumb_path: Path) 
     shutil.copy2(thumb_path, out_dir / Path(outputs.get("thumbnailKey", "thumbnail.jpg")).name)
 
 
+def stage_upload_source(body: bytes) -> None:
+    path = Path(STAGED_UPLOAD_PATH)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(body)
+    if path.stat().st_size == 0:
+        raise RuntimeError("Staged upload source is empty")
+
+
 def run_result(
     status: str,
     job: dict[str, Any],
@@ -640,6 +649,18 @@ class EncoderHandler(BaseHTTPRequestHandler):
         self.send_error(404, "Not found")
 
     def do_POST(self) -> None:  # noqa: N802
+        if self.path == "/stage-source":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                raw = self.rfile.read(length) if length else b""
+                stage_upload_source(raw)
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(500, {"status": "failed", "errorMessage": str(exc)})
+                return
+            self.send_response(204)
+            self.end_headers()
+            return
+
         if self.path != "/run":
             self.send_error(404, "Not found")
             return
