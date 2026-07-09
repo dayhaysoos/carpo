@@ -4,28 +4,35 @@ import type {
   CreateClipRequest,
   FailureMode,
   GifStatus,
+  HelperState,
 } from "./types";
 import { DEFAULT_CLIP_QUALITY } from "./types";
 import { generateCallbackSecret } from "./auth";
 import { extractCaptionFromFilters } from "./validation";
 
+export interface InsertClipOptions {
+  helperState?: HelperState;
+}
+
 export async function insertClip(
   db: D1Database,
   id: string,
   request: CreateClipRequest,
+  options?: InsertClipOptions,
 ): Promise<ClipRecord> {
   const sourceType = request.source.type;
   const sourceRef =
     request.source.type === "youtube" ? request.source.url : request.source.key;
   const filtersJson = JSON.stringify(request.filters ?? []);
   const callbackSecret = generateCallbackSecret();
+  const helperState = options?.helperState ?? null;
 
   await db
     .prepare(
       `INSERT INTO clips (
         id, title, source_type, source_ref, trim_start, trim_end,
-        quality, caption, filters_json, status, callback_secret
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`,
+        quality, caption, filters_json, status, callback_secret, helper_state
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
     )
     .bind(
       id,
@@ -38,6 +45,7 @@ export async function insertClip(
       extractCaptionFromFilters(request.filters),
       filtersJson,
       callbackSecret,
+      helperState,
     )
     .run();
 
@@ -153,6 +161,12 @@ const STALE_JOB_ERROR_MESSAGE =
   "Job timed out — no progress update received. Artifacts may be preserved for recovery.";
 
 export async function sweepStaleClips(db: D1Database): Promise<number> {
+  // Rows parked by the helper workflow (pending/expired/recovering while
+  // queued, or claimed while downloading) have their own watchdogs and
+  // recovery paths; excluding them keeps the generic ceiling from failing
+  // them before helper recovery runs. Rows where the container is actually
+  // working (helper_state NULL/'fulfilled', or 'recovering' past 'queued')
+  // stay subject to this backstop.
   const result = await db
     .prepare(
       `UPDATE clips
@@ -161,7 +175,12 @@ export async function sweepStaleClips(db: D1Database): Promise<number> {
            error_message = ?,
            updated_at = datetime('now')
        WHERE status IN ('queued', 'downloading', 'encoding', 'uploading')
-         AND updated_at < datetime('now', ?)`,
+         AND updated_at < datetime('now', ?)
+         AND NOT (
+           status = 'queued'
+           AND helper_state IN ('pending', 'expired', 'recovering')
+         )
+         AND NOT (status = 'downloading' AND helper_state = 'claimed')`,
     )
     .bind(
       STALE_JOB_ERROR_MESSAGE,
@@ -202,7 +221,10 @@ export async function deleteClipArtifacts(
   clipId: string,
   record?: Pick<
     ClipRecord,
-    "output_mp4_key" | "output_thumbnail_key" | "output_gif_key"
+    | "output_mp4_key"
+    | "output_thumbnail_key"
+    | "output_gif_key"
+    | "helper_upload_key"
   > | null,
 ): Promise<void> {
   const keys = outputKeysForClip(clipId);
@@ -216,17 +238,25 @@ export async function deleteClipArtifacts(
   if (record?.output_gif_key) {
     keysToDelete.add(record.output_gif_key);
   }
+  if (record?.helper_upload_key) {
+    keysToDelete.add(record.helper_upload_key);
+  }
   await Promise.all([...keysToDelete].map((key) => bucket.delete(key)));
 }
 
 export async function deleteUploadSource(
   bucket: R2Bucket,
-  record: Pick<ClipRecord, "source_type" | "source_ref">,
+  record: Pick<
+    ClipRecord,
+    "source_type" | "source_ref" | "helper_upload_key"
+  >,
 ): Promise<void> {
-  if (record.source_type !== "upload") {
-    return;
+  if (record.source_type === "upload") {
+    await bucket.delete(record.source_ref);
   }
-  await bucket.delete(record.source_ref);
+  if (record.helper_upload_key) {
+    await bucket.delete(record.helper_upload_key);
+  }
 }
 
 export function outputKeysForClip(clipId: string): {
@@ -303,4 +333,179 @@ export async function markGifFailed(
 
 export function gifStatusForRecord(record: ClipRecord): GifStatus {
   return record.gif_status ?? "none";
+}
+
+export async function expirePendingHelperJob(
+  db: D1Database,
+  id: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE clips
+       SET helper_state = 'expired',
+           updated_at = datetime('now')
+       WHERE id = ?
+         AND helper_state = 'pending'`,
+    )
+    .bind(id)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function claimOldestPendingHelperJob(
+  db: D1Database,
+): Promise<ClipRecord | null> {
+  return db
+    .prepare(
+      `UPDATE clips
+       SET helper_state = 'claimed',
+           helper_claimed_at = datetime('now'),
+           status = 'downloading',
+           updated_at = datetime('now')
+       WHERE id = (
+         SELECT id
+         FROM clips
+         WHERE helper_state = 'pending'
+           AND status = 'queued'
+           AND source_type = 'youtube'
+         ORDER BY created_at ASC
+         LIMIT 1
+       )
+         AND helper_state = 'pending'
+       RETURNING *`,
+    )
+    .first<ClipRecord>();
+}
+
+export async function fulfillHelperJob(
+  db: D1Database,
+  id: string,
+  uploadKey: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE clips
+       SET helper_state = 'fulfilled',
+           helper_upload_key = ?,
+           updated_at = datetime('now')
+       WHERE id = ?
+         AND helper_state = 'claimed'`,
+    )
+    .bind(uploadKey, id)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function expireClaimedHelperJob(
+  db: D1Database,
+  id: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE clips
+       SET helper_state = 'expired',
+           status = 'queued',
+           updated_at = datetime('now')
+       WHERE id = ?
+         AND helper_state = 'claimed'
+         AND status = 'downloading'`,
+    )
+    .bind(id)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function markHelperRecovering(
+  db: D1Database,
+  id: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE clips
+       SET helper_state = 'recovering',
+           updated_at = datetime('now')
+       WHERE id = ?
+         AND helper_state = 'expired'
+         AND status = 'queued'`,
+    )
+    .bind(id)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+const STALE_HELPER_CLAIM_CEILING_MINUTES = 5;
+const STALE_HELPER_RECOVERY_CEILING_MINUTES = 2;
+const STALE_PENDING_GRACE_SECONDS = 60;
+
+export async function sweepStaleHelperClaims(
+  db: D1Database,
+  claimWindowSeconds: number,
+): Promise<number> {
+  const claimed = await db
+    .prepare(
+      `UPDATE clips
+       SET helper_state = 'expired',
+           status = 'queued',
+           updated_at = datetime('now')
+       WHERE helper_state = 'claimed'
+         AND status = 'downloading'
+         AND helper_claimed_at < datetime('now', ?)`,
+    )
+    .bind(`-${STALE_HELPER_CLAIM_CEILING_MINUTES} minutes`)
+    .run();
+
+  // recovering + still-queued means the recovery waitUntil died between the
+  // helper_state CAS and the dispatch reaching the container DO (the DO
+  // durably advances status via markClipDownloadingIfQueued). Flip back to
+  // 'expired' so the next poll retries. A rare duplicate dispatch is safe:
+  // recovery targets the same DO name (getByName(clipId)) and terminal DB
+  // writes are compare-and-set sticky, so duplicate work cannot corrupt state.
+  const recovering = await db
+    .prepare(
+      `UPDATE clips
+       SET helper_state = 'expired',
+           updated_at = datetime('now')
+       WHERE helper_state = 'recovering'
+         AND status = 'queued'
+         AND updated_at < datetime('now', ?)`,
+    )
+    .bind(`-${STALE_HELPER_RECOVERY_CEILING_MINUTES} minutes`)
+    .run();
+
+  // pending rows are normally expired by the per-clip claim-window waitUntil
+  // scheduled at create time; if that task never ran, expire them here once
+  // they exceed the claim window plus a grace period.
+  const pendingCutoffSeconds =
+    Math.ceil(claimWindowSeconds) + STALE_PENDING_GRACE_SECONDS;
+  const pending = await db
+    .prepare(
+      `UPDATE clips
+       SET helper_state = 'expired',
+           updated_at = datetime('now')
+       WHERE helper_state = 'pending'
+         AND status = 'queued'
+         AND created_at < datetime('now', ?)`,
+    )
+    .bind(`-${pendingCutoffSeconds} seconds`)
+    .run();
+
+  return (
+    (claimed.meta.changes ?? 0) +
+    (recovering.meta.changes ?? 0) +
+    (pending.meta.changes ?? 0)
+  );
+}
+
+export async function listRecoverableHelperClips(
+  db: D1Database,
+): Promise<ClipRecord[]> {
+  const result = await db
+    .prepare(
+      `SELECT * FROM clips
+       WHERE helper_state = 'expired'
+         AND status = 'queued'
+         AND source_type = 'youtube'`,
+    )
+    .all<ClipRecord>();
+  return result.results ?? [];
 }

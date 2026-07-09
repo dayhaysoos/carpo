@@ -55,8 +55,14 @@ export const STUB_DEFERRED_AMBIGUOUS_FAILURE_UPLOAD_KEY =
  * plain Durable Object implements the same fetch-based control protocol.
  */
 export class EncoderStub extends DurableObject<Env> {
+  private lastDispatch: EncoderJobSpec | null = null;
+
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+
+    if (url.pathname === "/__carpo/last-dispatch") {
+      return Response.json(this.lastDispatch);
+    }
 
     if (url.pathname === "/__carpo/start") {
       let sourceUrl = "";
@@ -122,6 +128,7 @@ export class EncoderStub extends DurableObject<Env> {
   }
 
   private async runDispatchJob(job: EncoderJobSpec): Promise<void> {
+    this.lastDispatch = job;
     if (job.source.type === "upload") {
       await this.handleDeferredUploadRun(job);
       return;

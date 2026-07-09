@@ -21,6 +21,14 @@ import {
   validateUploadUrlRequest,
 } from "./uploads";
 import { validateCreateClipRequest } from "./validation";
+import {
+  handleHelperClaim,
+  handleHelperFail,
+  handleHelperFulfill,
+  isHelperEnabled,
+  scheduleHelperClaimWindowFallback,
+  sweepAndRecoverHelperClips,
+} from "./helper";
 
 export async function handleRequest(
   request: Request,
@@ -43,7 +51,37 @@ export async function handleRequest(
   }
 
   if (request.method === "GET" && url.pathname === "/api/clips") {
-    return handleListClips(url, env);
+    return handleListClips(url, env, ctx);
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/helper/claim") {
+    return handleHelperClaim(request, env);
+  }
+
+  const helperFulfillMatch = url.pathname.match(
+    /^\/api\/helper\/jobs\/([^/]+)\/fulfill$/,
+  );
+  if (request.method === "POST" && helperFulfillMatch) {
+    return handleHelperFulfill(
+      request,
+      helperFulfillMatch[1],
+      env,
+      ctx,
+      url.origin,
+    );
+  }
+
+  const helperFailMatch = url.pathname.match(
+    /^\/api\/helper\/jobs\/([^/]+)\/fail$/,
+  );
+  if (request.method === "POST" && helperFailMatch) {
+    return handleHelperFail(
+      request,
+      helperFailMatch[1],
+      env,
+      ctx,
+      url.origin,
+    );
   }
 
   if (
@@ -57,7 +95,7 @@ export async function handleRequest(
 
   if (request.method === "GET" && url.pathname.startsWith("/api/clips/")) {
     const clipId = url.pathname.slice("/api/clips/".length);
-    return handleGetClip(clipId, env);
+    return handleGetClip(clipId, env, ctx, url.origin);
   }
 
   if (request.method === "DELETE" && url.pathname.startsWith("/api/clips/")) {
@@ -137,11 +175,25 @@ async function handleCreateClip(
   }
 
   const clipId = crypto.randomUUID();
-  const record = await insertClip(env.DB, clipId, validation.value);
-
-  ctx.waitUntil(
-    dispatchEncodingJob(env, clipId, validation.value, new URL(request.url).origin),
+  const origin = new URL(request.url).origin;
+  const useHelper =
+    isHelperEnabled(env) && validation.value.source.type === "youtube";
+  const record = await insertClip(
+    env.DB,
+    clipId,
+    validation.value,
+    useHelper ? { helperState: "pending" } : undefined,
   );
+
+  if (useHelper) {
+    ctx.waitUntil(
+      scheduleHelperClaimWindowFallback(env, clipId, origin, ctx),
+    );
+  } else {
+    ctx.waitUntil(
+      dispatchEncodingJob(env, clipId, validation.value, origin),
+    );
+  }
 
   return json(recordToResponse(record, env.R2_PUBLIC_PREFIX), 201);
 }
@@ -149,13 +201,18 @@ async function handleCreateClip(
 const DEFAULT_LIST_LIMIT = 50;
 const MAX_LIST_LIMIT = 100;
 
-async function handleListClips(url: URL, env: Env): Promise<Response> {
+async function handleListClips(
+  url: URL,
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<Response> {
   const limit = Math.min(
     Math.max(parseInt(url.searchParams.get("limit") ?? "", 10) || DEFAULT_LIST_LIMIT, 1),
     MAX_LIST_LIMIT,
   );
   const offset = Math.max(parseInt(url.searchParams.get("offset") ?? "", 10) || 0, 0);
 
+  await sweepAndRecoverHelperClips(env, url.origin, ctx);
   await sweepStaleClips(env.DB);
   const { clips, total } = await listClips(env.DB, limit, offset);
   const prefix = env.R2_PUBLIC_PREFIX;
@@ -187,11 +244,17 @@ async function handleDeleteClip(clipId: string, env: Env): Promise<Response> {
   return new Response(null, { status: 204 });
 }
 
-async function handleGetClip(clipId: string, env: Env): Promise<Response> {
+async function handleGetClip(
+  clipId: string,
+  env: Env,
+  ctx: ExecutionContext,
+  origin: string,
+): Promise<Response> {
   if (!clipId) {
     return json({ error: "Clip id is required" }, 400);
   }
 
+  await sweepAndRecoverHelperClips(env, origin, ctx);
   const record = await getClipById(env.DB, clipId);
   if (!record) {
     return json({ error: "Clip not found" }, 404);
