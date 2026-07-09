@@ -113,6 +113,44 @@ def log(message: str) -> None:
     print(message, flush=True)
 
 
+def log_ytdlp_environment() -> None:
+    """Log yt-dlp version, EJS package, and detected JS runtime at job start."""
+    probe_timeout_seconds = 3
+
+    try:
+        version = subprocess.run(
+            ["yt-dlp", "--version"],
+            capture_output=True,
+            text=True,
+            timeout=probe_timeout_seconds,
+            check=False,
+        )
+        if version.stdout.strip():
+            log(f"yt-dlp env: version {version.stdout.strip()}")
+    except (OSError, subprocess.TimeoutExpired):
+        log("yt-dlp env: version probe timed out")
+        return
+
+    try:
+        verbose = subprocess.run(
+            ["yt-dlp", "-v"],
+            capture_output=True,
+            text=True,
+            timeout=probe_timeout_seconds,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        log("yt-dlp env: runtime probe timed out")
+        return
+
+    combined_output = "\n".join(
+        (verbose.stderr or "").splitlines() + (verbose.stdout or "").splitlines()
+    )
+    for line in combined_output.splitlines():
+        if "JS runtimes:" in line or "yt_dlp_ejs" in line:
+            log(f"yt-dlp env: {line.strip()}")
+
+
 def post_status(
     callback_url: str,
     status: str,
@@ -1445,6 +1483,7 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
             encode_trim_start = trim_start
             encode_trim_end = trim_end
             if source_type == "youtube":
+                log_ytdlp_environment()
                 download_started = time.monotonic()
                 source_path, encode_trim_start, encode_trim_end = download_youtube(
                     source["url"],

@@ -154,6 +154,59 @@ function buildImage() {
   run("docker", ["build", "-t", imageName, "./container"]);
 }
 
+function testImageToolchainSmoke() {
+  const ytdlpVersion = run("docker", [
+    "run",
+    "--rm",
+    imageName,
+    "yt-dlp",
+    "--version",
+  ]).trim();
+  const denoVersion = run("docker", [
+    "run",
+    "--rm",
+    imageName,
+    "deno",
+    "--version",
+  ]).trim();
+  const verboseProbe = run("docker", [
+    "run",
+    "--rm",
+    imageName,
+    "sh",
+    "-c",
+    "yt-dlp -v 2>&1 || true",
+  ]).trim();
+
+  if (!/^\d{4}\.\d{2}\.\d{2}$/.test(ytdlpVersion)) {
+    throw new Error(`Unexpected yt-dlp --version output: ${ytdlpVersion}`);
+  }
+  if (!denoVersion.startsWith("deno 2.")) {
+    throw new Error(`Unexpected deno --version output: ${denoVersion}`);
+  }
+  const verboseLower = verboseProbe.toLowerCase();
+  if (!verboseLower.includes("js runtimes: deno")) {
+    throw new Error(
+      `yt-dlp -v did not report Deno runtime:\n${verboseProbe}`,
+    );
+  }
+  if (!verboseLower.includes("yt_dlp_ejs")) {
+    throw new Error(
+      `yt-dlp -v did not report yt-dlp-ejs:\n${verboseProbe}`,
+    );
+  }
+
+  console.log("Encoder image toolchain smoke test passed");
+  console.log(`  yt-dlp: ${ytdlpVersion}`);
+  console.log(`  deno: ${denoVersion.split("\n")[0]}`);
+  const runtimeLine =
+    verboseProbe
+      .split("\n")
+      .find((line) => line.toLowerCase().includes("js runtimes")) ??
+    "(runtime line not found)";
+  console.log(`  runtime: ${runtimeLine.trim()}`);
+}
+
 function waitForHealth(port: number, attempts = 30) {
   for (let i = 0; i < attempts; i += 1) {
     const probe = spawnSync("curl", ["-fsS", `http://127.0.0.1:${port}/health`], {
@@ -2796,6 +2849,7 @@ function main() {
   testSectionEncodeBounds();
   testStreamCopyGate();
   buildImage();
+  testImageToolchainSmoke();
   testProcessGroupKill();
   runStageSourceContract(frameCounterPath);
   runEncoderYoutubeFailFastContract(frameCounterPath);
