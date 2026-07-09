@@ -1,5 +1,10 @@
 import { Container } from "@cloudflare/containers";
 
+// Hard ceiling for stale jobRunning keepalive. If the worker isolate dies
+// mid-/run, dispatchEncodingJob's finally never clears the flag; without a
+// TTL the container would renew forever and leak a max_instances slot.
+const JOB_RUNNING_TTL_MS = 30 * 60 * 1000;
+
 export class EncoderContainer extends Container {
   defaultPort = 8080;
   sleepAfter = "30m";
@@ -29,7 +34,13 @@ export class EncoderContainer extends Container {
 
     if (url.pathname === "/__carpo/job-running" && request.method === "POST") {
       const body = (await request.json()) as { running?: boolean };
-      await this.ctx.storage.put("jobRunning", Boolean(body.running));
+      const running = Boolean(body.running);
+      await this.ctx.storage.put("jobRunning", running);
+      if (running) {
+        await this.ctx.storage.put("jobStartedAt", Date.now());
+      } else {
+        await this.ctx.storage.delete("jobStartedAt");
+      }
       return new Response(null, { status: 204 });
     }
 
@@ -39,8 +50,14 @@ export class EncoderContainer extends Container {
   override async onActivityExpired(): Promise<void> {
     const jobRunning = await this.ctx.storage.get<boolean>("jobRunning");
     if (jobRunning) {
-      this.renewActivityTimeout();
-      return;
+      const jobStartedAt = await this.ctx.storage.get<number>("jobStartedAt");
+      const elapsed = jobStartedAt ? Date.now() - jobStartedAt : Infinity;
+      if (elapsed < JOB_RUNNING_TTL_MS) {
+        this.renewActivityTimeout();
+        return;
+      }
+      await this.ctx.storage.put("jobRunning", false);
+      await this.ctx.storage.delete("jobStartedAt");
     }
     await this.stop();
   }

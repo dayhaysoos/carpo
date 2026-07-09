@@ -118,6 +118,40 @@ function waitForHealth(port: number, attempts = 30) {
   throw new Error("Encoder container did not become healthy");
 }
 
+function testNullMaxClipLengthValidation() {
+  const script = `
+import sys
+
+sys.path.insert(0, ${JSON.stringify(path.join(root, "container"))})
+from encoder import MAX_CLIP_LENGTH_SECONDS, resolve_max_clip_length, validate_job, process_job
+
+assert resolve_max_clip_length(None) == float(MAX_CLIP_LENGTH_SECONDS)
+assert resolve_max_clip_length("not-a-number") == float(MAX_CLIP_LENGTH_SECONDS)
+
+valid_job = {
+    "trimStart": 0,
+    "trimEnd": 5,
+    "maxClipLengthSeconds": None,
+    "source": {"type": "youtube", "url": "https://example.com/watch?v=test"},
+}
+assert validate_job(valid_job) is None
+
+failed_job = {
+    "trimStart": 0,
+    "trimEnd": 5,
+    "maxClipLengthSeconds": None,
+    "source": {"type": "youtube", "url": ""},
+}
+result = process_job(failed_job)
+assert result["status"] == "failed"
+assert isinstance(result.get("errorMessage"), str)
+
+print("Null maxClipLengthSeconds validation test passed")
+`;
+
+  run("python3", ["-c", script]);
+}
+
 function testSourceFileSelection() {
   const selectionDir = path.join(outputDir, "source-selection");
   fs.rmSync(selectionDir, { recursive: true, force: true });
@@ -291,6 +325,7 @@ function main() {
   assertDockerAvailable();
   assertFfmpegAvailable();
   const fixturePath = ensureFixtureVideo();
+  testNullMaxClipLengthValidation();
   testSourceFileSelection();
   buildImage();
   runEncoderContract(fixturePath);

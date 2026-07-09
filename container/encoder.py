@@ -27,6 +27,7 @@ MAX_INTERMEDIATE_CALLBACK_ATTEMPTS = 3
 INITIAL_CALLBACK_BACKOFF_SECONDS = 0.5
 DOWNLOAD_TIMEOUT_SECONDS = 600
 ENCODE_TIMEOUT_SECONDS = 600
+UPLOAD_TIMEOUT_SECONDS = 600
 VIDEO_CONTAINER_EXTENSIONS = ("mp4", "mkv", "webm")
 
 
@@ -148,10 +149,24 @@ class ProgressCallbackTracker:
             self._needs_resync = False
 
 
+def resolve_max_clip_length(value: Any) -> float:
+    if value is None:
+        return float(MAX_CLIP_LENGTH_SECONDS)
+    if not isinstance(value, (int, float)):
+        return float(MAX_CLIP_LENGTH_SECONDS)
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return float(MAX_CLIP_LENGTH_SECONDS)
+    if parsed <= 0:
+        return float(MAX_CLIP_LENGTH_SECONDS)
+    return parsed
+
+
 def validate_job(job: dict[str, Any]) -> str | None:
     trim_start = job.get("trimStart")
     trim_end = job.get("trimEnd")
-    max_len = job.get("maxClipLengthSeconds", MAX_CLIP_LENGTH_SECONDS)
+    max_len = resolve_max_clip_length(job.get("maxClipLengthSeconds"))
 
     if not isinstance(trim_start, (int, float)) or not isinstance(trim_end, (int, float)):
         return "trimStart and trimEnd must be numbers"
@@ -159,7 +174,7 @@ def validate_job(job: dict[str, Any]) -> str | None:
     duration = float(trim_end) - float(trim_start)
     if duration <= 0:
         return "trimEnd must be greater than trimStart"
-    if duration > float(max_len):
+    if duration > max_len:
         return f"Clip length exceeds maximum of {max_len} seconds"
 
     source = job.get("source")
@@ -319,7 +334,7 @@ def upload_file(
         headers=headers,
         method="PUT",
     )
-    with urllib.request.urlopen(request, timeout=120) as response:
+    with urllib.request.urlopen(request, timeout=UPLOAD_TIMEOUT_SECONDS) as response:
         response.read()
 
 
@@ -371,15 +386,20 @@ def run_result(
 
 
 def process_job(job: dict[str, Any]) -> dict[str, Any]:
-    error = validate_job(job)
-    if error:
-        return run_result("failed", job, error_message=error)
-
     callback_url = job.get("callbackUrl")
     callback_secret = job.get("callbackSecret")
-    trim_start = float(job["trimStart"])
-    trim_end = float(job["trimEnd"])
     progress = ProgressCallbackTracker()
+
+    try:
+        error = validate_job(job)
+        if error:
+            return run_result("failed", job, error_message=error)
+
+        trim_start = float(job["trimStart"])
+        trim_end = float(job["trimEnd"])
+    except Exception as exc:  # noqa: BLE001 - validation bugs become confirmed failures
+        message = str(exc) or "Job validation failed"
+        return run_result("failed", job, error_message=message)
 
     with tempfile.TemporaryDirectory(prefix="carpo-encode-") as tmp:
         workdir = Path(tmp)
