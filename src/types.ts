@@ -55,8 +55,8 @@ export interface ClipRecord {
 }
 
 export interface ClipOutputs {
-  mp4: string;
-  thumbnail: string;
+  mp4: string | null;
+  thumbnail: string | null;
 }
 
 export interface ClipResponse {

@@ -86,10 +86,8 @@ describe("POST /api/clips", () => {
     expect(body.trimStart).toBe(1);
     expect(body.trimEnd).toBe(5);
     expect(body.filters).toEqual([]);
-    expect(body.outputs.mp4).toBe(`/artifacts/clips/${body.id}/clip.mp4`);
-    expect(body.outputs.thumbnail).toBe(
-      `/artifacts/clips/${body.id}/thumbnail.jpg`,
-    );
+    expect(body.outputs.mp4).toBeNull();
+    expect(body.outputs.thumbnail).toBeNull();
   });
 
   it("rejects invalid YouTube URLs", async () => {
@@ -294,6 +292,20 @@ describe("failed job artifact cleanup", () => {
     const thumbAfter = await env.CLIPS_BUCKET.get(keys.thumbnailKey);
     expect(mp4After).toBeNull();
     expect(thumbAfter).toBeNull();
+
+    const clipResponse = await workerFetch(
+      `http://example.com/api/clips/${clipId}`,
+    );
+    expect(clipResponse.status).toBe(200);
+    const clipBody = (await clipResponse.json()) as {
+      status: string;
+      errorMessage: string;
+      outputs: { mp4: string | null; thumbnail: string | null };
+    };
+    expect(clipBody.status).toBe("failed");
+    expect(clipBody.errorMessage).toBe("thumbnail upload failed");
+    expect(clipBody.outputs.mp4).toBeNull();
+    expect(clipBody.outputs.thumbnail).toBeNull();
   });
 });
 

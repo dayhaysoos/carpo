@@ -1,5 +1,4 @@
 import type { ClipRecord, ClipResponse, ClipSource, FilterSpec } from "./types";
-import { outputKeysForClip } from "./db";
 
 export function parseFilters(filtersJson: string): FilterSpec[] {
   try {
@@ -21,7 +20,6 @@ export function recordToResponse(
   record: ClipRecord,
   artifactPrefix: string,
 ): ClipResponse {
-  const plannedOutputs = outputKeysForClip(record.id);
   return {
     id: record.id,
     title: record.title,
@@ -35,10 +33,10 @@ export function recordToResponse(
     outputs: {
       mp4: record.output_mp4_key
         ? `${artifactPrefix}/${record.output_mp4_key}`
-        : `${artifactPrefix}/${plannedOutputs.mp4Key}`,
+        : null,
       thumbnail: record.output_thumbnail_key
         ? `${artifactPrefix}/${record.output_thumbnail_key}`
-        : `${artifactPrefix}/${plannedOutputs.thumbnailKey}`,
+        : null,
     },
     createdAt: record.created_at,
     updatedAt: record.updated_at,
