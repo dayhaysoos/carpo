@@ -371,6 +371,8 @@ function runEncoderCaptionContract(fixturePath: string, frameCounterPath: string
   const trimStart = 2.5;
   const trimEnd = 5;
   const captionText = "It's 50% off: now!";
+  const dualCaptionA = "First caption!!";
+  const dualCaptionB = "Second caption!";
   const baselineJob = {
     jobId: "caption-baseline",
     source: {
@@ -397,11 +399,25 @@ function runEncoderCaptionContract(fixturePath: string, frameCounterPath: string
       thumbnailKey: "captioned.jpg",
     },
   };
+  const dualCaptionJob = {
+    ...baselineJob,
+    jobId: "caption-dual",
+    filters: [
+      { type: "caption", text: dualCaptionA },
+      { type: "caption", text: dualCaptionB },
+    ],
+    outputs: {
+      mp4Key: "dual-captioned.mp4",
+      thumbnailKey: "dual-captioned.jpg",
+    },
+  };
 
   const baselinePath = path.join(captionOutputDir, "baseline-job.json");
   const captionedPath = path.join(captionOutputDir, "captioned-job.json");
+  const dualCaptionPath = path.join(captionOutputDir, "dual-captioned-job.json");
   fs.writeFileSync(baselinePath, JSON.stringify(baselineJob));
   fs.writeFileSync(captionedPath, JSON.stringify(captionedJob));
+  fs.writeFileSync(dualCaptionPath, JSON.stringify(dualCaptionJob));
 
   const captionContainer = `${containerName}-caption`;
   run("docker", ["rm", "-f", captionContainer]);
@@ -427,6 +443,7 @@ function runEncoderCaptionContract(fixturePath: string, frameCounterPath: string
     for (const [label, jobFile] of [
       ["baseline", baselinePath],
       ["captioned", captionedPath],
+      ["dual-captioned", dualCaptionPath],
     ] as const) {
       const encode = spawnSync(
         "curl",
@@ -464,12 +481,17 @@ function runEncoderCaptionContract(fixturePath: string, frameCounterPath: string
     const baselineMp4 = path.join(captionOutputDir, "baseline.mp4");
     const captionedMp4 = path.join(captionOutputDir, "captioned.mp4");
     const captionedThumb = path.join(captionOutputDir, "captioned.jpg");
+    const dualCaptionedMp4 = path.join(captionOutputDir, "dual-captioned.mp4");
+    const dualCaptionedThumb = path.join(captionOutputDir, "dual-captioned.jpg");
 
     if (!fs.existsSync(baselineMp4) || !fs.existsSync(captionedMp4)) {
       throw new Error("Expected baseline and captioned MP4 artifacts");
     }
     if (!fs.existsSync(captionedThumb)) {
       throw new Error("Expected captioned thumbnail artifact");
+    }
+    if (!fs.existsSync(dualCaptionedMp4) || !fs.existsSync(dualCaptionedThumb)) {
+      throw new Error("Expected dual-captioned MP4 and thumbnail artifacts");
     }
 
     const baselineFrame = readFrameRgbBuffer(baselineMp4, 0);
@@ -486,9 +508,32 @@ function runEncoderCaptionContract(fixturePath: string, frameCounterPath: string
       throw new Error("Encoder logs did not show drawtext filter invocation");
     }
 
+    const dualCaptionedLog = run("docker", ["logs", captionContainer]);
+    if (
+      !dualCaptionedLog.includes("caption-0.txt") ||
+      !dualCaptionedLog.includes("caption-1.txt")
+    ) {
+      throw new Error(
+        "Dual-caption encode did not use distinct caption textfiles (caption-0.txt and caption-1.txt)",
+      );
+    }
+
+    const dualCaptionedFrame = readFrameRgbBuffer(dualCaptionedMp4, 0);
+    const dualPixelDifferences = countPixelDifferences(
+      baselineFrame,
+      dualCaptionedFrame,
+    );
+    if (dualPixelDifferences < 100) {
+      throw new Error(
+        `Dual-caption overlay did not visibly change the output frame (${dualPixelDifferences} differing bytes)`,
+      );
+    }
+
     console.log("Encoder caption contract test passed");
     console.log(`  Caption: ${captionText}`);
     console.log(`  Frame differences: ${pixelDifferences} bytes`);
+    console.log(`  Dual captions: ${dualCaptionA} | ${dualCaptionB}`);
+    console.log(`  Dual frame differences: ${dualPixelDifferences} bytes`);
   } finally {
     run("docker", ["rm", "-f", captionContainer]);
   }

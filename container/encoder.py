@@ -290,7 +290,7 @@ def build_video_filter_chain(filters: list[Any], workdir: Path) -> str | None:
             text = item.get("text")
             if not isinstance(text, str) or not text.strip():
                 raise RuntimeError(f"filters[{index}].text is required for caption")
-            parts.append(build_caption_drawtext(text, workdir))
+            parts.append(build_caption_drawtext(text, workdir, index))
             continue
 
         if filter_type not in KNOWN_FILTER_TYPES:
@@ -299,9 +299,9 @@ def build_video_filter_chain(filters: list[Any], workdir: Path) -> str | None:
     return ",".join(parts) if parts else None
 
 
-def build_caption_drawtext(text: str, workdir: Path) -> str:
+def build_caption_drawtext(text: str, workdir: Path, index: int) -> str:
     """Burn caption text with legible styling; textfile avoids drawtext escaping pitfalls."""
-    text_path = workdir / f"caption-{len(text)}.txt"
+    text_path = workdir / f"caption-{index}.txt"
     text_path.write_text(text, encoding="utf-8")
 
     return (
