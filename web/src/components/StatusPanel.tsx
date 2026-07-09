@@ -1,7 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { listClips } from "../api";
+import { ClipFailureMessage } from "./ClipFailureMessage";
 import { CLIPS_QUERY_KEY } from "../queries";
+import { isYoutubeBlockedError } from "../errors";
 import { isTerminalStatus, statusLabel, statusProgress } from "../status";
 import type { ClipResponse } from "../types";
 
@@ -27,6 +29,10 @@ function JobCard({ clip }: { clip: ClipResponse }) {
           <div className="progress-fill" style={{ width: `${progress}%` }} />
         </div>
       </div>
+
+      {clip.status === "failed" && clip.errorMessage && (
+        <ClipFailureMessage message={clip.errorMessage} />
+      )}
     </article>
   );
 }
@@ -44,15 +50,23 @@ export function StatusPanel() {
 
   const inFlightClips =
     data?.clips.filter((clip) => !isTerminalStatus(clip.status)) ?? [];
+  const blockedFailureClips =
+    data?.clips.filter(
+      (clip) =>
+        clip.status === "failed" && isYoutubeBlockedError(clip.errorMessage),
+    ) ?? [];
+  const visibleClips = [...inFlightClips, ...blockedFailureClips];
 
   return (
     <section className="status-panel card">
       <div className="card-header">
         <h2>Jobs</h2>
         <p>
-          {inFlightClips.length === 0
+          {visibleClips.length === 0
             ? "Created clips appear here while encoding."
-            : `${inFlightClips.length} in progress`}
+            : inFlightClips.length > 0
+              ? `${inFlightClips.length} in progress`
+              : "Recent YouTube failures"}
         </p>
       </div>
 
@@ -64,7 +78,7 @@ export function StatusPanel() {
         <p className="job-error">{error.message}</p>
       )}
 
-      {data && inFlightClips.length === 0 && (
+      {data && visibleClips.length === 0 && (
         <div className="empty-state">
           No active jobs.{" "}
           <Link to="/library" className="inline-link">
@@ -73,10 +87,10 @@ export function StatusPanel() {
         </div>
       )}
 
-      {inFlightClips.length > 0 && (
+      {visibleClips.length > 0 && (
         <>
           <div className="job-list">
-            {inFlightClips.map((clip) => (
+            {visibleClips.map((clip) => (
               <JobCard key={clip.id} clip={clip} />
             ))}
           </div>

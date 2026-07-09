@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -28,6 +30,20 @@ MAX_CALLBACK_ATTEMPTS = 5
 MAX_INTERMEDIATE_CALLBACK_ATTEMPTS = 3
 INITIAL_CALLBACK_BACKOFF_SECONDS = 0.5
 DOWNLOAD_TIMEOUT_SECONDS = 600
+YOUTUBE_SOCKET_TIMEOUT_SECONDS = 15
+YOUTUBE_STALL_TIMEOUT_SECONDS = int(
+    os.environ.get("YOUTUBE_STALL_TIMEOUT_SECONDS", "45"),
+)
+YOUTUBE_POST_100_GRACE_TIMEOUT_SECONDS = int(
+    os.environ.get("YOUTUBE_POST_100_GRACE_TIMEOUT_SECONDS", "90"),
+)
+YOUTUBE_DOWNLOAD_MAX_SECONDS = int(
+    os.environ.get("YOUTUBE_DOWNLOAD_MAX_SECONDS", "600"),
+)
+YOUTUBE_STDERR_MAX_LINES = 200
+YOUTUBE_SECTION_PADDING_SECONDS = 3
+YOUTUBE_SECTION_START_DRIFT_TOLERANCE_SECONDS = 0.25
+YOUTUBE_USE_DOWNLOAD_SECTIONS = True
 ENCODE_TIMEOUT_SECONDS = 600
 UPLOAD_TIMEOUT_SECONDS = 600
 VIDEO_CONTAINER_EXTENSIONS = ("mp4", "mkv", "webm")
@@ -37,6 +53,28 @@ GIF_FPS = 12
 GIF_MAX_WIDTH = 480
 DEJAVU_FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 KNOWN_FILTER_TYPES = frozenset({"caption"})
+YOUTUBE_BLOCKED_MESSAGE = (
+    "YouTube is blocking downloads from this server. "
+    "Try uploading the video file instead."
+)
+YOUTUBE_STALL_MESSAGE = (
+    "YouTube appears to be blocking/stalling downloads from this server. "
+    "Try uploading the video file instead."
+)
+# Prefer h264 up to 1080p; cap AV1 to 720p when it is the only option.
+YTDLP_FORMAT_SORT = "res:1080,+codec:h264"
+YTDLP_FORMAT_SELECTOR = (
+    "bestvideo[height<=1080][vcodec^=avc1]+bestaudio/"
+    "bestvideo[height<=1080]+bestaudio/"
+    "best[height<=1080]/"
+    "bestvideo[vcodec^=av01][height<=720]+bestaudio/"
+    "bestvideo[height<=720]+bestaudio/"
+    "best"
+)
+ENCODE_FAILURE_MESSAGE = (
+    "Encoding failed for this video format. "
+    "Try a shorter clip or upload the file instead."
+)
 
 
 def log(message: str) -> None:
@@ -227,11 +265,18 @@ def validate_gif_job(job: dict[str, Any]) -> str | None:
     return None
 
 
+def classify_encode_error(_output: str, *, timed_out: bool = False) -> str:
+    """Map ffmpeg stderr/stdout to a user-facing encode error."""
+    del timed_out  # reserved for future timeout-specific copy
+    return ENCODE_FAILURE_MESSAGE
+
+
 def run_command(
     command: list[str],
     cwd: Path | None = None,
     *,
     timeout_seconds: int = ENCODE_TIMEOUT_SECONDS,
+    friendly_failure: bool = False,
 ) -> None:
     log(f"running: {' '.join(command)}")
     try:
@@ -244,12 +289,403 @@ def run_command(
         )
     except subprocess.TimeoutExpired as exc:
         cmd = " ".join(command)
+        if friendly_failure:
+            log(f"encode command timed out after {timeout_seconds}s: {cmd}")
+            raise RuntimeError(
+                classify_encode_error("", timed_out=True),
+            ) from exc
         raise RuntimeError(
             f"Command timed out after {timeout_seconds}s: {cmd}",
         ) from exc
     if completed.returncode != 0:
         stderr = completed.stderr.strip() or completed.stdout.strip()
+        if friendly_failure:
+            log(f"encode command failed: {' '.join(command)}")
+            if stderr:
+                log(f"ffmpeg stderr:\n{stderr}")
+            raise RuntimeError(classify_encode_error(stderr))
         raise RuntimeError(stderr or f"command failed: {' '.join(command)}")
+
+
+def classify_ytdlp_error(output: str) -> str:
+    """Map yt-dlp stderr/stdout to a user-facing download error."""
+    text = output.lower()
+
+    blocked_markers = (
+        "http error 403",
+        "403: forbidden",
+        "403 forbidden",
+        "sign in to confirm you're not a bot",
+        "confirm you are not a bot",
+        "cookies are required",
+        "this content isn't available",
+        "http error 429",
+    )
+    if any(marker in text for marker in blocked_markers):
+        return YOUTUBE_BLOCKED_MESSAGE
+
+    if "private video" in text or "this is a private video" in text:
+        return (
+            "This YouTube video is private. "
+            "Try uploading the video file instead."
+        )
+
+    if "members-only" in text or "join this channel" in text:
+        return (
+            "This YouTube video is members-only. "
+            "Try uploading the video file instead."
+        )
+
+    if (
+        "video unavailable" in text
+        or "this video is unavailable" in text
+        or "video has been removed" in text
+    ):
+        return (
+            "This YouTube video is unavailable. "
+            "It may have been deleted or restricted."
+        )
+
+    if (
+        "geo restricted" in text
+        or "not made this video available in your country" in text
+        or "not available in your country" in text
+    ):
+        return "This YouTube video is not available in your region."
+
+    if "unsupported url" in text or "no video formats" in text:
+        return "The URL is not a supported YouTube link."
+
+    if "invalid youtube url" in text or "url is not valid" in text:
+        return "Enter a valid YouTube URL."
+
+    trimmed = output.strip()
+    if trimmed:
+        first_line = trimmed.splitlines()[0]
+        if len(first_line) > 240:
+            first_line = first_line[:237] + "..."
+        return f"Failed to download YouTube video: {first_line}"
+
+    return "Failed to download YouTube video."
+
+
+def _append_capped_line(lines: list[str], line: str, max_lines: int) -> None:
+    lines.append(line)
+    overflow = len(lines) - max_lines
+    if overflow > 0:
+        del lines[:overflow]
+
+
+def _ytdlp_command_with_newline(command: list[str]) -> list[str]:
+    if "--newline" in command:
+        return command
+    return [command[0], "--newline", *command[1:]]
+
+
+_YTDLP_POSTPROCESS_MARKERS = (
+    "[Merger]",
+    "[ExtractAudio]",
+    "[FixupM3u8]",
+    "[ffmpeg]",
+)
+
+
+def _ytdlp_line_indicates_postprocess(line: str) -> bool:
+    text = line.strip()
+    if not text:
+        return False
+    return any(marker in text for marker in _YTDLP_POSTPROCESS_MARKERS)
+
+
+def _ytdlp_line_is_download_destination(line: str) -> bool:
+    text = line.strip()
+    return "[download]" in text and "Destination:" in text
+
+
+def _ytdlp_line_download_percent(line: str) -> float | None:
+    text = line.strip()
+    if "[download]" not in text:
+        return None
+    match = re.search(r"\b(\d+(?:\.\d+)?)%", text)
+    if not match:
+        return None
+    return float(match.group(1))
+
+
+def _ytdlp_download_line_enables_stall_detection(line: str) -> bool:
+    if _ytdlp_line_is_download_destination(line):
+        return True
+    percent = _ytdlp_line_download_percent(line)
+    return percent is not None and percent < 100
+
+
+def _ytdlp_download_line_disables_stall_detection(line: str) -> bool:
+    percent = _ytdlp_line_download_percent(line)
+    return percent is not None and percent >= 100
+
+
+def _combined_ytdlp_output(
+    stderr_lines: list[str],
+    stdout_lines: list[str],
+) -> str:
+    return "\n".join([*stderr_lines, *stdout_lines])
+
+
+def _classify_stall_error(
+    stderr_lines: list[str],
+    stdout_lines: list[str],
+) -> str:
+    combined_text = _combined_ytdlp_output(stderr_lines, stdout_lines)
+    if not combined_text.strip():
+        return YOUTUBE_STALL_MESSAGE
+    classified = classify_ytdlp_error(combined_text)
+    if classified == "Failed to download YouTube video." or classified.startswith(
+        "Failed to download YouTube video:",
+    ):
+        return YOUTUBE_STALL_MESSAGE
+    return classified
+
+
+def _signal_process_group(pid: int, sig: signal.Signals) -> None:
+    try:
+        os.killpg(pid, sig)
+    except ProcessLookupError:
+        return
+    except PermissionError:
+        try:
+            os.kill(pid, sig)
+        except ProcessLookupError:
+            return
+
+
+def _kill_process_group(pid: int) -> None:
+    """Terminate a yt-dlp process group, including ffmpeg merge children."""
+    _signal_process_group(pid, signal.SIGTERM)
+
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        except PermissionError:
+            return
+        time.sleep(0.1)
+
+    _signal_process_group(pid, signal.SIGKILL)
+
+
+def _wait_for_process_after_kill(proc: subprocess.Popen[Any]) -> None:
+    """Wait for a killed yt-dlp process; retry SIGKILL if it does not exit."""
+    try:
+        proc.wait(timeout=10)
+        return
+    except subprocess.TimeoutExpired:
+        log(
+            f"WARNING: yt-dlp process {proc.pid} did not exit within 10s "
+            "after kill; retrying SIGKILL",
+        )
+
+    if proc.poll() is None and proc.pid is not None:
+        _signal_process_group(proc.pid, signal.SIGKILL)
+
+    try:
+        proc.wait(timeout=3)
+        return
+    except subprocess.TimeoutExpired:
+        log(
+            f"CRITICAL: yt-dlp process {proc.pid} is unkillable after SIGKILL",
+        )
+        raise RuntimeError(
+            "YouTube download process could not be terminated. "
+            "Try uploading the video file instead.",
+        )
+
+
+def probe_media_start_time(path: Path) -> float | None:
+    """Return container start_time from ffprobe when present."""
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=start_time",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        return float(result.stdout.strip())
+    except ValueError:
+        return None
+
+
+def resolve_section_encode_bounds(
+    source_path: Path,
+    trim_start: float,
+    trim_end: float,
+    section_start: float,
+) -> tuple[float, float]:
+    """Map requested trim bounds to offsets within a section download."""
+    if not YOUTUBE_USE_DOWNLOAD_SECTIONS:
+        return trim_start, trim_end
+
+    probed_start = probe_media_start_time(source_path)
+    if probed_start is not None and probed_start > 0:
+        if (
+            probed_start
+            > trim_start + YOUTUBE_SECTION_START_DRIFT_TOLERANCE_SECONDS
+        ):
+            raise RuntimeError(
+                "Downloaded section does not contain the requested trim range. "
+                "Try a wider trim range or upload the video file instead.",
+            )
+        base = probed_start
+    else:
+        base = section_start
+
+    encode_trim_start = max(0.0, trim_start - base)
+    encode_trim_end = trim_end - base
+    if encode_trim_end <= encode_trim_start:
+        raise RuntimeError(
+            "Downloaded section does not contain the requested trim range. "
+            "Try a wider trim range or upload the video file instead.",
+        )
+
+    return encode_trim_start, encode_trim_end
+
+
+def run_ytdlp(command: list[str], workdir: Path) -> None:
+    command = _ytdlp_command_with_newline(command)
+    log(f"running: {' '.join(command)}")
+
+    proc = subprocess.Popen(
+        command,
+        cwd=str(workdir),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+        start_new_session=True,
+    )
+
+    stdout_lines: list[str] = []
+    stderr_lines: list[str] = []
+    activity_lock = threading.Lock()
+    last_activity = time.monotonic()
+    started = time.monotonic()
+    stall_detection_enabled = True
+    post_process_latched = False
+
+    def mark_activity() -> None:
+        nonlocal last_activity
+        with activity_lock:
+            last_activity = time.monotonic()
+
+    def note_ytdlp_line(line: str) -> None:
+        nonlocal stall_detection_enabled, post_process_latched
+        if _ytdlp_line_indicates_postprocess(line):
+            with activity_lock:
+                post_process_latched = True
+                stall_detection_enabled = False
+            return
+        if _ytdlp_download_line_enables_stall_detection(line):
+            with activity_lock:
+                stall_detection_enabled = True
+            return
+        if _ytdlp_download_line_disables_stall_detection(line):
+            with activity_lock:
+                stall_detection_enabled = False
+
+    def read_stream(stream: Any, *, is_stderr: bool) -> None:
+        if stream is None:
+            return
+        for line in stream:
+            if is_stderr:
+                _append_capped_line(
+                    stderr_lines,
+                    line.rstrip("\n"),
+                    YOUTUBE_STDERR_MAX_LINES,
+                )
+            else:
+                _append_capped_line(
+                    stdout_lines,
+                    line.rstrip("\n"),
+                    YOUTUBE_STDERR_MAX_LINES,
+                )
+            note_ytdlp_line(line)
+            if line.strip():
+                mark_activity()
+
+    stdout_thread = threading.Thread(
+        target=read_stream,
+        args=(proc.stdout,),
+        kwargs={"is_stderr": False},
+        daemon=True,
+    )
+    stderr_thread = threading.Thread(
+        target=read_stream,
+        args=(proc.stderr,),
+        kwargs={"is_stderr": True},
+        daemon=True,
+    )
+    stdout_thread.start()
+    stderr_thread.start()
+
+    stall_killed = False
+    overall_timeout = False
+
+    while proc.poll() is None:
+        now = time.monotonic()
+        with activity_lock:
+            idle_seconds = now - last_activity
+            stall_enabled = stall_detection_enabled
+            latched = post_process_latched
+        if not latched:
+            idle_limit = (
+                YOUTUBE_STALL_TIMEOUT_SECONDS
+                if stall_enabled
+                else YOUTUBE_POST_100_GRACE_TIMEOUT_SECONDS
+            )
+            if idle_seconds > idle_limit:
+                stall_killed = True
+                _kill_process_group(proc.pid)
+                break
+        if now - started > YOUTUBE_DOWNLOAD_MAX_SECONDS:
+            overall_timeout = True
+            _kill_process_group(proc.pid)
+            break
+        time.sleep(0.25)
+
+    if stall_killed or overall_timeout:
+        _wait_for_process_after_kill(proc)
+    else:
+        proc.wait()
+    stdout_thread.join(timeout=2)
+    stderr_thread.join(timeout=2)
+
+    if stall_killed:
+        raise RuntimeError(_classify_stall_error(stderr_lines, stdout_lines))
+    if overall_timeout:
+        raise RuntimeError(
+            "YouTube download timed out. "
+            "Try uploading the video file instead.",
+        )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            classify_ytdlp_error(_combined_ytdlp_output(stderr_lines, stdout_lines)),
+        )
 
 
 def select_source_file(candidates: list[Path]) -> Path:
@@ -312,24 +748,60 @@ def download_upload(
     return destination
 
 
-def download_youtube(url: str, workdir: Path) -> Path:
-    output_template = str(workdir / "source.%(ext)s")
-    run_command(
+def youtube_section_bounds(trim_start: float, trim_end: float) -> tuple[float, float]:
+    section_start = max(0.0, trim_start - YOUTUBE_SECTION_PADDING_SECONDS)
+    section_end = trim_end + YOUTUBE_SECTION_PADDING_SECONDS
+    return section_start, section_end
+
+
+def _ytdlp_download_command(
+    url: str,
+    output_template: str,
+    *,
+    trim_start: float,
+    trim_end: float,
+    use_sections: bool,
+) -> tuple[list[str], float]:
+    section_start = 0.0
+    command = [
+        "yt-dlp",
+        "--no-playlist",
+        "--retries",
+        "1",
+        "--fragment-retries",
+        "1",
+        "--extractor-retries",
+        "1",
+        "--file-access-retries",
+        "1",
+        "--socket-timeout",
+        str(YOUTUBE_SOCKET_TIMEOUT_SECONDS),
+        "--merge-output-format",
+        "mp4",
+        "-S",
+        YTDLP_FORMAT_SORT,
+        "-f",
+        YTDLP_FORMAT_SELECTOR,
+    ]
+    if use_sections:
+        section_start, section_end = youtube_section_bounds(trim_start, trim_end)
+        command.extend(
+            [
+                "--download-sections",
+                f"*{section_start}-{section_end}",
+            ],
+        )
+    command.extend(
         [
-            "yt-dlp",
-            "--no-playlist",
-            "--merge-output-format",
-            "mp4",
-            "-f",
-            "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
             "-o",
             output_template,
             url,
         ],
-        cwd=workdir,
-        timeout_seconds=DOWNLOAD_TIMEOUT_SECONDS,
     )
+    return command, section_start
 
+
+def _resolve_ytdlp_source_path(workdir: Path) -> Path:
     merged = workdir / "source.mp4"
     if merged.exists():
         return merged
@@ -338,6 +810,73 @@ def download_youtube(url: str, workdir: Path) -> Path:
     if not candidates:
         raise RuntimeError("yt-dlp did not produce a source file")
     return select_source_file(candidates)
+
+
+def _clear_ytdlp_source_files(workdir: Path) -> None:
+    for stale in workdir.glob("source.*"):
+        stale.unlink(missing_ok=True)
+
+
+def download_youtube(
+    url: str,
+    workdir: Path,
+    *,
+    trim_start: float,
+    trim_end: float,
+) -> tuple[Path, float, float]:
+    """Download a YouTube source and return encode trim bounds relative to the file."""
+    output_template = str(workdir / "source.%(ext)s")
+
+    if YOUTUBE_USE_DOWNLOAD_SECTIONS:
+        section_command, section_start = _ytdlp_download_command(
+            url,
+            output_template,
+            trim_start=trim_start,
+            trim_end=trim_end,
+            use_sections=True,
+        )
+        run_ytdlp(section_command, workdir)
+        source_path = _resolve_ytdlp_source_path(workdir)
+
+        probed_start = probe_media_start_time(source_path)
+        if probed_start is not None and probed_start > 0:
+            try:
+                encode_trim_start, encode_trim_end = resolve_section_encode_bounds(
+                    source_path,
+                    trim_start,
+                    trim_end,
+                    section_start,
+                )
+                return source_path, encode_trim_start, encode_trim_end
+            except RuntimeError as exc:
+                if "does not contain the requested trim range" not in str(exc):
+                    raise
+                log(
+                    "YouTube section download does not contain the requested "
+                    f"trim range (start_time={probed_start}); re-downloading full video",
+                )
+                _clear_ytdlp_source_files(workdir)
+        else:
+            if probed_start is None:
+                alignment_detail = "unavailable"
+            else:
+                alignment_detail = f"{probed_start}"
+            log(
+                "YouTube section download has unknown alignment "
+                f"(start_time={alignment_detail}); re-downloading full video",
+            )
+            _clear_ytdlp_source_files(workdir)
+
+    full_command, _ = _ytdlp_download_command(
+        url,
+        output_template,
+        trim_start=trim_start,
+        trim_end=trim_end,
+        use_sections=False,
+    )
+    run_ytdlp(full_command, workdir)
+    source_path = _resolve_ytdlp_source_path(workdir)
+    return source_path, trim_start, trim_end
 
 
 def build_video_filter_chain(filters: list[Any], workdir: Path) -> str | None:
@@ -429,7 +968,7 @@ def encode_clip(
     # Input seeking (-ss before -i) is frame-accurate when re-encoding (not stream
     # copy); verified by scripts/test-encoder-contract.ts against a frame-counter
     # fixture trimmed at a non-keyframe offset (±1 frame).
-    run_command(encode_command)
+    run_command(encode_command, friendly_failure=True)
 
     thumb_command = [
         "ffmpeg",
@@ -447,7 +986,7 @@ def encode_clip(
         thumb_command.extend(["-vf", video_filters])
     thumb_command.append(str(output_thumb))
     # Same input-seek pattern; thumbnail spot-check included in contract test.
-    run_command(thumb_command)
+    run_command(thumb_command, friendly_failure=True)
 
 
 def encode_gif(source_mp4: Path, output_gif: Path, workdir: Path) -> None:
@@ -663,8 +1202,15 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
             source = job["source"]
             source_type = source["type"]
 
+            encode_trim_start = trim_start
+            encode_trim_end = trim_end
             if source_type == "youtube":
-                source_path = download_youtube(source["url"], workdir)
+                source_path, encode_trim_start, encode_trim_end = download_youtube(
+                    source["url"],
+                    workdir,
+                    trim_start=trim_start,
+                    trim_end=trim_end,
+                )
             elif source_type == "file":
                 source_path = Path(source["path"])
             elif source_type == "upload":
@@ -694,8 +1240,8 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
             output_thumb = workdir / "thumbnail.jpg"
             encode_clip(
                 source_path,
-                trim_start,
-                trim_end,
+                encode_trim_start,
+                encode_trim_end,
                 output_mp4,
                 output_thumb,
                 filters=job.get("filters") or [],

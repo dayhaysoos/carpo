@@ -1,8 +1,12 @@
 import { DurableObject } from "cloudflare:workers";
 import { JOB_SECRET_HEADER } from "../src/auth";
 import type { Env } from "../src/env";
-import { applyStatusUpdate } from "../src/jobs";
-import { markGifComplete } from "../src/db";
+import {
+  applyStatusUpdate,
+  classifyEncoderRunResponse,
+  recordEncoderRunOutcome,
+} from "../src/jobs";
+import { markClipDownloadingIfQueued, markGifComplete } from "../src/db";
 import type { EncoderJobSpec, GifEncoderJobSpec } from "../src/types";
 
 const FAKE_MP4 = new Uint8Array([
@@ -80,6 +84,18 @@ export class EncoderStub extends DurableObject<Env> {
       return new Response(null, { status: 204 });
     }
 
+    if (url.pathname === "/__carpo/dispatch") {
+      const job = (await request.json()) as EncoderJobSpec | GifEncoderJobSpec;
+      if ("jobType" in job && job.jobType === "gif") {
+        return Response.json(
+          { status: "failed", errorMessage: "GIF jobs must use /__carpo/gif-run" },
+          { status: 400 },
+        );
+      }
+      void this.runDispatchJob(job as EncoderJobSpec);
+      return new Response(null, { status: 202 });
+    }
+
     if (url.pathname === "/__carpo/gif-run") {
       const job = (await request.json()) as GifEncoderJobSpec;
       return this.handleGifRun(job);
@@ -98,14 +114,28 @@ export class EncoderStub extends DurableObject<Env> {
     }
 
     const encodeJob = job as EncoderJobSpec;
+    if (encodeJob.source.type === "upload") {
+      return this.handleDeferredUploadRun(encodeJob);
+    }
+
+    return this.runYoutubeJob(encodeJob);
+  }
+
+  private async runDispatchJob(job: EncoderJobSpec): Promise<void> {
+    if (job.source.type === "upload") {
+      await this.handleDeferredUploadRun(job);
+      return;
+    }
+    await this.runYoutubeJob(job);
+  }
+
+  private async runYoutubeJob(encodeJob: EncoderJobSpec): Promise<Response> {
+    await markClipDownloadingIfQueued(this.env.DB, encodeJob.jobId);
+
     const authHeaders = {
       "Content-Type": "application/json",
       [JOB_SECRET_HEADER]: encodeJob.callbackSecret,
     };
-
-    if (encodeJob.source.type === "upload") {
-      return this.handleDeferredUploadRun(encodeJob);
-    }
 
     const sourceUrl =
       encodeJob.source.type === "youtube" ? encodeJob.source.url : "";
@@ -165,6 +195,12 @@ export class EncoderStub extends DurableObject<Env> {
     });
 
     if (ambiguousFailure) {
+      const outcome = classifyEncoderRunResponse(
+        false,
+        502,
+        "upstream timeout",
+      );
+      await recordEncoderRunOutcome(this.env, encodeJob.jobId, outcome);
       return new Response("upstream timeout", { status: 502 });
     }
 
@@ -182,6 +218,11 @@ export class EncoderStub extends DurableObject<Env> {
         body: JSON.stringify({ status: "complete" }),
       });
     }
+
+    await recordEncoderRunOutcome(this.env, encodeJob.jobId, {
+      kind: "complete",
+      outputs: encodeJob.outputs,
+    });
 
     return Response.json({
       status: "complete",
@@ -239,6 +280,8 @@ export class EncoderStub extends DurableObject<Env> {
   private async handleDeferredUploadRun(
     job: EncoderJobSpec,
   ): Promise<Response> {
+    await markClipDownloadingIfQueued(this.env.DB, job.jobId);
+
     for (const status of ["downloading", "encoding", "uploading"] as const) {
       await applyStatusUpdate(this.env, job.jobId, status);
     }
@@ -257,13 +300,16 @@ export class EncoderStub extends DurableObject<Env> {
       await this.env.CLIPS_BUCKET.put(job.outputs.mp4Key, FAKE_MP4, {
         httpMetadata: { contentType: "video/mp4" },
       });
-      return Response.json(
-        {
-          status: "failed",
-          errorMessage: "Failed to read encoded thumbnail (simulated)",
-        },
-        { status: 500 },
-      );
+      const result = {
+        status: "failed",
+        errorMessage: "Failed to read encoded thumbnail (simulated)",
+      };
+      await recordEncoderRunOutcome(this.env, job.jobId, {
+        kind: "ok",
+        result,
+        httpOk: false,
+      });
+      return Response.json(result, { status: 500 });
     }
 
     await this.env.CLIPS_BUCKET.put(job.outputs.mp4Key, FAKE_MP4, {
@@ -288,16 +334,17 @@ export class EncoderStub extends DurableObject<Env> {
     }
 
     if (ambiguousFailure) {
-      // Mirror production DO: signal complete after R2 verify, but lose /run
-      // response so the worker marks ambiguous-failed and recovers via the signal.
-      void (async () => {
-        await new Promise((resolve) => setTimeout(resolve, 50));
-        await applyStatusUpdate(this.env, job.jobId, "complete");
-      })();
+      await recordEncoderRunOutcome(this.env, job.jobId, {
+        kind: "complete",
+        outputs: job.outputs,
+      });
       return new Response("upstream timeout", { status: 502 });
     }
 
-    await applyStatusUpdate(this.env, job.jobId, "complete");
+    await recordEncoderRunOutcome(this.env, job.jobId, {
+      kind: "complete",
+      outputs: job.outputs,
+    });
 
     return Response.json({
       status: "complete",

@@ -38,6 +38,106 @@ interface EncoderRunResult {
   };
 }
 
+export type EncoderRunHttpOutcome =
+  | { kind: "ok"; result: EncoderRunResult; httpOk: boolean }
+  | { kind: "http_error"; status: number; body: string }
+  | { kind: "parse_error"; status: number; body: string }
+  | {
+      kind: "complete";
+      outputs: { mp4Key: string; thumbnailKey: string };
+    };
+
+export function classifyEncoderRunResponse(
+  httpOk: boolean,
+  status: number,
+  body: string,
+): EncoderRunHttpOutcome {
+  const parsed = parseEncoderRunResult(body);
+  if (parsed) {
+    return { kind: "ok", result: parsed, httpOk };
+  }
+  if (!httpOk) {
+    return { kind: "http_error", status, body };
+  }
+  return { kind: "parse_error", status, body };
+}
+
+export async function recordEncoderRunOutcome(
+  env: Env,
+  clipId: string,
+  outcome: EncoderRunHttpOutcome,
+): Promise<void> {
+  const outputKeys = outputKeysForClip(clipId);
+
+  if (outcome.kind === "complete") {
+    await markClipComplete(
+      env.DB,
+      clipId,
+      outcome.outputs.mp4Key,
+      outcome.outputs.thumbnailKey,
+    );
+    await cleanupUploadSource(env, clipId);
+    return;
+  }
+
+  if (outcome.kind === "parse_error") {
+    await failClipAmbiguous(
+      env,
+      clipId,
+      `Encoder rejected job: ${outcome.body}`,
+    );
+    return;
+  }
+
+  if (outcome.kind === "http_error") {
+    const parsed = parseEncoderRunResult(outcome.body);
+    if (parsed?.status === "failed") {
+      await failClip(
+        env,
+        clipId,
+        parsed.errorMessage ?? "Encoding failed",
+      );
+      return;
+    }
+    await failClipAmbiguous(
+      env,
+      clipId,
+      `Encoder rejected job: ${outcome.body}`,
+    );
+    return;
+  }
+
+  const result = outcome.result;
+  if (result.status === "failed") {
+    await failClip(env, clipId, result.errorMessage ?? "Encoding failed");
+    return;
+  }
+
+  if (result.status === "complete") {
+    const mp4Key = result.outputs?.mp4Key ?? outputKeys.mp4Key;
+    const thumbnailKey =
+      result.outputs?.thumbnailKey ?? outputKeys.thumbnailKey;
+    await markClipComplete(env.DB, clipId, mp4Key, thumbnailKey);
+    await cleanupUploadSource(env, clipId);
+    return;
+  }
+
+  if (!outcome.httpOk) {
+    await failClipAmbiguous(
+      env,
+      clipId,
+      `Encoder rejected job: ${JSON.stringify(result)}`,
+    );
+    return;
+  }
+
+  await failClipAmbiguous(
+    env,
+    clipId,
+    `Unexpected encoder status: ${result.status ?? "unknown"}`,
+  );
+}
+
 export async function dispatchEncodingJob(
   env: Env,
   clipId: string,
@@ -92,67 +192,23 @@ export async function dispatchEncodingJob(
     const keepAlive = startActivityRenewal(container);
 
     try {
-      // Set before fetch, not after response: a thrown fetch does not prove the
-      // encoder never received /run (the connection may drop after delivery).
-      // Ambiguous failure preserves artifacts and allows late callback recovery.
+      // Hand off to the DO; it returns immediately and runs /run in waitUntil so
+      // terminal status survives worker waitUntil timeouts.
       runPosted = true;
-      const responsePromise = container.fetch("http://encoder/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(jobSpec),
-      });
-      // Optimistic in-progress status: polling stays truthful while /run blocks
-      // even when encoder callbacks never reach the worker.
-      await markClipDownloadingIfQueued(env.DB, clipId);
-      const response = await responsePromise;
-
-      if (!response.ok) {
-        const detail = await response.text();
-        const parsed = parseEncoderRunResult(detail);
-        if (parsed?.status === "failed") {
-          await failClip(
-            env,
-            clipId,
-            parsed.errorMessage ?? "Encoding failed",
-          );
-          return;
-        }
-
-        // Non-JSON or non-failed /run responses are ambiguous; artifacts may exist.
-        await failClipAmbiguous(
-          env,
-          clipId,
-          `Encoder rejected job: ${detail}`,
+      const dispatchResponse = await container.fetch(
+        "http://encoder/__carpo/dispatch",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(jobSpec),
+        },
+      );
+      if (!dispatchResponse.ok) {
+        const detail = await dispatchResponse.text();
+        throw new Error(
+          detail || `Encoder dispatch failed (${dispatchResponse.status})`,
         );
-        return;
       }
-
-      const result = (await response.json()) as EncoderRunResult;
-
-      if (result.status === "failed") {
-        await failClip(
-          env,
-          clipId,
-          result.errorMessage ?? "Encoding failed",
-        );
-        return;
-      }
-
-      if (result.status !== "complete") {
-        await failClipAmbiguous(
-          env,
-          clipId,
-          `Unexpected encoder status: ${result.status ?? "unknown"}`,
-        );
-        return;
-      }
-
-      // Authoritative completion: trust the successful /run body over callbacks.
-      const mp4Key = result.outputs?.mp4Key ?? outputKeys.mp4Key;
-      const thumbnailKey =
-        result.outputs?.thumbnailKey ?? outputKeys.thumbnailKey;
-      await markClipComplete(env.DB, clipId, mp4Key, thumbnailKey);
-      await cleanupUploadSource(env, clipId);
     } finally {
       clearInterval(keepAlive);
       await markContainerJobRunningSafe(container, false);

@@ -145,6 +145,30 @@ export async function markClipFailed(
   return (result.meta.changes ?? 0) > 0;
 }
 
+const STALE_IN_FLIGHT_CEILING_MINUTES = 15;
+
+const STALE_JOB_ERROR_MESSAGE =
+  "Job timed out — no progress update received. Artifacts may be preserved for recovery.";
+
+export async function sweepStaleClips(db: D1Database): Promise<number> {
+  const result = await db
+    .prepare(
+      `UPDATE clips
+       SET status = 'failed',
+           failure_mode = 'ambiguous',
+           error_message = ?,
+           updated_at = datetime('now')
+       WHERE status IN ('queued', 'downloading', 'encoding', 'uploading')
+         AND updated_at < datetime('now', ?)`,
+    )
+    .bind(
+      STALE_JOB_ERROR_MESSAGE,
+      `-${STALE_IN_FLIGHT_CEILING_MINUTES} minutes`,
+    )
+    .run();
+  return result.meta.changes ?? 0;
+}
+
 export async function listClips(
   db: D1Database,
   limit: number,

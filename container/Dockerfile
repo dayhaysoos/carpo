@@ -13,7 +13,7 @@ RUN apt-get update \
 
 WORKDIR /app
 # Bump to force a fresh container image rollout on Cloudflare.
-ARG CARPO_ENCODER_BUILD=slice-5-upload-v3
+ARG CARPO_ENCODER_BUILD=slice-6-youtube-stall-detect-v1
 RUN echo "$CARPO_ENCODER_BUILD" >/app/BUILD_ID
 COPY encoder.py /app/encoder.py
 
