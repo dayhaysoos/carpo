@@ -1,12 +1,14 @@
 import { Container } from "@cloudflare/containers";
 import type { Env } from "./env";
-import { applyStatusUpdate } from "./jobs";
-import { markGifComplete } from "./db";
+import {
+  classifyEncoderRunResponse,
+  failClip,
+  failClipAmbiguous,
+  recordEncoderRunOutcome,
+} from "./jobs";
+import { markClipDownloadingIfQueued, markGifComplete } from "./db";
 import type { EncoderJobSpec, GifEncoderJobSpec } from "./types";
 import { UPLOAD_KEY_PREFIX } from "./uploads";
-
-const COMPLETE_SIGNAL_ATTEMPTS = 3;
-const COMPLETE_SIGNAL_BACKOFF_MS = 500;
 
 const STAGED_UPLOAD_PATH = "/tmp/carpo-upload-source.mp4";
 
@@ -112,9 +114,32 @@ export class EncoderContainer extends Container<Env> {
       return this.handleGifRun(job);
     }
 
+    const clipId = job.jobId;
+    await markClipDownloadingIfQueued(this.env.DB, clipId);
+
+    const runPromise = this.executeClipRun(job);
+    this.ctx.waitUntil(
+      runPromise.catch(async (error) => {
+        const message =
+          error instanceof Error ? error.message : "Unknown encoding error";
+        await failClipAmbiguous(
+          this.env,
+          clipId,
+          `Encoder container error: ${message}`,
+        );
+      }),
+    );
+
+    return runPromise;
+  }
+
+  private async executeClipRun(job: RunJobSpec): Promise<Response> {
+    const clipId = job.jobId;
+
     if (job.source?.type === "upload") {
       const staged = await this.stageUploadSource(job.source.key);
       if (!staged.ok) {
+        await failClip(this.env, clipId, staged.error);
         return Response.json(
           { status: "failed", errorMessage: staged.error },
           { status: 500 },
@@ -137,41 +162,59 @@ export class EncoderContainer extends Container<Env> {
       }),
     );
 
-    let result: { status?: string; errorMessage?: string; outputs?: EncoderJobSpec["outputs"] };
-    try {
-      result = (await response.json()) as typeof result;
-    } catch {
-      return response;
-    }
-
-    if (result.status !== "staged" && result.status !== "complete") {
-      return Response.json(result, { status: response.status });
-    }
-
-    try {
-      await this.uploadDeferredArtifacts(job.outputs);
-    } catch (error) {
-      await this.cleanupDeferredArtifacts(job.outputs);
-      const message =
-        error instanceof Error ? error.message : "Failed to upload encoded artifacts";
-      return Response.json(
-        { status: "failed", errorMessage: message },
-        { status: 500 },
-      );
-    }
-
-    await signalDeferredComplete(this.env, job.jobId);
-
-    return Response.json(
-      {
-        status: "complete",
-        outputs: {
-          mp4Key: job.outputs.mp4Key,
-          thumbnailKey: job.outputs.thumbnailKey,
-        },
-      },
-      { status: 200 },
+    const rawBody = await response.text();
+    const classified = classifyEncoderRunResponse(
+      response.ok,
+      response.status,
+      rawBody,
     );
+
+    if (classified.kind === "ok") {
+      const result = classified.result;
+      if (result.status === "staged" || result.status === "complete") {
+        try {
+          await this.uploadDeferredArtifacts(job.outputs);
+        } catch (error) {
+          await this.cleanupDeferredArtifacts(job.outputs);
+          const message =
+            error instanceof Error
+              ? error.message
+              : "Failed to upload encoded artifacts";
+          await failClip(this.env, clipId, message);
+          return Response.json(
+            { status: "failed", errorMessage: message },
+            { status: 500 },
+          );
+        }
+
+        const terminalOutcome = {
+          kind: "complete" as const,
+          outputs: {
+            mp4Key: job.outputs.mp4Key,
+            thumbnailKey: job.outputs.thumbnailKey,
+          },
+        };
+        this.ctx.waitUntil(recordEncoderRunOutcome(this.env, clipId, terminalOutcome));
+        await recordEncoderRunOutcome(this.env, clipId, terminalOutcome);
+
+        return Response.json(
+          {
+            status: "complete",
+            outputs: terminalOutcome.outputs,
+          },
+          { status: 200 },
+        );
+      }
+    }
+
+    this.ctx.waitUntil(recordEncoderRunOutcome(this.env, clipId, classified));
+    await recordEncoderRunOutcome(this.env, clipId, classified);
+
+    if (classified.kind === "ok") {
+      return Response.json(classified.result, { status: response.status });
+    }
+
+    return new Response(rawBody || null, { status: response.status });
   }
 
   private async stageUploadSource(
@@ -391,31 +434,5 @@ export class EncoderContainer extends Container<Env> {
       this.env.CLIPS_BUCKET.delete(outputs.mp4Key),
       this.env.CLIPS_BUCKET.delete(outputs.thumbnailKey),
     ]);
-  }
-}
-
-/**
- * Best-effort complete signal after deferred artifacts land in R2. Uses
- * applyStatusUpdate directly instead of HTTP to the internal status route
- * because Cloudflare Access blocks container→worker fetches in production and
- * vitest routes DO subrequests to ASSETS. Same recovery semantics as the
- * encoder's authenticated complete callback (ambiguous-failed → complete).
- */
-async function signalDeferredComplete(env: Env, clipId: string): Promise<void> {
-  for (let attempt = 0; attempt < COMPLETE_SIGNAL_ATTEMPTS; attempt += 1) {
-    try {
-      await applyStatusUpdate(env, clipId, "complete");
-      return;
-    } catch (error) {
-      console.warn(
-        `Deferred complete signal attempt ${attempt + 1} failed:`,
-        error instanceof Error ? error.message : error,
-      );
-      if (attempt < COMPLETE_SIGNAL_ATTEMPTS - 1) {
-        await new Promise((resolve) =>
-          setTimeout(resolve, COMPLETE_SIGNAL_BACKOFF_MS * 2 ** attempt),
-        );
-      }
-    }
   }
 }

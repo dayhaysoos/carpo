@@ -4,6 +4,7 @@ import {
   getClipById,
   insertClip,
   listClips,
+  sweepStaleClips,
   markGifEncoding,
   outputKeysForClip,
 } from "./db";
@@ -155,6 +156,7 @@ async function handleListClips(url: URL, env: Env): Promise<Response> {
   );
   const offset = Math.max(parseInt(url.searchParams.get("offset") ?? "", 10) || 0, 0);
 
+  await sweepStaleClips(env.DB);
   const { clips, total } = await listClips(env.DB, limit, offset);
   const prefix = env.R2_PUBLIC_PREFIX;
 

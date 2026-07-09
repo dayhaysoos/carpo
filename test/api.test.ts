@@ -413,7 +413,7 @@ describe("deferred upload artifact staging", () => {
     expect(lastBody.status).toBe("complete");
   });
 
-  it("recovers ambiguous-failed deferred upload jobs via DO complete signal", async () => {
+  it("completes deferred upload jobs from the DO even when /run returns 502", async () => {
     const uploadKey = STUB_DEFERRED_AMBIGUOUS_FAILURE_UPLOAD_KEY;
     await env.CLIPS_BUCKET.put(uploadKey, new Uint8Array([0, 1, 2, 3]), {
       httpMetadata: { contentType: "video/mp4" },
@@ -423,7 +423,7 @@ describe("deferred upload artifact staging", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        title: "deferred ambiguous recovery",
+        title: "deferred DO authority",
         source: { type: "upload", key: uploadKey },
         trimStart: 0,
         trimEnd: 5,
@@ -434,20 +434,6 @@ describe("deferred upload artifact staging", () => {
     const created = (await response.json()) as { id: string };
     const clipId = created.id;
     const keys = outputKeysForClip(clipId);
-
-    let failedRecord: Awaited<ReturnType<typeof getClipById>> = null;
-    for (let attempt = 0; attempt < 40; attempt += 1) {
-      failedRecord = await getClipById(env.DB, clipId);
-      if (failedRecord?.status === "failed") {
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-
-    expect(failedRecord?.status).toBe("failed");
-    expect(failedRecord?.failure_mode).toBe("ambiguous");
-    expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).not.toBeNull();
-    expect(await env.CLIPS_BUCKET.get(keys.thumbnailKey)).not.toBeNull();
 
     let recovered: Awaited<ReturnType<typeof getClipById>> = null;
     for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -2123,5 +2109,91 @@ describe("POST /api/clips/:id/gif", () => {
     expect(await env.CLIPS_BUCKET.get(keys.gifKey)).toBeNull();
     expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).toBeNull();
     expect(await env.CLIPS_BUCKET.get(keys.thumbnailKey)).toBeNull();
+  });
+});
+
+describe("DO-driven terminal status writes", () => {
+  it("reaches complete from the container even when the worker background task is not awaited", async () => {
+    const { response, ctx } = await workerFetchWithoutWaitingForBackground(
+      "http://example.com/api/clips",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: "DO authority without worker wait",
+          source: {
+            type: "youtube",
+            url: STUB_NO_CALLBACKS_SLOW_RUN_URL,
+          },
+          trimStart: 1,
+          trimEnd: 5,
+          filters: [],
+        }),
+      },
+    );
+
+    expect(response.status).toBe(201);
+    const created = (await response.json()) as { id: string };
+    const clipId = created.id;
+    const keys = outputKeysForClip(clipId);
+
+    let persisted: Awaited<ReturnType<typeof getClipById>> = null;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      persisted = await getClipById(env.DB, clipId);
+      if (persisted?.status === "complete") {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    await waitOnExecutionContext(ctx);
+
+    expect(persisted?.status).toBe("complete");
+    expect(persisted?.output_mp4_key).toBe(keys.mp4Key);
+    expect(persisted?.output_thumbnail_key).toBe(keys.thumbnailKey);
+  });
+});
+
+describe("stale in-flight job watchdog", () => {
+  async function ageClipUpdatedAt(clipId: string, minutesAgo: number) {
+    await env.DB.prepare(
+      `UPDATE clips SET updated_at = datetime('now', ?) WHERE id = ?`,
+    )
+      .bind(`-${minutesAgo} minutes`, clipId)
+      .run();
+  }
+
+  it("marks stale in-flight clips failed when listing clips", async () => {
+    const stale = await createYoutubeClip("stale watchdog clip");
+    await ageClipUpdatedAt(stale.clipId, 20);
+    await env.DB.prepare(
+      `UPDATE clips SET status = 'downloading' WHERE id = ?`,
+    )
+      .bind(stale.clipId)
+      .run();
+
+    const list = await workerFetch("http://example.com/api/clips");
+    expect(list.status).toBe(200);
+
+    const persisted = await getClipById(env.DB, stale.clipId);
+    expect(persisted?.status).toBe("failed");
+    expect(persisted?.failure_mode).toBe("ambiguous");
+    expect(persisted?.error_message).toContain("timed out");
+  });
+
+  it("leaves fresh in-flight clips untouched when listing clips", async () => {
+    const fresh = await createYoutubeClip("fresh watchdog clip");
+    await env.DB.prepare(
+      `UPDATE clips SET status = 'encoding' WHERE id = ?`,
+    )
+      .bind(fresh.clipId)
+      .run();
+
+    const list = await workerFetch("http://example.com/api/clips");
+    expect(list.status).toBe(200);
+
+    const persisted = await getClipById(env.DB, fresh.clipId);
+    expect(persisted?.status).toBe("encoding");
+    expect(persisted?.failure_mode).toBeNull();
   });
 });
