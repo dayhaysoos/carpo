@@ -169,12 +169,13 @@ function testImageToolchainSmoke() {
     "deno",
     "--version",
   ]).trim();
-  const versionFull = run("docker", [
+  const verboseProbe = run("docker", [
     "run",
     "--rm",
     imageName,
-    "yt-dlp",
-    "--version-full",
+    "sh",
+    "-c",
+    "yt-dlp -v 2>&1 || true",
   ]).trim();
 
   if (!/^\d{4}\.\d{2}\.\d{2}$/.test(ytdlpVersion)) {
@@ -183,26 +184,27 @@ function testImageToolchainSmoke() {
   if (!denoVersion.startsWith("deno 2.")) {
     throw new Error(`Unexpected deno --version output: ${denoVersion}`);
   }
-  const versionFullLower = versionFull.toLowerCase();
-  if (!versionFullLower.includes("js runtime: deno")) {
+  const verboseLower = verboseProbe.toLowerCase();
+  if (!verboseLower.includes("js runtimes: deno")) {
     throw new Error(
-      `yt-dlp --version-full did not report Deno runtime:\n${versionFull}`,
+      `yt-dlp -v did not report Deno runtime:\n${verboseProbe}`,
     );
   }
-  if (!versionFullLower.includes("yt-dlp-ejs: detected")) {
+  if (!verboseLower.includes("yt_dlp_ejs")) {
     throw new Error(
-      `yt-dlp --version-full did not report yt-dlp-ejs:\n${versionFull}`,
+      `yt-dlp -v did not report yt-dlp-ejs:\n${verboseProbe}`,
     );
   }
 
   console.log("Encoder image toolchain smoke test passed");
   console.log(`  yt-dlp: ${ytdlpVersion}`);
   console.log(`  deno: ${denoVersion.split("\n")[0]}`);
-  console.log(
-    `  runtime: ${versionFull
+  const runtimeLine =
+    verboseProbe
       .split("\n")
-      .find((line) => line.toLowerCase().includes("js runtime"))}`,
-  );
+      .find((line) => line.toLowerCase().includes("js runtimes")) ??
+    "(runtime line not found)";
+  console.log(`  runtime: ${runtimeLine.trim()}`);
 }
 
 function waitForHealth(port: number, attempts = 30) {

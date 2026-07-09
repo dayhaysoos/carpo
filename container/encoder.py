@@ -116,24 +116,6 @@ def log(message: str) -> None:
 def log_ytdlp_environment() -> None:
     """Log yt-dlp version, EJS package, and detected JS runtime at job start."""
     try:
-        completed = subprocess.run(
-            ["yt-dlp", "--version-full"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        log(f"yt-dlp env: failed to probe toolchain ({exc})")
-        return
-
-    output = (completed.stdout or completed.stderr or "").strip()
-    if completed.returncode == 0 and output:
-        for line in output.splitlines():
-            log(f"yt-dlp env: {line}")
-        return
-
-    try:
         version = subprocess.run(
             ["yt-dlp", "--version"],
             capture_output=True,
@@ -143,8 +125,9 @@ def log_ytdlp_environment() -> None:
         )
         if version.stdout.strip():
             log(f"yt-dlp env: version {version.stdout.strip()}")
-    except (OSError, subprocess.TimeoutExpired):
-        pass
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        log(f"yt-dlp env: failed to probe version ({exc})")
+        return
 
     try:
         verbose = subprocess.run(
@@ -154,17 +137,16 @@ def log_ytdlp_environment() -> None:
             timeout=30,
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        log(f"yt-dlp env: failed to probe runtime ({exc})")
         return
 
-    combined = "\n".join(
-        line
-        for line in (verbose.stderr or "").splitlines()
-        if "JS runtimes:" in line or "yt_dlp_ejs" in line
+    combined_output = "\n".join(
+        (verbose.stderr or "").splitlines() + (verbose.stdout or "").splitlines()
     )
-    if combined:
-        for line in combined.splitlines():
-            log(f"yt-dlp env: {line}")
+    for line in combined_output.splitlines():
+        if "JS runtimes:" in line or "yt_dlp_ejs" in line:
+            log(f"yt-dlp env: {line.strip()}")
 
 
 def post_status(
