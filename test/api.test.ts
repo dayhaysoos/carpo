@@ -4,7 +4,8 @@ import {
 } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
-import { getClipById } from "../src/db";
+import { JOB_SECRET_HEADER } from "../src/auth";
+import { getClipById, outputKeysForClip } from "../src/db";
 
 async function workerFetch(
   input: RequestInfo | URL,
@@ -15,6 +16,29 @@ async function workerFetch(
   const response = await exports.default.fetch(request, env, ctx);
   await waitOnExecutionContext(ctx);
   return response;
+}
+
+async function createYoutubeClip(title = "test clip") {
+  const response = await workerFetch("http://example.com/api/clips", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title,
+      source: {
+        type: "youtube",
+        url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      },
+      trimStart: 1,
+      trimEnd: 5,
+      filters: [],
+    }),
+  });
+
+  expect(response.status).toBe(201);
+  const body = (await response.json()) as { id: string };
+  const record = await getClipById(env.DB, body.id);
+  expect(record?.callback_secret).toBeTruthy();
+  return { clipId: body.id, secret: record!.callback_secret };
 }
 
 describe("POST /api/clips", () => {
@@ -89,6 +113,34 @@ describe("POST /api/clips", () => {
     );
   });
 
+  it("rejects upload sources until slice 6", async () => {
+    const response = await workerFetch("http://example.com/api/clips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "upload clip",
+        source: { type: "upload", key: "uploads/some-key.mp4" },
+        trimStart: 0,
+        trimEnd: 5,
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as {
+      error: string;
+      details: Array<{ field: string; message: string }>;
+    };
+    expect(body.error).toBe("Validation failed");
+    expect(body.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: "source.type",
+          message: expect.stringContaining("not supported"),
+        }),
+      ]),
+    );
+  });
+
   it("rejects trim windows longer than the max clip length", async () => {
     const response = await workerFetch("http://example.com/api/clips", {
       method: "POST",
@@ -118,6 +170,126 @@ describe("POST /api/clips", () => {
         }),
       ]),
     );
+  });
+});
+
+describe("internal job callbacks", () => {
+  it("accepts status updates with the job secret and rejects missing or wrong secrets", async () => {
+    const { clipId, secret } = await createYoutubeClip("auth clip");
+
+    const authorized = await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [JOB_SECRET_HEADER]: secret,
+        },
+        body: JSON.stringify({ status: "encoding" }),
+      },
+    );
+    expect(authorized.status).toBe(200);
+    const authorizedBody = (await authorized.json()) as { status: string };
+    expect(authorizedBody.status).toBe("encoding");
+
+    const missingSecret = await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/status`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "uploading" }),
+      },
+    );
+    expect(missingSecret.status).toBe(401);
+
+    const wrongSecret = await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [JOB_SECRET_HEADER]: `${secret}-wrong`,
+        },
+        body: JSON.stringify({ status: "uploading" }),
+      },
+    );
+    expect(wrongSecret.status).toBe(401);
+  });
+
+  it("requires the job secret for artifact uploads", async () => {
+    const { clipId, secret } = await createYoutubeClip("artifact auth clip");
+    const fakeMp4 = new Uint8Array([0x00, 0x00, 0x00, 0x1c]);
+
+    const unauthorized = await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/artifacts/mp4`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "video/mp4" },
+        body: fakeMp4,
+      },
+    );
+    expect(unauthorized.status).toBe(401);
+
+    const authorized = await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/artifacts/mp4`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "video/mp4",
+          [JOB_SECRET_HEADER]: secret,
+        },
+        body: fakeMp4,
+      },
+    );
+    expect(authorized.status).toBe(204);
+  });
+});
+
+describe("failed job artifact cleanup", () => {
+  it("deletes partial artifacts when a job transitions to failed", async () => {
+    const { clipId, secret } = await createYoutubeClip("cleanup clip");
+    const keys = outputKeysForClip(clipId);
+    const fakeMp4 = new Uint8Array([0x00, 0x00, 0x00, 0x1c]);
+
+    const upload = await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/artifacts/mp4`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "video/mp4",
+          [JOB_SECRET_HEADER]: secret,
+        },
+        body: fakeMp4,
+      },
+    );
+    expect(upload.status).toBe(204);
+
+    const beforeFailure = await env.CLIPS_BUCKET.get(keys.mp4Key);
+    expect(beforeFailure).not.toBeNull();
+
+    const fail = await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [JOB_SECRET_HEADER]: secret,
+        },
+        body: JSON.stringify({
+          status: "failed",
+          errorMessage: "thumbnail upload failed",
+        }),
+      },
+    );
+    expect(fail.status).toBe(200);
+
+    const failedClip = await getClipById(env.DB, clipId);
+    expect(failedClip?.status).toBe("failed");
+
+    const mp4After = await env.CLIPS_BUCKET.get(keys.mp4Key);
+    const thumbAfter = await env.CLIPS_BUCKET.get(keys.thumbnailKey);
+    expect(mp4After).toBeNull();
+    expect(thumbAfter).toBeNull();
   });
 });
 

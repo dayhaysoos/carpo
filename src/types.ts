@@ -49,6 +49,7 @@ export interface ClipRecord {
   error_message: string | null;
   output_mp4_key: string | null;
   output_thumbnail_key: string | null;
+  callback_secret: string;
   created_at: string;
   updated_at: string;
 }
@@ -86,15 +87,10 @@ export interface EncoderJobSpec {
     thumbnailKey: string;
   };
   callbackUrl: string;
+  callbackSecret: string;
   artifactUploadUrls: {
     mp4: string;
     thumbnail: string;
-  };
-  r2?: {
-    endpoint: string;
-    bucket: string;
-    accessKeyId: string;
-    secretAccessKey: string;
   };
 }
 

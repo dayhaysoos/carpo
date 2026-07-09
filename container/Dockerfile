@@ -7,7 +7,7 @@ RUN apt-get update \
     ffmpeg \
     python3 \
     python3-pip \
-  && pip3 install --no-cache-dir --break-system-packages yt-dlp boto3 \
+  && pip3 install --no-cache-dir --break-system-packages yt-dlp \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

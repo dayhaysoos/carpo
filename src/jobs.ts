@@ -1,4 +1,7 @@
 import {
+  deleteClipArtifacts,
+  getClipById,
+  insertClip,
   markClipComplete,
   markClipFailed,
   outputKeysForClip,
@@ -15,6 +18,11 @@ export async function dispatchEncodingJob(
   request: CreateClipRequest,
   workerOrigin: string,
 ): Promise<void> {
+  const record = await getClipById(env.DB, clipId);
+  if (!record) {
+    throw new Error(`Clip ${clipId} not found for encoding dispatch`);
+  }
+
   const container = env.ENCODER_CONTAINER.getByName(clipId);
   const outputKeys = outputKeysForClip(clipId);
   const workerBaseUrl = workerOrigin || env.WORKER_BASE_URL || "http://localhost:8787";
@@ -30,20 +38,12 @@ export async function dispatchEncodingJob(
     maxClipLengthSeconds: Number(env.MAX_CLIP_LENGTH_SECONDS) || 60,
     outputs: outputKeys,
     callbackUrl,
+    callbackSecret: record.callback_secret,
     artifactUploadUrls: {
       mp4: `${workerBaseUrl}/api/internal/jobs/${clipId}/artifacts/mp4`,
       thumbnail: `${workerBaseUrl}/api/internal/jobs/${clipId}/artifacts/thumbnail`,
     },
   };
-
-  if (env.R2_ENDPOINT && env.R2_ACCESS_KEY_ID && env.R2_SECRET_ACCESS_KEY) {
-    jobSpec.r2 = {
-      endpoint: env.R2_ENDPOINT,
-      bucket: env.R2_BUCKET_NAME ?? "carpo-clips",
-      accessKeyId: env.R2_ACCESS_KEY_ID,
-      secretAccessKey: env.R2_SECRET_ACCESS_KEY,
-    };
-  }
 
   try {
     await container.fetch("http://encoder/__carpo/start", { method: "POST" });
@@ -59,7 +59,7 @@ export async function dispatchEncodingJob(
 
       if (!response.ok) {
         const detail = await response.text();
-        await markClipFailed(env.DB, clipId, `Encoder rejected job: ${detail}`);
+        await failClip(env, clipId, `Encoder rejected job: ${detail}`);
         return;
       }
 
@@ -69,8 +69,8 @@ export async function dispatchEncodingJob(
       };
 
       if (result.status === "failed") {
-        await markClipFailed(
-          env.DB,
+        await failClip(
+          env,
           clipId,
           result.errorMessage ?? "Encoding failed",
         );
@@ -90,8 +90,17 @@ export async function dispatchEncodingJob(
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Unknown encoding error";
-    await markClipFailed(env.DB, clipId, message);
+    await failClip(env, clipId, message);
   }
+}
+
+export async function failClip(
+  env: Env,
+  clipId: string,
+  errorMessage: string,
+): Promise<void> {
+  await deleteClipArtifacts(env.CLIPS_BUCKET, clipId);
+  await markClipFailed(env.DB, clipId, errorMessage);
 }
 
 export async function applyStatusUpdate(
@@ -107,7 +116,7 @@ export async function applyStatusUpdate(
   }
 
   if (status === "failed") {
-    await markClipFailed(env.DB, clipId, errorMessage ?? "Encoding failed");
+    await failClip(env, clipId, errorMessage ?? "Encoding failed");
     return;
   }
 

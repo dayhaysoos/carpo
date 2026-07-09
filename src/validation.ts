@@ -49,14 +49,14 @@ export function validateCreateClipRequest(
         });
       }
     } else if (sourceType === "upload") {
-      const key = typeof sourceObj.key === "string" ? sourceObj.key.trim() : "";
-      if (!key) {
-        errors.push({ field: "source.key", message: "Upload key is required" });
-      }
+      errors.push({
+        field: "source.type",
+        message: "Upload sources are not supported yet; use a YouTube URL",
+      });
     } else {
       errors.push({
         field: "source.type",
-        message: "Source type must be 'youtube' or 'upload'",
+        message: "Source type must be 'youtube'",
       });
     }
   }
@@ -105,10 +105,10 @@ export function validateCreateClipRequest(
   }
 
   const sourceObj = source as Record<string, unknown>;
-  const parsedSource =
-    sourceObj.type === "youtube"
-      ? { type: "youtube" as const, url: (sourceObj.url as string).trim() }
-      : { type: "upload" as const, key: (sourceObj.key as string).trim() };
+  const parsedSource = {
+    type: "youtube" as const,
+    url: (sourceObj.url as string).trim(),
+  };
 
   return {
     ok: true,

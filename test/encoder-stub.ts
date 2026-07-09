@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { JOB_SECRET_HEADER } from "../src/auth";
 import type { Env } from "../src/env";
 import type { EncoderJobSpec } from "../src/types";
 
@@ -34,6 +35,10 @@ export class EncoderStub extends DurableObject<Env> {
     }
 
     const job = (await request.json()) as EncoderJobSpec;
+    const authHeaders = {
+      "Content-Type": "application/json",
+      [JOB_SECRET_HEADER]: job.callbackSecret,
+    };
 
     for (const status of ["downloading", "encoding", "uploading"] as const) {
       const callbackTarget = job.callbackUrl.startsWith("http")
@@ -41,7 +46,7 @@ export class EncoderStub extends DurableObject<Env> {
         : `http://example.com${job.callbackUrl}`;
       await fetch(callbackTarget, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders,
         body: JSON.stringify({ status }),
       });
     }
@@ -51,6 +56,15 @@ export class EncoderStub extends DurableObject<Env> {
     });
     await this.env.CLIPS_BUCKET.put(job.outputs.thumbnailKey, FAKE_JPEG, {
       httpMetadata: { contentType: "image/jpeg" },
+    });
+
+    const callbackTarget = job.callbackUrl.startsWith("http")
+      ? job.callbackUrl
+      : `http://example.com${job.callbackUrl}`;
+    await fetch(callbackTarget, {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({ status: "complete" }),
     });
 
     return Response.json({ status: "complete" });

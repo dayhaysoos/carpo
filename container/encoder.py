@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -20,29 +21,58 @@ from typing import Any
 MAX_CLIP_LENGTH_SECONDS = 60
 HOST = "0.0.0.0"
 PORT = int(os.environ.get("PORT", "8080"))
+JOB_SECRET_HEADER = "X-Carpo-Job-Secret"
+MAX_CALLBACK_ATTEMPTS = 5
+INITIAL_CALLBACK_BACKOFF_SECONDS = 0.5
 
 
 def log(message: str) -> None:
     print(message, flush=True)
 
 
-def post_status(callback_url: str, status: str, error_message: str | None = None) -> None:
+def post_status(
+    callback_url: str,
+    status: str,
+    error_message: str | None = None,
+    *,
+    secret: str | None = None,
+    required: bool = False,
+) -> None:
     payload: dict[str, Any] = {"status": status}
     if error_message is not None:
         payload["errorMessage"] = error_message
 
     data = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(
-        callback_url,
-        data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            response.read()
-    except urllib.error.URLError as exc:
-        log(f"status callback failed ({status}): {exc}")
+    headers = {"Content-Type": "application/json"}
+    if secret:
+        headers[JOB_SECRET_HEADER] = secret
+
+    last_error: urllib.error.URLError | None = None
+    for attempt in range(MAX_CALLBACK_ATTEMPTS):
+        request = urllib.request.Request(
+            callback_url,
+            data=data,
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                response.read()
+            return
+        except urllib.error.URLError as exc:
+            last_error = exc
+            log(
+                f"status callback failed ({status}) attempt {attempt + 1}: {exc}",
+            )
+            if attempt < MAX_CALLBACK_ATTEMPTS - 1:
+                time.sleep(INITIAL_CALLBACK_BACKOFF_SECONDS * (2**attempt))
+
+    if required:
+        message = str(last_error) if last_error else "unknown callback error"
+        raise RuntimeError(
+            f"Required status callback ({status}) failed after "
+            f"{MAX_CALLBACK_ATTEMPTS} attempts: {message}",
+        )
 
 
 def validate_job(job: dict[str, Any]) -> str | None:
@@ -73,9 +103,7 @@ def validate_job(job: dict[str, Any]) -> str | None:
         if not isinstance(path, str) or not Path(path).exists():
             return "Local file path is required for file source"
     elif source_type == "upload":
-        key = source.get("key")
-        if not isinstance(key, str) or not key.strip():
-            return "Upload key is required"
+        return "Upload sources are not supported in slice 1"
     else:
         return "source.type must be youtube, upload, or file"
 
@@ -159,65 +187,43 @@ def encode_clip(source: Path, trim_start: float, trim_end: float, output_mp4: Pa
     )
 
 
-def upload_file(upload_url: str, local_path: Path, content_type: str) -> None:
+def upload_file(
+    upload_url: str,
+    local_path: Path,
+    content_type: str,
+    *,
+    secret: str | None = None,
+) -> None:
     with local_path.open("rb") as handle:
         data = handle.read()
+    headers = {"Content-Type": content_type}
+    if secret:
+        headers[JOB_SECRET_HEADER] = secret
     request = urllib.request.Request(
         upload_url,
         data=data,
-        headers={"Content-Type": content_type},
+        headers=headers,
         method="PUT",
     )
     with urllib.request.urlopen(request, timeout=120) as response:
         response.read()
 
 
-def upload_artifacts(job: dict[str, Any], mp4_path: Path, thumb_path: Path) -> None:
+def upload_artifacts(
+    job: dict[str, Any],
+    mp4_path: Path,
+    thumb_path: Path,
+    *,
+    secret: str | None = None,
+) -> None:
     upload_urls = job.get("artifactUploadUrls", {})
     mp4_url = upload_urls.get("mp4")
     thumb_url = upload_urls.get("thumbnail")
-    if mp4_url and thumb_url:
-        upload_file(mp4_url, mp4_path, "video/mp4")
-        upload_file(thumb_url, thumb_path, "image/jpeg")
-        return
+    if not mp4_url or not thumb_url:
+        raise RuntimeError("Artifact upload URLs are not configured")
 
-    r2 = job.get("r2", {})
-    if all(
-        [
-            r2.get("endpoint"),
-            r2.get("bucket"),
-            r2.get("accessKeyId"),
-            r2.get("secretAccessKey"),
-        ]
-    ):
-        outputs = job.get("outputs", {})
-        upload_to_r2(job, mp4_path, outputs.get("mp4Key", "clip.mp4"))
-        upload_to_r2(job, thumb_path, outputs.get("thumbnailKey", "thumbnail.jpg"))
-        return
-
-    raise RuntimeError("No artifact upload destination configured")
-
-
-def upload_to_r2(job: dict[str, Any], local_path: Path, object_key: str) -> None:
-    r2 = job.get("r2", {})
-    endpoint = r2.get("endpoint")
-    bucket = r2.get("bucket")
-    access_key = r2.get("accessKeyId")
-    secret_key = r2.get("secretAccessKey")
-
-    if not all([endpoint, bucket, access_key, secret_key]):
-        raise RuntimeError("R2 credentials are not configured")
-
-    import boto3
-
-    client = boto3.client(
-        "s3",
-        endpoint_url=endpoint,
-        aws_access_key_id=access_key,
-        aws_secret_access_key=secret_key,
-        region_name="auto",
-    )
-    client.upload_file(str(local_path), bucket, object_key)
+    upload_file(mp4_url, mp4_path, "video/mp4", secret=secret)
+    upload_file(thumb_url, thumb_path, "image/jpeg", secret=secret)
 
 
 def copy_outputs_locally(job: dict[str, Any], mp4_path: Path, thumb_path: Path) -> None:
@@ -238,11 +244,9 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
         return {"status": "failed", "errorMessage": error}
 
     callback_url = job.get("callbackUrl")
+    callback_secret = job.get("callbackSecret")
     trim_start = float(job["trimStart"])
     trim_end = float(job["trimEnd"])
-    outputs = job.get("outputs", {})
-    mp4_key = outputs.get("mp4Key", "clip.mp4")
-    thumb_key = outputs.get("thumbnailKey", "thumbnail.jpg")
 
     with tempfile.TemporaryDirectory(prefix="carpo-encode-") as tmp:
         workdir = Path(tmp)
@@ -250,7 +254,11 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
 
         try:
             if callback_url:
-                post_status(callback_url, "downloading")
+                post_status(
+                    callback_url,
+                    "downloading",
+                    secret=callback_secret,
+                )
 
             source = job["source"]
             source_type = source["type"]
@@ -265,25 +273,55 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
                 raise RuntimeError(f"Unsupported source type: {source_type}")
 
             if callback_url:
-                post_status(callback_url, "encoding")
+                post_status(
+                    callback_url,
+                    "encoding",
+                    secret=callback_secret,
+                )
 
             output_mp4 = workdir / "clip.mp4"
             output_thumb = workdir / "thumbnail.jpg"
             encode_clip(source_path, trim_start, trim_end, output_mp4, output_thumb)
 
             if callback_url:
-                post_status(callback_url, "uploading")
+                post_status(
+                    callback_url,
+                    "uploading",
+                    secret=callback_secret,
+                )
 
             if job.get("localOutputDir"):
                 copy_outputs_locally(job, output_mp4, output_thumb)
             else:
-                upload_artifacts(job, output_mp4, output_thumb)
+                upload_artifacts(
+                    job,
+                    output_mp4,
+                    output_thumb,
+                    secret=callback_secret,
+                )
+
+            if callback_url:
+                post_status(
+                    callback_url,
+                    "complete",
+                    secret=callback_secret,
+                    required=True,
+                )
 
             return {"status": "complete"}
         except Exception as exc:  # noqa: BLE001 - report encoder failures to caller
             message = str(exc) or "Encoding failed"
             if callback_url:
-                post_status(callback_url, "failed", message)
+                try:
+                    post_status(
+                        callback_url,
+                        "failed",
+                        message,
+                        secret=callback_secret,
+                        required=True,
+                    )
+                except RuntimeError:
+                    pass
             return {"status": "failed", "errorMessage": message}
 
 

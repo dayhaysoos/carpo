@@ -1,4 +1,5 @@
 import type { ClipRecord, ClipStatus, CreateClipRequest } from "./types";
+import { generateCallbackSecret } from "./auth";
 
 export async function insertClip(
   db: D1Database,
@@ -9,13 +10,14 @@ export async function insertClip(
   const sourceRef =
     request.source.type === "youtube" ? request.source.url : request.source.key;
   const filtersJson = JSON.stringify(request.filters ?? []);
+  const callbackSecret = generateCallbackSecret();
 
   await db
     .prepare(
       `INSERT INTO clips (
         id, title, source_type, source_ref, trim_start, trim_end,
-        caption, filters_json, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued')`,
+        caption, filters_json, status, callback_secret
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)`,
     )
     .bind(
       id,
@@ -26,6 +28,7 @@ export async function insertClip(
       request.trimEnd,
       request.caption ?? null,
       filtersJson,
+      callbackSecret,
     )
     .run();
 
@@ -88,6 +91,17 @@ export async function markClipFailed(
   errorMessage: string,
 ): Promise<void> {
   await updateClipStatus(db, id, "failed", errorMessage);
+}
+
+export async function deleteClipArtifacts(
+  bucket: R2Bucket,
+  clipId: string,
+): Promise<void> {
+  const keys = outputKeysForClip(clipId);
+  await Promise.all([
+    bucket.delete(keys.mp4Key),
+    bucket.delete(keys.thumbnailKey),
+  ]);
 }
 
 export function outputKeysForClip(clipId: string): {

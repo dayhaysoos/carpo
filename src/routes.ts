@@ -1,8 +1,9 @@
 import { getClipById, insertClip, outputKeysForClip } from "./db";
 import type { Env } from "./env";
+import { JOB_SECRET_HEADER, verifyJobSecret } from "./auth";
 import { applyStatusUpdate, dispatchEncodingJob } from "./jobs";
 import { recordToResponse } from "./serialize";
-import type { ClipStatus } from "./types";
+import type { ClipRecord, ClipStatus } from "./types";
 import { validateCreateClipRequest } from "./validation";
 
 export async function handleRequest(
@@ -110,6 +111,11 @@ async function handleInternalArtifactUpload(
     return json({ error: "Clip not found" }, 404);
   }
 
+  const authError = verifyInternalJobAuth(request, record);
+  if (authError) {
+    return authError;
+  }
+
   const keys = outputKeysForClip(clipId);
   const objectKey = artifactType === "mp4" ? keys.mp4Key : keys.thumbnailKey;
   const contentType =
@@ -146,6 +152,11 @@ async function handleInternalStatusUpdate(
     return json({ error: "Clip not found" }, 404);
   }
 
+  const authError = verifyInternalJobAuth(request, record);
+  if (authError) {
+    return authError;
+  }
+
   await applyStatusUpdate(env, clipId, body.status, body.errorMessage ?? null);
   const updated = await getClipById(env.DB, clipId);
   return json(recordToResponse(updated!, env.R2_PUBLIC_PREFIX));
@@ -163,6 +174,17 @@ async function handleArtifactRequest(key: string, env: Env): Promise<Response> {
   headers.set("cache-control", "public, max-age=31536000, immutable");
 
   return new Response(object.body, { headers });
+}
+
+function verifyInternalJobAuth(
+  request: Request,
+  record: ClipRecord,
+): Response | null {
+  const provided = request.headers.get(JOB_SECRET_HEADER);
+  if (!verifyJobSecret(provided, record.callback_secret)) {
+    return json({ error: "Unauthorized" }, 401);
+  }
+  return null;
 }
 
 function json(data: unknown, status = 200): Response {
