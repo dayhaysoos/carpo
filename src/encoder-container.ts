@@ -1,7 +1,11 @@
 import { Container } from "@cloudflare/containers";
 import type { Env } from "./env";
+import { applyStatusUpdate } from "./jobs";
 import type { EncoderJobSpec } from "./types";
 import { UPLOAD_KEY_PREFIX } from "./uploads";
+
+const COMPLETE_SIGNAL_ATTEMPTS = 3;
+const COMPLETE_SIGNAL_BACKOFF_MS = 500;
 
 const STAGED_UPLOAD_PATH = "/tmp/carpo-upload-source.mp4";
 
@@ -136,6 +140,8 @@ export class EncoderContainer extends Container<Env> {
       );
     }
 
+    await signalDeferredComplete(this.env, job.jobId);
+
     return Response.json(
       {
         status: "complete",
@@ -235,5 +241,31 @@ export class EncoderContainer extends Container<Env> {
       this.env.CLIPS_BUCKET.delete(outputs.mp4Key),
       this.env.CLIPS_BUCKET.delete(outputs.thumbnailKey),
     ]);
+  }
+}
+
+/**
+ * Best-effort complete signal after deferred artifacts land in R2. Uses
+ * applyStatusUpdate directly instead of HTTP to the internal status route
+ * because Cloudflare Access blocks container→worker fetches in production and
+ * vitest routes DO subrequests to ASSETS. Same recovery semantics as the
+ * encoder's authenticated complete callback (ambiguous-failed → complete).
+ */
+async function signalDeferredComplete(env: Env, clipId: string): Promise<void> {
+  for (let attempt = 0; attempt < COMPLETE_SIGNAL_ATTEMPTS; attempt += 1) {
+    try {
+      await applyStatusUpdate(env, clipId, "complete");
+      return;
+    } catch (error) {
+      console.warn(
+        `Deferred complete signal attempt ${attempt + 1} failed:`,
+        error instanceof Error ? error.message : error,
+      );
+      if (attempt < COMPLETE_SIGNAL_ATTEMPTS - 1) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, COMPLETE_SIGNAL_BACKOFF_MS * 2 ** attempt),
+        );
+      }
+    }
   }
 }

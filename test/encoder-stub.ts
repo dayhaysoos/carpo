@@ -27,6 +27,8 @@ export const STUB_DEFERRED_COPY_FAILURE_UPLOAD_KEY =
   "uploads/stub-deferred-copy-failure.mp4";
 export const STUB_DEFERRED_SLOW_UPLOAD_KEY =
   "uploads/stub-deferred-slow-upload.mp4";
+export const STUB_DEFERRED_AMBIGUOUS_FAILURE_UPLOAD_KEY =
+  "uploads/stub-deferred-ambiguous-failure.mp4";
 
 /**
  * Test double for the encoder container binding.
@@ -174,6 +176,9 @@ export class EncoderStub extends DurableObject<Env> {
     }
 
     const copyFailure = job.source.key.includes("stub-deferred-copy-failure");
+    const ambiguousFailure = job.source.key.includes(
+      "stub-deferred-ambiguous-failure",
+    );
 
     if (copyFailure) {
       await this.env.CLIPS_BUCKET.put(job.outputs.mp4Key, FAKE_MP4, {
@@ -208,6 +213,18 @@ export class EncoderStub extends DurableObject<Env> {
         { status: 500 },
       );
     }
+
+    if (ambiguousFailure) {
+      // Mirror production DO: signal complete after R2 verify, but lose /run
+      // response so the worker marks ambiguous-failed and recovers via the signal.
+      void (async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        await applyStatusUpdate(this.env, job.jobId, "complete");
+      })();
+      return new Response("upstream timeout", { status: 502 });
+    }
+
+    await applyStatusUpdate(this.env, job.jobId, "complete");
 
     return Response.json({
       status: "complete",

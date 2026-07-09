@@ -11,6 +11,7 @@ import {
   STUB_AMBIGUOUS_FAILURE_URL,
   STUB_CONTAINER_START_FAILURE_URL,
   STUB_DEFERRED_COPY_FAILURE_UPLOAD_KEY,
+  STUB_DEFERRED_AMBIGUOUS_FAILURE_UPLOAD_KEY,
   STUB_DEFERRED_SLOW_UPLOAD_KEY,
   STUB_NO_CALLBACKS_SLOW_RUN_URL,
   STUB_SKIP_COMPLETE_CALLBACK_URL,
@@ -409,6 +410,58 @@ describe("deferred upload artifact staging", () => {
 
     expect(seenStatuses.has("uploading")).toBe(true);
     expect(lastBody.status).toBe("complete");
+  });
+
+  it("recovers ambiguous-failed deferred upload jobs via DO complete signal", async () => {
+    const uploadKey = STUB_DEFERRED_AMBIGUOUS_FAILURE_UPLOAD_KEY;
+    await env.CLIPS_BUCKET.put(uploadKey, new Uint8Array([0, 1, 2, 3]), {
+      httpMetadata: { contentType: "video/mp4" },
+    });
+
+    const response = await workerFetch("http://example.com/api/clips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "deferred ambiguous recovery",
+        source: { type: "upload", key: uploadKey },
+        trimStart: 0,
+        trimEnd: 5,
+        filters: [],
+      }),
+    });
+    expect(response.status).toBe(201);
+    const created = (await response.json()) as { id: string };
+    const clipId = created.id;
+    const keys = outputKeysForClip(clipId);
+
+    let failedRecord: Awaited<ReturnType<typeof getClipById>> = null;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      failedRecord = await getClipById(env.DB, clipId);
+      if (failedRecord?.status === "failed") {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    expect(failedRecord?.status).toBe("failed");
+    expect(failedRecord?.failure_mode).toBe("ambiguous");
+    expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).not.toBeNull();
+    expect(await env.CLIPS_BUCKET.get(keys.thumbnailKey)).not.toBeNull();
+
+    let recovered: Awaited<ReturnType<typeof getClipById>> = null;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      recovered = await getClipById(env.DB, clipId);
+      if (recovered?.status === "complete") {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    expect(recovered?.status).toBe("complete");
+    expect(recovered?.failure_mode).toBeNull();
+    expect(recovered?.output_mp4_key).toBe(keys.mp4Key);
+    expect(recovered?.output_thumbnail_key).toBe(keys.thumbnailKey);
+    expect(await env.CLIPS_BUCKET.get(uploadKey)).toBeNull();
   });
 });
 
