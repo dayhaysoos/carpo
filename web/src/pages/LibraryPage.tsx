@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { deleteClip, listClips } from "../api";
+import { deleteClip, listClips, requestGifExport } from "../api";
 import { CLIPS_QUERY_KEY } from "../queries";
 import { isTerminalStatus, statusLabel } from "../status";
 import type { ClipResponse } from "../types";
@@ -50,6 +50,11 @@ function ClipModal({ clip, onClose }: ClipModalProps) {
           <a href={clip.outputs.mp4} download className="btn-secondary">
             Download MP4
           </a>
+          {clip.outputs.gif && (
+            <a href={clip.outputs.gif} download className="btn-secondary">
+              Download GIF
+            </a>
+          )}
         </div>
       </div>
     </div>
@@ -61,9 +66,18 @@ interface LibraryCardProps {
   onPlay: (clip: ClipResponse) => void;
   onDelete: (clip: ClipResponse) => void;
   deleting: boolean;
+  onRequestGif: (clip: ClipResponse) => void;
+  gifExporting: boolean;
 }
 
-function LibraryCard({ clip, onPlay, onDelete, deleting }: LibraryCardProps) {
+function LibraryCard({
+  clip,
+  onPlay,
+  onDelete,
+  deleting,
+  onRequestGif,
+  gifExporting,
+}: LibraryCardProps) {
   const isComplete = clip.status === "complete";
   const showStatus = !isComplete;
 
@@ -98,6 +112,10 @@ function LibraryCard({ clip, onPlay, onDelete, deleting }: LibraryCardProps) {
           <p className="job-error">{clip.errorMessage}</p>
         )}
 
+        {clip.gifStatus === "failed" && clip.gifErrorMessage && (
+          <p className="job-error">{clip.gifErrorMessage}</p>
+        )}
+
         <div className="library-card-actions">
           {isComplete && clip.outputs.mp4 && (
             <>
@@ -111,6 +129,23 @@ function LibraryCard({ clip, onPlay, onDelete, deleting }: LibraryCardProps) {
               <a href={clip.outputs.mp4} download className="btn-secondary">
                 Download
               </a>
+              {clip.outputs.gif ? (
+                <a href={clip.outputs.gif} download className="btn-secondary">
+                  GIF
+                </a>
+              ) : clip.gifStatus === "encoding" || gifExporting ? (
+                <button type="button" className="btn-secondary" disabled>
+                  GIF…
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => onRequestGif(clip)}
+                >
+                  {clip.gifStatus === "failed" ? "Retry GIF" : "GIF"}
+                </button>
+              )}
             </>
           )}
           <button
@@ -131,6 +166,7 @@ export function LibraryPage() {
   const queryClient = useQueryClient();
   const [playingClip, setPlayingClip] = useState<ClipResponse | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ClipResponse | null>(null);
+  const [gifExportClipId, setGifExportClipId] = useState<string | null>(null);
 
   const { data, error, isLoading } = useQuery({
     queryKey: CLIPS_QUERY_KEY,
@@ -138,7 +174,8 @@ export function LibraryPage() {
     refetchInterval: (query) => {
       const clips = query.state.data?.clips ?? [];
       const hasInFlight = clips.some((clip) => !isTerminalStatus(clip.status));
-      return hasInFlight ? 2000 : false;
+      const hasGifEncoding = clips.some((clip) => clip.gifStatus === "encoding");
+      return hasInFlight || hasGifEncoding ? 2000 : false;
     },
   });
 
@@ -150,6 +187,23 @@ export function LibraryPage() {
       void queryClient.invalidateQueries({ queryKey: CLIPS_QUERY_KEY });
     },
   });
+
+  const gifMutation = useMutation({
+    mutationFn: requestGifExport,
+    onMutate: (clipId) => {
+      setGifExportClipId(clipId);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: CLIPS_QUERY_KEY });
+    },
+    onSettled: () => {
+      setGifExportClipId(null);
+    },
+  });
+
+  const handleRequestGif = (clip: ClipResponse) => {
+    gifMutation.mutate(clip.id);
+  };
 
   const handleConfirmDelete = () => {
     if (!pendingDelete) return;
@@ -190,12 +244,20 @@ export function LibraryPage() {
                 clip={clip}
                 onPlay={setPlayingClip}
                 onDelete={setPendingDelete}
+                onRequestGif={handleRequestGif}
                 deleting={
                   deleteMutation.isPending && pendingDelete?.id === clip.id
+                }
+                gifExporting={
+                  (gifMutation.isPending && gifExportClipId === clip.id) ||
+                  clip.gifStatus === "encoding"
                 }
               />
             ))}
           </div>
+        )}
+        {gifMutation.error && (
+          <p className="form-error">{gifMutation.error.message}</p>
         )}
       </section>
 

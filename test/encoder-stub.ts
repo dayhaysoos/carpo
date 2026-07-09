@@ -2,7 +2,8 @@ import { DurableObject } from "cloudflare:workers";
 import { JOB_SECRET_HEADER } from "../src/auth";
 import type { Env } from "../src/env";
 import { applyStatusUpdate } from "../src/jobs";
-import type { EncoderJobSpec } from "../src/types";
+import { markGifComplete } from "../src/db";
+import type { EncoderJobSpec, GifEncoderJobSpec } from "../src/types";
 
 const FAKE_MP4 = new Uint8Array([
   0x00, 0x00, 0x00, 0x1c, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d,
@@ -11,6 +12,18 @@ const FAKE_MP4 = new Uint8Array([
 ]);
 
 const FAKE_JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+
+const FAKE_GIF = new Uint8Array([
+  0x47, 0x49, 0x46, 0x38, 0x39, 0x61,
+  0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 0x00,
+  0xff, 0xff, 0xff, 0x00, 0x00, 0x00,
+  0x21, 0xff, 0x0b, 0x4e, 0x45, 0x54, 0x53, 0x43, 0x41, 0x50, 0x45, 0x32, 0x2e, 0x30,
+  0x03, 0x01, 0x00, 0x00, 0x00,
+  0x3b,
+]);
+
+/** Upload MP4 keys that make the GIF stub fail for API seam tests. */
+export const STUB_GIF_FAILURE_MP4_KEY = "clips/stub-gif-failure/clip.mp4";
 
 /** Test-only YouTube URLs that drive EncoderStub behavior in API seam tests. */
 export const STUB_SKIP_COMPLETE_CALLBACK_URL =
@@ -71,18 +84,23 @@ export class EncoderStub extends DurableObject<Env> {
       return new Response("not found", { status: 404 });
     }
 
-    const job = (await request.json()) as EncoderJobSpec;
+    const job = (await request.json()) as EncoderJobSpec | GifEncoderJobSpec;
+    if ("jobType" in job && job.jobType === "gif") {
+      return this.handleGifRun(job);
+    }
+
+    const encodeJob = job as EncoderJobSpec;
     const authHeaders = {
       "Content-Type": "application/json",
-      [JOB_SECRET_HEADER]: job.callbackSecret,
+      [JOB_SECRET_HEADER]: encodeJob.callbackSecret,
     };
 
-    if (job.source.type === "upload") {
-      return this.handleDeferredUploadRun(job);
+    if (encodeJob.source.type === "upload") {
+      return this.handleDeferredUploadRun(encodeJob);
     }
 
     const sourceUrl =
-      job.source.type === "youtube" ? job.source.url : "";
+      encodeJob.source.type === "youtube" ? encodeJob.source.url : "";
     const skipCompleteCallback = sourceUrl.includes(
       "stub-skip-complete-callback",
     );
@@ -92,20 +110,20 @@ export class EncoderStub extends DurableObject<Env> {
 
     if (verifyWorkerBaseUrl) {
       const base = this.env.WORKER_BASE_URL ?? "http://localhost:8787";
-      const expectedCallback = `${base}/api/internal/jobs/${job.jobId}/status`;
-      const expectedMp4 = `${base}/api/internal/jobs/${job.jobId}/artifacts/mp4`;
-      const expectedThumb = `${base}/api/internal/jobs/${job.jobId}/artifacts/thumbnail`;
+      const expectedCallback = `${base}/api/internal/jobs/${encodeJob.jobId}/status`;
+      const expectedMp4 = `${base}/api/internal/jobs/${encodeJob.jobId}/artifacts/mp4`;
+      const expectedThumb = `${base}/api/internal/jobs/${encodeJob.jobId}/artifacts/thumbnail`;
       if (
-        job.callbackUrl !== expectedCallback ||
-        job.artifactUploadUrls.mp4 !== expectedMp4 ||
-        job.artifactUploadUrls.thumbnail !== expectedThumb
+        encodeJob.callbackUrl !== expectedCallback ||
+        encodeJob.artifactUploadUrls.mp4 !== expectedMp4 ||
+        encodeJob.artifactUploadUrls.thumbnail !== expectedThumb
       ) {
         return new Response(
           JSON.stringify({
             error: "WORKER_BASE_URL mismatch",
             got: {
-              callbackUrl: job.callbackUrl,
-              artifactUploadUrls: job.artifactUploadUrls,
+              callbackUrl: encodeJob.callbackUrl,
+              artifactUploadUrls: encodeJob.artifactUploadUrls,
             },
             expected: {
               callbackUrl: expectedCallback,
@@ -120,9 +138,9 @@ export class EncoderStub extends DurableObject<Env> {
 
     if (!noCallbacksSlowRun) {
       for (const status of ["downloading", "encoding", "uploading"] as const) {
-        const callbackTarget = job.callbackUrl.startsWith("http")
-          ? job.callbackUrl
-          : `http://example.com${job.callbackUrl}`;
+        const callbackTarget = encodeJob.callbackUrl.startsWith("http")
+          ? encodeJob.callbackUrl
+          : `http://example.com${encodeJob.callbackUrl}`;
         await fetch(callbackTarget, {
           method: "POST",
           headers: authHeaders,
@@ -131,10 +149,10 @@ export class EncoderStub extends DurableObject<Env> {
       }
     }
 
-    await this.env.CLIPS_BUCKET.put(job.outputs.mp4Key, FAKE_MP4, {
+    await this.env.CLIPS_BUCKET.put(encodeJob.outputs.mp4Key, FAKE_MP4, {
       httpMetadata: { contentType: "video/mp4" },
     });
-    await this.env.CLIPS_BUCKET.put(job.outputs.thumbnailKey, FAKE_JPEG, {
+    await this.env.CLIPS_BUCKET.put(encodeJob.outputs.thumbnailKey, FAKE_JPEG, {
       httpMetadata: { contentType: "image/jpeg" },
     });
 
@@ -147,9 +165,9 @@ export class EncoderStub extends DurableObject<Env> {
     }
 
     if (!skipCompleteCallback && !noCallbacksSlowRun) {
-      const callbackTarget = job.callbackUrl.startsWith("http")
-        ? job.callbackUrl
-        : `http://example.com${job.callbackUrl}`;
+      const callbackTarget = encodeJob.callbackUrl.startsWith("http")
+        ? encodeJob.callbackUrl
+        : `http://example.com${encodeJob.callbackUrl}`;
       await fetch(callbackTarget, {
         method: "POST",
         headers: authHeaders,
@@ -159,7 +177,54 @@ export class EncoderStub extends DurableObject<Env> {
 
     return Response.json({
       status: "complete",
-      outputs: job.outputs,
+      outputs: encodeJob.outputs,
+    });
+  }
+
+  private async handleGifRun(
+    job: GifEncoderJobSpec,
+  ): Promise<Response> {
+    const mp4Object = await this.env.CLIPS_BUCKET.get(job.sourceMp4Key);
+    if (!mp4Object) {
+      return Response.json(
+        {
+          status: "failed",
+          errorMessage: "Clip MP4 output not found",
+        },
+        { status: 500 },
+      );
+    }
+
+    if (job.sourceMp4Key.includes("stub-gif-failure")) {
+      return Response.json(
+        {
+          status: "failed",
+          errorMessage: "GIF encoding failed (simulated)",
+        },
+        { status: 500 },
+      );
+    }
+
+    await this.env.CLIPS_BUCKET.put(job.outputs.gifKey, FAKE_GIF, {
+      httpMetadata: { contentType: "image/gif" },
+    });
+
+    const head = await this.env.CLIPS_BUCKET.head(job.outputs.gifKey);
+    if (!head) {
+      return Response.json(
+        {
+          status: "failed",
+          errorMessage: "GIF artifact was not durably stored in R2",
+        },
+        { status: 500 },
+      );
+    }
+
+    await markGifComplete(this.env.DB, job.jobId, job.outputs.gifKey);
+
+    return Response.json({
+      status: "complete",
+      outputs: { gifKey: job.outputs.gifKey },
     });
   }
 

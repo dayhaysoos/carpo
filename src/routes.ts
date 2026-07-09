@@ -4,11 +4,12 @@ import {
   getClipById,
   insertClip,
   listClips,
+  markGifEncoding,
   outputKeysForClip,
 } from "./db";
 import type { Env } from "./env";
 import { JOB_SECRET_HEADER, verifyJobSecret } from "./auth";
-import { applyStatusUpdate, dispatchEncodingJob } from "./jobs";
+import { applyStatusUpdate, dispatchEncodingJob, dispatchGifExportJob } from "./jobs";
 import { recordToResponse } from "./serialize";
 import type { ClipRecord, ClipStatus } from "./types";
 import {
@@ -42,6 +43,15 @@ export async function handleRequest(
 
   if (request.method === "GET" && url.pathname === "/api/clips") {
     return handleListClips(url, env);
+  }
+
+  if (
+    request.method === "POST" &&
+    url.pathname.startsWith("/api/clips/") &&
+    url.pathname.endsWith("/gif")
+  ) {
+    const clipId = url.pathname.slice("/api/clips/".length, -"/gif".length);
+    return handleRequestGifExport(clipId, env, ctx);
   }
 
   if (request.method === "GET" && url.pathname.startsWith("/api/clips/")) {
@@ -186,6 +196,58 @@ async function handleGetClip(clipId: string, env: Env): Promise<Response> {
   }
 
   return json(recordToResponse(record, env.R2_PUBLIC_PREFIX));
+}
+
+async function handleRequestGifExport(
+  clipId: string,
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<Response> {
+  if (!clipId) {
+    return json({ error: "Clip id is required" }, 400);
+  }
+
+  const record = await getClipById(env.DB, clipId);
+  if (!record) {
+    return json({ error: "Clip not found" }, 404);
+  }
+
+  if (record.status !== "complete") {
+    return json(
+      {
+        error: "Clip is not complete",
+        details: [
+          {
+            field: "status",
+            message: "GIF export is only available for completed clips",
+          },
+        ],
+      },
+      409,
+    );
+  }
+
+  if (record.gif_status === "complete" && record.output_gif_key) {
+    return json(recordToResponse(record, env.R2_PUBLIC_PREFIX));
+  }
+
+  if (record.gif_status === "encoding") {
+    return json(recordToResponse(record, env.R2_PUBLIC_PREFIX));
+  }
+
+  const started = await markGifEncoding(env.DB, clipId);
+  if (!started) {
+    const latest = await getClipById(env.DB, clipId);
+    if (!latest) {
+      return json({ error: "Clip not found" }, 404);
+    }
+    return json(recordToResponse(latest, env.R2_PUBLIC_PREFIX));
+  }
+
+  ctx.waitUntil(dispatchGifExportJob(env, clipId));
+
+  const updated = await getClipById(env.DB, clipId);
+  return json(recordToResponse(updated!, env.R2_PUBLIC_PREFIX), 202);
 }
 
 async function handleRequestUploadUrl(

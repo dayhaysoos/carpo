@@ -957,6 +957,191 @@ print("Truncated upload left no staged file")
   }
 }
 
+function runEncoderGifContract(fixturePath: string) {
+  const gifOutputDir = path.join(outputDir, "gif-contract");
+  fs.rmSync(gifOutputDir, { recursive: true, force: true });
+  fs.mkdirSync(gifOutputDir, { recursive: true });
+
+  const mp4Job = {
+    jobId: "gif-contract-mp4",
+    source: {
+      type: "file",
+      path: "/fixture/bars.mp4",
+    },
+    trimStart: 1,
+    trimEnd: 4,
+    caption: null,
+    filters: [],
+    maxClipLengthSeconds: 60,
+    outputs: {
+      mp4Key: "gif-source.mp4",
+      thumbnailKey: "gif-source.jpg",
+    },
+    localOutputDir: "/output",
+  };
+  const mp4JobPath = path.join(gifOutputDir, "mp4-job.json");
+  fs.writeFileSync(mp4JobPath, JSON.stringify(mp4Job));
+
+  const gifContainer = `${containerName}-gif`;
+  run("docker", ["rm", "-f", gifContainer]);
+  run("docker", [
+    "run",
+    "-d",
+    "--name",
+    gifContainer,
+    "-p",
+    "18082:8080",
+    "-v",
+    `${fixturePath}:/fixture/bars.mp4:ro`,
+    "-v",
+    `${gifOutputDir}:/output`,
+    imageName,
+  ]);
+
+  try {
+    waitForHealth(18082);
+
+    const mp4Encode = spawnSync(
+      "curl",
+      [
+        "-fsS",
+        "-X",
+        "POST",
+        "http://127.0.0.1:18082/run",
+        "-H",
+        "Content-Type: application/json",
+        "-d",
+        `@${mp4JobPath}`,
+      ],
+      { encoding: "utf-8" },
+    );
+    if (mp4Encode.status !== 0) {
+      const logs = run("docker", ["logs", gifContainer]);
+      throw new Error(
+        `MP4 setup for GIF contract failed\n${mp4Encode.stderr}\ncontainer logs:\n${logs}`,
+      );
+    }
+
+    const mp4Result = JSON.parse(mp4Encode.stdout) as { status: string };
+    if (mp4Result.status !== "complete") {
+      throw new Error("MP4 setup job did not complete");
+    }
+
+    const sourceMp4 = path.join(gifOutputDir, "gif-source.mp4");
+    if (!fs.existsSync(sourceMp4)) {
+      throw new Error(`Expected source MP4 at ${sourceMp4}`);
+    }
+
+    const gifJob = {
+      jobId: "gif-contract",
+      jobType: "gif",
+      sourceMp4Key: "clips/gif-contract/clip.mp4",
+      source: {
+        type: "file",
+        path: "/fixture/gif-source.mp4",
+      },
+      outputs: {
+        gifKey: "clip.gif",
+      },
+      localOutputDir: "/output",
+    };
+    const gifJobPath = path.join(gifOutputDir, "gif-job.json");
+    fs.writeFileSync(gifJobPath, JSON.stringify(gifJob));
+
+    run("docker", [
+      "exec",
+      gifContainer,
+      "cp",
+      "/output/gif-source.mp4",
+      "/fixture/gif-source.mp4",
+    ]);
+
+    const gifEncode = spawnSync(
+      "curl",
+      [
+        "-fsS",
+        "-X",
+        "POST",
+        "http://127.0.0.1:18082/run",
+        "-H",
+        "Content-Type: application/json",
+        "-d",
+        `@${gifJobPath}`,
+      ],
+      { encoding: "utf-8" },
+    );
+    if (gifEncode.status !== 0) {
+      const logs = run("docker", ["logs", gifContainer]);
+      throw new Error(
+        `GIF encoder /run failed\n${gifEncode.stderr}\ncontainer logs:\n${logs}`,
+      );
+    }
+
+    const gifResult = JSON.parse(gifEncode.stdout) as {
+      status: string;
+      errorMessage?: string;
+    };
+    if (gifResult.status !== "complete") {
+      throw new Error(
+        `GIF encoder returned failure: ${gifResult.errorMessage ?? "unknown error"}`,
+      );
+    }
+
+    const gifPath = path.join(gifOutputDir, "clip.gif");
+    if (!fs.existsSync(gifPath)) {
+      throw new Error(`Expected GIF artifact at ${gifPath}`);
+    }
+
+    const gifBytes = fs.readFileSync(gifPath);
+    const gifHeader = gifBytes.subarray(0, 6).toString("ascii");
+    if (gifHeader !== "GIF89a" && gifHeader !== "GIF87a") {
+      throw new Error(`Output is not a GIF file (header: ${gifHeader})`);
+    }
+
+    const gifSize = gifBytes.length;
+    if (gifSize < 500) {
+      throw new Error(`GIF artifact looks too small (${gifSize} bytes)`);
+    }
+
+    const logs = run("docker", ["logs", gifContainer]);
+    if (!logs.includes("palettegen") || !logs.includes("paletteuse")) {
+      throw new Error(
+        "Encoder logs did not show palettegen + paletteuse two-pass GIF encode",
+      );
+    }
+
+    const loopProbe = spawnSync(
+      "ffprobe",
+      [
+        "-v",
+        "error",
+        "-show_entries",
+        "stream=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        gifPath,
+      ],
+      { encoding: "utf-8" },
+    );
+    if (loopProbe.status !== 0) {
+      throw new Error(`ffprobe failed on GIF output\n${loopProbe.stderr}`);
+    }
+
+    const netscapeLoop = gifBytes.includes(
+      Buffer.from("NETSCAPE2.0", "ascii"),
+    );
+    if (!netscapeLoop) {
+      throw new Error("GIF output is missing NETSCAPE2.0 looping extension");
+    }
+
+    console.log("Encoder GIF contract test passed");
+    console.log(`  GIF: ${gifPath} (${gifSize} bytes)`);
+    console.log("  Verified palettegen + paletteuse and infinite loop metadata");
+  } finally {
+    run("docker", ["rm", "-f", gifContainer]);
+  }
+}
+
 function main() {
   assertDockerAvailable();
   assertFfmpegAvailable();
@@ -966,6 +1151,7 @@ function main() {
   buildImage();
   runStageSourceContract(frameCounterPath);
   runEncoderContract(barsPath, frameCounterPath);
+  runEncoderGifContract(barsPath);
   runEncoderUploadContract(frameCounterPath);
   runEncoderCaptionContract(barsPath, frameCounterPath);
 }

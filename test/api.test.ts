@@ -16,6 +16,7 @@ import {
   STUB_NO_CALLBACKS_SLOW_RUN_URL,
   STUB_SKIP_COMPLETE_CALLBACK_URL,
   STUB_VERIFY_WORKER_BASE_URL,
+  STUB_GIF_FAILURE_MP4_KEY,
 } from "./encoder-stub";
 
 async function workerFetch(
@@ -1845,5 +1846,240 @@ describe("DELETE /api/clips/:id", () => {
       { method: "DELETE" },
     );
     expect(response.status).toBe(404);
+  });
+});
+
+async function completeClipForGifTests(clipId: string, secret: string) {
+  const keys = outputKeysForClip(clipId);
+  const fakeMp4 = new Uint8Array([0x00, 0x00, 0x00, 0x1c]);
+  const fakeJpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+
+  await workerFetch(
+    `http://example.com/api/internal/jobs/${clipId}/artifacts/mp4`,
+    {
+      method: "PUT",
+      headers: {
+        "Content-Type": "video/mp4",
+        [JOB_SECRET_HEADER]: secret,
+      },
+      body: fakeMp4,
+    },
+  );
+  await workerFetch(
+    `http://example.com/api/internal/jobs/${clipId}/artifacts/thumbnail`,
+    {
+      method: "PUT",
+      headers: {
+        "Content-Type": "image/jpeg",
+        [JOB_SECRET_HEADER]: secret,
+      },
+      body: fakeJpeg,
+    },
+  );
+  await workerFetch(
+    `http://example.com/api/internal/jobs/${clipId}/status`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        [JOB_SECRET_HEADER]: secret,
+      },
+      body: JSON.stringify({ status: "complete" }),
+    },
+  );
+
+  return keys;
+}
+
+async function waitForGifStatus(
+  clipId: string,
+  target: "encoding" | "complete" | "failed",
+) {
+  let lastBody: Record<string, unknown> = {};
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const response = await workerFetch(`http://example.com/api/clips/${clipId}`);
+    expect(response.status).toBe(200);
+    lastBody = (await response.json()) as Record<string, unknown>;
+    if (lastBody.gifStatus === target) {
+      return lastBody;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return lastBody;
+}
+
+describe("POST /api/clips/:id/gif", () => {
+  it("starts GIF export for a complete clip and returns the download URL once done", async () => {
+    const { clipId, secret } = await createYoutubeClip("gif export");
+    const keys = await completeClipForGifTests(clipId, secret);
+
+    const start = await workerFetch(`http://example.com/api/clips/${clipId}/gif`, {
+      method: "POST",
+    });
+    expect(start.status).toBe(202);
+    const started = (await start.json()) as {
+      gifStatus: string;
+      outputs: { gif: string | null };
+    };
+    expect(started.gifStatus).toBe("encoding");
+    expect(started.outputs.gif).toBeNull();
+
+    const done = await waitForGifStatus(clipId, "complete");
+    expect(done.gifStatus).toBe("complete");
+    expect(done.status).toBe("complete");
+    expect((done.outputs as { gif: string }).gif).toBe(
+      `/artifacts/${keys.gifKey}`,
+    );
+
+    const persisted = await getClipById(env.DB, clipId);
+    expect(persisted?.gif_status).toBe("complete");
+    expect(persisted?.output_gif_key).toBe(keys.gifKey);
+    expect(await env.CLIPS_BUCKET.get(keys.gifKey)).not.toBeNull();
+  });
+
+  it("is idempotent while encoding and after completion", async () => {
+    const { clipId, secret } = await createYoutubeClip("gif idempotent");
+    const keys = await completeClipForGifTests(clipId, secret);
+
+    const first = await workerFetch(`http://example.com/api/clips/${clipId}/gif`, {
+      method: "POST",
+    });
+    expect(first.status).toBe(202);
+
+    const second = await workerFetch(`http://example.com/api/clips/${clipId}/gif`, {
+      method: "POST",
+    });
+    expect(second.status).toBe(200);
+    const inProgress = (await second.json()) as { gifStatus: string };
+    expect(inProgress.gifStatus).toBe("encoding");
+
+    await waitForGifStatus(clipId, "complete");
+
+    const third = await workerFetch(`http://example.com/api/clips/${clipId}/gif`, {
+      method: "POST",
+    });
+    expect(third.status).toBe(200);
+    const complete = (await third.json()) as {
+      gifStatus: string;
+      outputs: { gif: string };
+    };
+    expect(complete.gifStatus).toBe("complete");
+    expect(complete.outputs.gif).toBe(`/artifacts/${keys.gifKey}`);
+    expect(await env.CLIPS_BUCKET.get(keys.gifKey)).not.toBeNull();
+  });
+
+  it("rejects GIF export for non-complete clips", async () => {
+    const { clipId } = await createYoutubeClip("gif not complete");
+
+    const response = await workerFetch(`http://example.com/api/clips/${clipId}/gif`, {
+      method: "POST",
+    });
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toBe("Clip is not complete");
+  });
+
+  it("leaves the original clip intact when GIF export fails and allows retry", async () => {
+    const { clipId, secret } = await createYoutubeClip("gif failure retry");
+    const keys = outputKeysForClip(clipId);
+    const fakeMp4 = new Uint8Array([0x00, 0x00, 0x00, 0x1c]);
+    const fakeJpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+
+    await env.CLIPS_BUCKET.put(STUB_GIF_FAILURE_MP4_KEY, fakeMp4, {
+      httpMetadata: { contentType: "video/mp4" },
+    });
+
+    await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/artifacts/mp4`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "video/mp4",
+          [JOB_SECRET_HEADER]: secret,
+        },
+        body: fakeMp4,
+      },
+    );
+    await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/artifacts/thumbnail`,
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "image/jpeg",
+          [JOB_SECRET_HEADER]: secret,
+        },
+        body: fakeJpeg,
+      },
+    );
+    await workerFetch(
+      `http://example.com/api/internal/jobs/${clipId}/status`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          [JOB_SECRET_HEADER]: secret,
+        },
+        body: JSON.stringify({ status: "complete" }),
+      },
+    );
+
+    await env.DB.prepare(
+      "UPDATE clips SET output_mp4_key = ? WHERE id = ?",
+    )
+      .bind(STUB_GIF_FAILURE_MP4_KEY, clipId)
+      .run();
+
+    const failedStart = await workerFetch(
+      `http://example.com/api/clips/${clipId}/gif`,
+      { method: "POST" },
+    );
+    expect(failedStart.status).toBe(202);
+
+    const failed = await waitForGifStatus(clipId, "failed");
+    expect(failed.gifStatus).toBe("failed");
+    expect(failed.status).toBe("complete");
+    expect((failed.outputs as { mp4: string }).mp4).toBe(
+      `/artifacts/${STUB_GIF_FAILURE_MP4_KEY}`,
+    );
+    expect(failed.gifErrorMessage).toBeTruthy();
+    expect(await env.CLIPS_BUCKET.get(keys.gifKey)).toBeNull();
+
+    await env.DB.prepare(
+      "UPDATE clips SET output_mp4_key = ? WHERE id = ?",
+    )
+      .bind(keys.mp4Key, clipId)
+      .run();
+    await env.CLIPS_BUCKET.put(keys.mp4Key, fakeMp4, {
+      httpMetadata: { contentType: "video/mp4" },
+    });
+
+    const retry = await workerFetch(`http://example.com/api/clips/${clipId}/gif`, {
+      method: "POST",
+    });
+    expect(retry.status).toBe(202);
+
+    const recovered = await waitForGifStatus(clipId, "complete");
+    expect(recovered.gifStatus).toBe("complete");
+    expect(recovered.status).toBe("complete");
+    expect(await env.CLIPS_BUCKET.get(keys.gifKey)).not.toBeNull();
+  });
+
+  it("deletes the GIF object when the clip is deleted", async () => {
+    const { clipId, secret } = await createYoutubeClip("gif delete cleanup");
+    const keys = await completeClipForGifTests(clipId, secret);
+
+    await workerFetch(`http://example.com/api/clips/${clipId}/gif`, {
+      method: "POST",
+    });
+    await waitForGifStatus(clipId, "complete");
+    expect(await env.CLIPS_BUCKET.get(keys.gifKey)).not.toBeNull();
+
+    const response = await workerFetch(`http://example.com/api/clips/${clipId}`, {
+      method: "DELETE",
+    });
+    expect(response.status).toBe(204);
+    expect(await env.CLIPS_BUCKET.get(keys.gifKey)).toBeNull();
+    expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).toBeNull();
+    expect(await env.CLIPS_BUCKET.get(keys.thumbnailKey)).toBeNull();
   });
 });

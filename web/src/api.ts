@@ -112,3 +112,12 @@ export async function deleteClip(id: string): Promise<void> {
     throw new Error(body.error || `Request failed (${response.status})`);
   }
 }
+
+export async function requestGifExport(id: string): Promise<ClipResponse> {
+  const response = await fetch(`/api/clips/${id}/gif`, { method: "POST" });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiError;
+    throw new Error(body.error || `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<ClipResponse>;
+}
