@@ -248,6 +248,20 @@ assert classify_ytdlp_error("ERROR: Unsupported URL") == (
 stdout_only = "ERROR: unable to download video data: HTTP Error 403: Forbidden\\n"
 assert classify_ytdlp_error(stdout_only) == YOUTUBE_BLOCKED_MESSAGE
 
+from encoder import (
+    YOUTUBE_DOWNLOAD_TIMEOUT_MESSAGE,
+    YOUTUBE_SECTION_EXACT_FALLBACK_MESSAGE,
+    _is_user_facing_ytdlp_error,
+)
+
+assert _is_user_facing_ytdlp_error(YOUTUBE_BLOCKED_MESSAGE)
+assert _is_user_facing_ytdlp_error(YOUTUBE_DOWNLOAD_TIMEOUT_MESSAGE)
+assert _is_user_facing_ytdlp_error(
+    "This YouTube video is unavailable. It may have been deleted or restricted."
+)
+assert not _is_user_facing_ytdlp_error(YOUTUBE_SECTION_EXACT_FALLBACK_MESSAGE)
+assert not _is_user_facing_ytdlp_error("yt-dlp did not produce a source file")
+
 print("YouTube error classification test passed")
 `;
 
@@ -459,6 +473,50 @@ function runEncoderYoutubeJob(
   };
 }
 
+function assertSectionDownloadBounds(
+  logs: string,
+  trimStart: number,
+  trimEnd: number,
+) {
+  const matches = [
+    ...logs.matchAll(/--download-sections \*([0-9.]+)-([0-9.]+)/g),
+  ];
+  if (matches.length < 2) {
+    throw new Error(
+      `Expected padded + exact --download-sections invocations, got ${matches.length}`,
+    );
+  }
+  const paddedStart = Number.parseFloat(matches[0][1]);
+  const paddedEnd = Number.parseFloat(matches[0][2]);
+  const exactStart = Number.parseFloat(matches[1][1]);
+  const exactEnd = Number.parseFloat(matches[1][2]);
+  const expectedPaddedStart = Math.max(0, trimStart - 3);
+  if (paddedStart !== expectedPaddedStart || paddedEnd !== trimEnd + 3) {
+    throw new Error(
+      `Unexpected padded section bounds ${paddedStart}-${paddedEnd}; expected ${expectedPaddedStart}-${trimEnd + 3}`,
+    );
+  }
+  if (exactStart !== trimStart || exactEnd !== trimEnd) {
+    throw new Error(
+      `Unexpected exact fallback section bounds ${exactStart}-${exactEnd}; expected ${trimStart}-${trimEnd}`,
+    );
+  }
+}
+
+function assertForceKeyframesFallbackInvocation(logs: string) {
+  if (!logs.includes("force-keyframes-at-cuts")) {
+    throw new Error("Encoder logs did not show force-keyframes fallback");
+  }
+  if (
+    !logs.includes("--ppa") ||
+    !logs.includes("ffmpeg:-preset veryfast")
+  ) {
+    throw new Error(
+      "Encoder logs did not show yt-dlp ffmpeg veryfast postprocessor args",
+    );
+  }
+}
+
 function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
   const blockedFixture = path.join(fixturesDir, "fake-ytdlp-403.sh");
   const blockedStdoutFixture = path.join(fixturesDir, "fake-ytdlp-403-stdout.sh");
@@ -486,6 +544,10 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
   const sectionsRejectedFixture = path.join(
     fixturesDir,
     "fake-ytdlp-sections-rejected.sh",
+  );
+  const sectionsFallback403Fixture = path.join(
+    fixturesDir,
+    "fake-ytdlp-sections-fallback-403.sh",
   );
 
   const failFastOutputDir = path.join(outputDir, "youtube-fail-fast");
@@ -1002,6 +1064,17 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
         "Encoder logs did not show force-keyframes section fallback for rejected section window",
       );
     }
+    assertSectionDownloadBounds(
+      rejected.logs,
+      rejectedTrimStart,
+      rejectedTrimEnd,
+    );
+    assertForceKeyframesFallbackInvocation(rejected.logs);
+    if (!rejected.logs.includes("encode: stream-copy (no re-encode needed)")) {
+      throw new Error(
+        "Encoder logs did not show stream-copy encode after exact fallback section",
+      );
+    }
     if (rejected.logs.includes("re-downloading full video")) {
       throw new Error("Encoder logs still show removed full-video fallback");
     }
@@ -1095,6 +1168,19 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
         "Encoder logs did not show force-keyframes fallback for late keyframe snap",
       );
     }
+    assertSectionDownloadBounds(
+      lateKeyframe.logs,
+      lateKeyframeTrimStart,
+      lateKeyframeTrimEnd,
+    );
+    assertForceKeyframesFallbackInvocation(lateKeyframe.logs);
+    if (
+      !lateKeyframe.logs.includes("encode: stream-copy (no re-encode needed)")
+    ) {
+      throw new Error(
+        "Encoder logs did not show stream-copy encode after late-keyframe fallback",
+      );
+    }
     if (lateKeyframe.logs.includes("re-downloading full video")) {
       throw new Error("Encoder logs still show removed full-video fallback");
     }
@@ -1181,6 +1267,13 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
         "Encoder logs did not show force-keyframes fallback for unknown alignment",
       );
     }
+    assertSectionDownloadBounds(lateStart.logs, zeroTrimStart, zeroTrimEnd);
+    assertForceKeyframesFallbackInvocation(lateStart.logs);
+    if (!lateStart.logs.includes("encode: stream-copy (no re-encode needed)")) {
+      throw new Error(
+        "Encoder logs did not show stream-copy encode after zero-start fallback",
+      );
+    }
     if (lateStart.logs.includes("re-downloading full video")) {
       throw new Error("Encoder logs still show removed full-video fallback");
     }
@@ -1224,6 +1317,94 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
     console.log(`  Duration: ${duration.toFixed(2)}s (expected ${expectedDuration}s)`);
   } finally {
     run("docker", ["rm", "-f", `${containerName}-youtube-sections-zero`]);
+  }
+
+  const fallback403TrimStart = 7.5;
+  const fallback403TrimEnd = 10;
+  const fallback403OutputDir = path.join(
+    outputDir,
+    "youtube-sections-fallback-403",
+  );
+  fs.rmSync(fallback403OutputDir, { recursive: true, force: true });
+  fs.mkdirSync(fallback403OutputDir, { recursive: true });
+  const fallback403JobPath = path.join(
+    fallback403OutputDir,
+    "fallback-403-job.json",
+  );
+  fs.writeFileSync(
+    fallback403JobPath,
+    JSON.stringify({
+      jobId: "youtube-sections-fallback-403",
+      source: {
+        type: "youtube",
+        url: "https://www.youtube.com/watch?v=section-fallback-403",
+      },
+      trimStart: fallback403TrimStart,
+      trimEnd: fallback403TrimEnd,
+      maxClipLengthSeconds: 60,
+      outputs: {
+        mp4Key: "fallback-403.mp4",
+        thumbnailKey: "fallback-403.jpg",
+      },
+      localOutputDir: "/output",
+    }),
+  );
+
+  try {
+    const fallback403 = runEncoderYoutubeJob(
+      `${containerName}-youtube-sections-fallback-403`,
+      18093,
+      fallback403JobPath,
+      {
+        fakeYtdlpPath: sectionsFallback403Fixture,
+        outputDir: fallback403OutputDir,
+        frameCounterPath,
+      },
+    );
+    if (fallback403.result.status !== "failed") {
+      throw new Error(
+        `Expected failed status for fallback-403 fixture, got ${fallback403.result.status}`,
+      );
+    }
+    if (
+      fallback403.result.errorMessage !==
+      "YouTube is blocking downloads from this server. Try uploading the video file instead."
+    ) {
+      throw new Error(
+        `Expected classified 403 on force-keyframes fallback, got ${fallback403.result.errorMessage ?? "(missing)"}`,
+      );
+    }
+    const ytdlpRuns = fallback403.logs.match(/running: yt-dlp/g) ?? [];
+    if (ytdlpRuns.length !== 2) {
+      throw new Error(
+        `Expected 2 yt-dlp invocations before classified fallback failure, got ${ytdlpRuns.length}`,
+      );
+    }
+    assertSectionDownloadBounds(
+      fallback403.logs,
+      fallback403TrimStart,
+      fallback403TrimEnd,
+    );
+    assertForceKeyframesFallbackInvocation(fallback403.logs);
+    if (
+      fallback403.logs.includes(
+        "Section-only download failed after retry with exact cuts",
+      )
+    ) {
+      throw new Error(
+        "Classified fallback failure was masked by generic section fallback message",
+      );
+    }
+    console.log(
+      "Encoder YouTube classified fallback-403 contract test passed",
+    );
+    console.log(`  Message: ${fallback403.result.errorMessage}`);
+  } finally {
+    run("docker", [
+      "rm",
+      "-f",
+      `${containerName}-youtube-sections-fallback-403`,
+    ]);
   }
 }
 
