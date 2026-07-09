@@ -5,6 +5,11 @@ import { UPLOAD_KEY_PREFIX } from "./uploads";
 
 const STAGED_UPLOAD_PATH = "/tmp/carpo-upload-source.mp4";
 
+type RunJobSpec = EncoderJobSpec & {
+  deferArtifactUpload?: boolean;
+  source?: EncoderJobSpec["source"] | { type: "file"; path: string };
+};
+
 // Hard ceiling for stale jobRunning keepalive. If the worker isolate dies
 // mid-/run, dispatchEncodingJob's finally never clears the flag; without a
 // TTL the container would renew forever and leak a max_instances slot.
@@ -76,38 +81,61 @@ export class EncoderContainer extends Container<Env> {
   }
 
   private async handleRun(request: Request): Promise<Response> {
-    let job: EncoderJobSpec;
+    let job: RunJobSpec;
     try {
-      job = (await request.json()) as EncoderJobSpec;
+      job = (await request.json()) as RunJobSpec;
     } catch {
       return super.fetch(request);
     }
 
-    if (job.source.type !== "upload") {
-      return super.fetch(request);
+    if (job.source?.type === "upload") {
+      const staged = await this.stageUploadSource(job.source.key);
+      if (!staged.ok) {
+        return Response.json(
+          { status: "failed", errorMessage: staged.error },
+          { status: 500 },
+        );
+      }
+
+      job = {
+        ...job,
+        source: { type: "file", path: STAGED_UPLOAD_PATH },
+      };
     }
 
-    const staged = await this.stageUploadSource(job.source.key);
-    if (!staged.ok) {
+    job.deferArtifactUpload = true;
+
+    const response = await super.fetch(
+      new Request("http://encoder/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(job),
+      }),
+    );
+
+    let result: { status?: string; errorMessage?: string; outputs?: EncoderJobSpec["outputs"] };
+    try {
+      result = (await response.json()) as typeof result;
+    } catch {
+      return response;
+    }
+
+    if (result.status !== "complete") {
+      return Response.json(result, { status: response.status });
+    }
+
+    try {
+      await this.uploadDeferredArtifacts(job.outputs);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to upload encoded artifacts";
       return Response.json(
-        { status: "failed", errorMessage: staged.error },
+        { status: "failed", errorMessage: message },
         { status: 500 },
       );
     }
 
-    const rewritten = {
-      ...job,
-      source: { type: "file", path: STAGED_UPLOAD_PATH },
-    };
-    delete (rewritten as { sourceFetchUrl?: string }).sourceFetchUrl;
-
-    return super.fetch(
-      new Request("http://encoder/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(rewritten),
-      }),
-    );
+    return Response.json(result, { status: 200 });
   }
 
   private async stageUploadSource(
@@ -145,5 +173,30 @@ export class EncoderContainer extends Container<Env> {
     }
 
     return { ok: true };
+  }
+
+  private async uploadDeferredArtifacts(
+    outputs: EncoderJobSpec["outputs"],
+  ): Promise<void> {
+    const mp4Response = await super.fetch(
+      new Request("http://encoder/outputs/clip.mp4"),
+    );
+    if (!mp4Response.ok) {
+      throw new Error(`Failed to read encoded MP4 (${mp4Response.status})`);
+    }
+
+    const thumbResponse = await super.fetch(
+      new Request("http://encoder/outputs/thumbnail.jpg"),
+    );
+    if (!thumbResponse.ok) {
+      throw new Error(`Failed to read encoded thumbnail (${thumbResponse.status})`);
+    }
+
+    await this.env.CLIPS_BUCKET.put(outputs.mp4Key, mp4Response.body, {
+      httpMetadata: { contentType: "video/mp4" },
+    });
+    await this.env.CLIPS_BUCKET.put(outputs.thumbnailKey, thumbResponse.body, {
+      httpMetadata: { contentType: "image/jpeg" },
+    });
   }
 }

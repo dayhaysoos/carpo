@@ -30,6 +30,7 @@ DOWNLOAD_TIMEOUT_SECONDS = 600
 ENCODE_TIMEOUT_SECONDS = 600
 UPLOAD_TIMEOUT_SECONDS = 600
 VIDEO_CONTAINER_EXTENSIONS = ("mp4", "mkv", "webm")
+DEFERRED_OUTPUT_DIR = Path("/tmp/carpo-output")
 DEJAVU_FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 KNOWN_FILTER_TYPES = frozenset({"caption"})
 
@@ -586,6 +587,10 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
 
             if job.get("localOutputDir"):
                 copy_outputs_locally(job, output_mp4, output_thumb)
+            elif job.get("deferArtifactUpload"):
+                DEFERRED_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(output_mp4, DEFERRED_OUTPUT_DIR / "clip.mp4")
+                shutil.copy2(output_thumb, DEFERRED_OUTPUT_DIR / "thumbnail.jpg")
             else:
                 upload_artifacts(
                     job,
@@ -646,7 +651,25 @@ class EncoderHandler(BaseHTTPRequestHandler):
         if self.path == "/health":
             self._send_json(200, {"ok": True})
             return
+        if self.path == "/outputs/clip.mp4":
+            return self._send_file(DEFERRED_OUTPUT_DIR / "clip.mp4", "video/mp4")
+        if self.path == "/outputs/thumbnail.jpg":
+            return self._send_file(
+                DEFERRED_OUTPUT_DIR / "thumbnail.jpg",
+                "image/jpeg",
+            )
         self.send_error(404, "Not found")
+
+    def _send_file(self, path: Path, content_type: str) -> None:
+        if not path.exists():
+            self.send_error(404, "Not found")
+            return
+        data = path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
     def do_POST(self) -> None:  # noqa: N802
         if self.path == "/stage-source":
