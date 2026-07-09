@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -394,14 +395,53 @@ def _ytdlp_line_indicates_postprocess(line: str) -> bool:
     return False
 
 
-def _classify_stall_error(stderr_lines: list[str]) -> str:
-    stderr_text = "\n".join(stderr_lines)
-    if not stderr_text.strip():
+def _combined_ytdlp_output(
+    stderr_lines: list[str],
+    stdout_lines: list[str],
+) -> str:
+    return "\n".join([*stderr_lines, *stdout_lines])
+
+
+def _classify_stall_error(
+    stderr_lines: list[str],
+    stdout_lines: list[str],
+) -> str:
+    combined_text = _combined_ytdlp_output(stderr_lines, stdout_lines)
+    if not combined_text.strip():
         return YOUTUBE_STALL_MESSAGE
-    classified = classify_ytdlp_error(stderr_text)
+    classified = classify_ytdlp_error(combined_text)
     if classified == "Failed to download YouTube video.":
         return YOUTUBE_STALL_MESSAGE
     return classified
+
+
+def _signal_process_group(pid: int, sig: signal.Signals) -> None:
+    try:
+        os.killpg(pid, sig)
+    except ProcessLookupError:
+        return
+    except PermissionError:
+        try:
+            os.kill(pid, sig)
+        except ProcessLookupError:
+            return
+
+
+def _kill_process_group(pid: int) -> None:
+    """Terminate a yt-dlp process group, including ffmpeg merge children."""
+    _signal_process_group(pid, signal.SIGTERM)
+
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        except PermissionError:
+            return
+        time.sleep(0.1)
+
+    _signal_process_group(pid, signal.SIGKILL)
 
 
 def probe_media_start_time(path: Path) -> float | None:
@@ -449,7 +489,15 @@ def resolve_section_encode_bounds(
     else:
         base = section_start
 
-    return trim_start - base, trim_end - base
+    encode_trim_start = max(0.0, trim_start - base)
+    encode_trim_end = trim_end - base
+    if encode_trim_end <= encode_trim_start:
+        raise RuntimeError(
+            "Downloaded section does not contain the requested trim range. "
+            "Try a wider trim range or upload the video file instead.",
+        )
+
+    return encode_trim_start, encode_trim_end
 
 
 def run_ytdlp(command: list[str], workdir: Path) -> None:
@@ -463,8 +511,10 @@ def run_ytdlp(command: list[str], workdir: Path) -> None:
         stderr=subprocess.PIPE,
         text=True,
         bufsize=1,
+        start_new_session=True,
     )
 
+    stdout_lines: list[str] = []
     stderr_lines: list[str] = []
     activity_lock = threading.Lock()
     last_activity = time.monotonic()
@@ -489,6 +539,12 @@ def run_ytdlp(command: list[str], workdir: Path) -> None:
             if is_stderr:
                 _append_capped_line(
                     stderr_lines,
+                    line.rstrip("\n"),
+                    YOUTUBE_STDERR_MAX_LINES,
+                )
+            else:
+                _append_capped_line(
+                    stdout_lines,
                     line.rstrip("\n"),
                     YOUTUBE_STDERR_MAX_LINES,
                 )
@@ -525,11 +581,11 @@ def run_ytdlp(command: list[str], workdir: Path) -> None:
             )
         if idle_seconds > stall_limit:
             stall_killed = True
-            proc.kill()
+            _kill_process_group(proc.pid)
             break
         if now - started > YOUTUBE_DOWNLOAD_MAX_SECONDS:
             overall_timeout = True
-            proc.kill()
+            _kill_process_group(proc.pid)
             break
         time.sleep(0.25)
 
@@ -538,14 +594,16 @@ def run_ytdlp(command: list[str], workdir: Path) -> None:
     stderr_thread.join(timeout=2)
 
     if stall_killed:
-        raise RuntimeError(_classify_stall_error(stderr_lines))
+        raise RuntimeError(_classify_stall_error(stderr_lines, stdout_lines))
     if overall_timeout:
         raise RuntimeError(
             "YouTube download timed out. "
             "Try uploading the video file instead.",
         )
     if proc.returncode != 0:
-        raise RuntimeError(classify_ytdlp_error("\n".join(stderr_lines)))
+        raise RuntimeError(
+            classify_ytdlp_error(_combined_ytdlp_output(stderr_lines, stdout_lines)),
+        )
 
 
 def select_source_file(candidates: list[Path]) -> Path:

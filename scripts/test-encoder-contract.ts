@@ -224,10 +224,92 @@ assert classify_ytdlp_error("ERROR: Unsupported URL") == (
     "The URL is not a supported YouTube link."
 )
 
+stdout_only = "ERROR: unable to download video data: HTTP Error 403: Forbidden\\n"
+assert classify_ytdlp_error(stdout_only) == YOUTUBE_BLOCKED_MESSAGE
+
 print("YouTube error classification test passed")
 `;
 
   run("python3", ["-c", script]);
+}
+
+function testSectionEncodeBounds() {
+  const script = `
+import sys
+from pathlib import Path
+from unittest.mock import patch
+
+sys.path.insert(0, ${JSON.stringify(path.join(root, "container"))})
+from encoder import resolve_section_encode_bounds
+
+with patch("encoder.probe_media_start_time", return_value=8.0):
+    start, end = resolve_section_encode_bounds(Path("source.mp4"), 7.5, 10.0, 4.5)
+    assert start == 0.0, start
+    assert end == 2.0, end
+
+with patch("encoder.probe_media_start_time", return_value=11.0):
+    try:
+        resolve_section_encode_bounds(Path("source.mp4"), 7.5, 10.0, 4.5)
+    except RuntimeError as exc:
+        assert "does not contain the requested trim range" in str(exc)
+    else:
+        raise AssertionError("expected empty trim window to fail")
+
+print("Section encode bounds test passed")
+`;
+
+  run("python3", ["-c", script]);
+}
+
+function testProcessGroupKill() {
+  const script = `
+import os
+import subprocess
+import sys
+import time
+
+sys.path.insert(0, "/app")
+from encoder import _kill_process_group
+
+
+def process_is_running(pid: int) -> bool:
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as handle:
+            return handle.read().split()[2] != "Z"
+    except OSError:
+        return False
+
+child_code = (
+    "import subprocess, os, time; "
+    "child = subprocess.Popen(['sleep', '600']); "
+    "open(os.environ['MARKER'], 'w').write(str(child.pid)); "
+    "time.sleep(600)"
+)
+
+marker_path = "/tmp/carpo-pg-child.pid"
+env = dict(os.environ)
+env["MARKER"] = marker_path
+
+proc = subprocess.Popen(
+    [sys.executable, "-c", child_code],
+    start_new_session=True,
+    env=env,
+)
+time.sleep(0.3)
+_kill_process_group(proc.pid)
+proc.wait(timeout=5)
+
+with open(marker_path, encoding="utf-8") as handle:
+    child_pid = int(handle.read().strip())
+os.unlink(marker_path)
+
+if process_is_running(child_pid):
+    raise AssertionError("child process survived process-group kill")
+
+print("Process group kill test passed")
+`;
+
+  run("docker", ["run", "--rm", imageName, "python3", "-c", script]);
 }
 
 function runEncoderYoutubeJob(
@@ -304,11 +386,16 @@ function runEncoderYoutubeJob(
 
 function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
   const blockedFixture = path.join(fixturesDir, "fake-ytdlp-403.sh");
+  const blockedStdoutFixture = path.join(fixturesDir, "fake-ytdlp-403-stdout.sh");
   const stallFixture = path.join(fixturesDir, "fake-ytdlp-stall.sh");
   const stall403Fixture = path.join(fixturesDir, "fake-ytdlp-stall-403.sh");
   const slowProgressFixture = path.join(fixturesDir, "fake-ytdlp-slow-progress.sh");
   const silentMergeFixture = path.join(fixturesDir, "fake-ytdlp-silent-merge.sh");
   const sectionsFixture = path.join(fixturesDir, "fake-ytdlp-sections.sh");
+  const sectionsLateStartFixture = path.join(
+    fixturesDir,
+    "fake-ytdlp-sections-late-start.sh",
+  );
 
   const failFastOutputDir = path.join(outputDir, "youtube-fail-fast");
   fs.rmSync(failFastOutputDir, { recursive: true, force: true });
@@ -374,6 +461,41 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
     console.log(`  Message: ${blocked.result.errorMessage}`);
   } finally {
     run("docker", ["rm", "-f", `${containerName}-youtube-403`]);
+  }
+
+  const blockedStdoutJobPath = path.join(failFastOutputDir, "blocked-stdout-job.json");
+  fs.writeFileSync(
+    blockedStdoutJobPath,
+    JSON.stringify({ ...baseJob, jobId: "youtube-fail-fast-403-stdout" }),
+  );
+
+  try {
+    const blockedStdout = runEncoderYoutubeJob(
+      `${containerName}-youtube-403-stdout`,
+      18092,
+      blockedStdoutJobPath,
+      {
+        fakeYtdlpPath: blockedStdoutFixture,
+        outputDir: failFastOutputDir,
+      },
+    );
+    if (blockedStdout.result.status !== "failed") {
+      throw new Error(
+        `Expected failed status for stdout-only 403 fixture, got ${blockedStdout.result.status}`,
+      );
+    }
+    if (
+      blockedStdout.result.errorMessage !==
+      "YouTube is blocking downloads from this server. Try uploading the video file instead."
+    ) {
+      throw new Error(
+        `Unexpected stdout-only 403 error message: ${blockedStdout.result.errorMessage ?? "(missing)"}`,
+      );
+    }
+    console.log("Encoder YouTube stdout-only 403 classification contract test passed");
+    console.log(`  Message: ${blockedStdout.result.errorMessage}`);
+  } finally {
+    run("docker", ["rm", "-f", `${containerName}-youtube-403-stdout`]);
   }
 
   const stallJobPath = path.join(failFastOutputDir, "stall-job.json");
@@ -608,6 +730,75 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
     console.log("Encoder YouTube sections trim contract test passed");
   } finally {
     run("docker", ["rm", "-f", `${containerName}-youtube-sections`]);
+  }
+
+  const lateStartOutputDir = path.join(outputDir, "youtube-sections-late-start");
+  fs.rmSync(lateStartOutputDir, { recursive: true, force: true });
+  fs.mkdirSync(lateStartOutputDir, { recursive: true });
+  const lateStartJobPath = path.join(lateStartOutputDir, "late-start-job.json");
+  fs.writeFileSync(
+    lateStartJobPath,
+    JSON.stringify({
+      jobId: "youtube-sections-late-start",
+      source: {
+        type: "youtube",
+        url: "https://www.youtube.com/watch?v=section-late-start",
+      },
+      trimStart,
+      trimEnd,
+      maxClipLengthSeconds: 60,
+      outputs: {
+        mp4Key: "late-start.mp4",
+        thumbnailKey: "late-start.jpg",
+      },
+      localOutputDir: "/output",
+    }),
+  );
+
+  try {
+    const lateStart = runEncoderYoutubeJob(
+      `${containerName}-youtube-sections-late`,
+      18094,
+      lateStartJobPath,
+      {
+        fakeYtdlpPath: sectionsLateStartFixture,
+        outputDir: lateStartOutputDir,
+        frameCounterPath,
+      },
+    );
+    if (lateStart.result.status !== "complete") {
+      throw new Error(
+        `Expected complete status for late-start sections fixture, got ${lateStart.result.status}: ${lateStart.result.errorMessage ?? ""}`,
+      );
+    }
+    if (lateStart.logs.includes("-ss -")) {
+      throw new Error("Encoder logs contained a negative ffmpeg -ss offset");
+    }
+    const mp4Path = path.join(lateStartOutputDir, "late-start.mp4");
+    const probe = run("ffprobe", [
+      "-v",
+      "error",
+      "-show_entries",
+      "format=duration",
+      "-of",
+      "default=noprint_wrappers=1:nokey=1",
+      mp4Path,
+    ]);
+    const duration = Number.parseFloat(probe.trim());
+    const expectedDuration = 2.0;
+    if (
+      !Number.isFinite(duration) ||
+      duration < expectedDuration - 0.5 ||
+      duration > expectedDuration + 0.5
+    ) {
+      throw new Error(
+        `Late-start sections clip duration ${probe.trim()}s; expected ~${expectedDuration}s after clamp`,
+      );
+    }
+    console.log("Encoder YouTube late-start sections clamp contract test passed");
+    console.log(`  Duration: ${duration.toFixed(2)}s (clamped from ${trimEnd - trimStart}s)`);
+  } finally {
+    run("docker", ["rm", "-f", `${containerName}-youtube-sections-late`]);
   }
 }
 
@@ -1670,7 +1861,9 @@ function main() {
   testSourceFileSelection();
   testEncodeErrorClassification();
   testYoutubeErrorClassification();
+  testSectionEncodeBounds();
   buildImage();
+  testProcessGroupKill();
   runStageSourceContract(frameCounterPath);
   runEncoderYoutubeFailFastContract(frameCounterPath);
   runEncoderEncodeFailureContract();
