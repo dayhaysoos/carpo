@@ -18,6 +18,7 @@ import {
   generateUploadKey,
   maxUploadSizeBytes,
   normalizeUploadContentType,
+  sweepExpiredUploadSources,
   validateUploadUrlRequest,
 } from "./uploads";
 import { validateCreateClipRequest } from "./validation";
@@ -214,6 +215,7 @@ async function handleListClips(
 
   await sweepAndRecoverHelperClips(env, url.origin, ctx);
   await sweepStaleClips(env.DB);
+  ctx.waitUntil(sweepExpiredUploadSources(env.CLIPS_BUCKET));
   const { clips, total } = await listClips(env.DB, limit, offset);
   const prefix = env.R2_PUBLIC_PREFIX;
 

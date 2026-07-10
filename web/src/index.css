@@ -305,6 +305,12 @@ input {
   font-size: 0.875rem;
 }
 
+.form-success {
+  margin: 0.75rem 0 0;
+  font-size: 0.875rem;
+  color: var(--success);
+}
+
 .player-section {
   margin-bottom: 1rem;
 }

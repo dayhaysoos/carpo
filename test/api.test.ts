@@ -9,6 +9,11 @@ import { getClipById, outputKeysForClip } from "../src/db";
 import { dispatchEncodingJob, failClipAmbiguous } from "../src/jobs";
 import type { EncoderJobSpec } from "../src/types";
 import {
+  isUploadSourceExpired,
+  sweepExpiredUploadSources,
+  UPLOAD_SOURCE_MAX_AGE_MS,
+} from "../src/uploads";
+import {
   STUB_AMBIGUOUS_FAILURE_URL,
   STUB_CONTAINER_START_FAILURE_URL,
   STUB_DEFERRED_COPY_FAILURE_UPLOAD_KEY,
@@ -43,8 +48,10 @@ async function workerFetchWithoutWaitingForBackground(
 
 const TEST_HELPER_TOKEN = "test-helper-token";
 
-function helperHeaders(token = TEST_HELPER_TOKEN): Record<string, string> {
-  return { [HELPER_TOKEN_HEADER]: token };
+function helperHeaders(token?: string): Record<string, string> {
+  return {
+    [HELPER_TOKEN_HEADER]: token ?? env.HELPER_TOKEN ?? TEST_HELPER_TOKEN,
+  };
 }
 
 async function getLastDispatch(clipId: string): Promise<EncoderJobSpec | null> {
@@ -224,7 +231,7 @@ describe("PUT /api/uploads/:key", () => {
 });
 
 describe("upload source cleanup", () => {
-  it("deletes the uploaded source object after a job completes", async () => {
+  it("retains the uploaded source object after a job completes", async () => {
     const uploadKey = "uploads/cleanup-on-complete.mp4";
     await env.CLIPS_BUCKET.put(uploadKey, new Uint8Array([0, 1, 2, 3]), {
       httpMetadata: { contentType: "video/mp4" },
@@ -259,11 +266,11 @@ describe("upload source cleanup", () => {
     }
 
     expect(lastBody.status).toBe("complete");
-    expect(await env.CLIPS_BUCKET.get(uploadKey)).toBeNull();
+    expect(await env.CLIPS_BUCKET.get(uploadKey)).not.toBeNull();
     expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).not.toBeNull();
   });
 
-  it("deletes the uploaded source object after a confirmed failure", async () => {
+  it("retains the uploaded source object after a confirmed failure", async () => {
     const uploadKey = "uploads/cleanup-on-failure.mp4";
     await env.CLIPS_BUCKET.put(uploadKey, new Uint8Array([0, 1, 2, 3]), {
       httpMetadata: { contentType: "video/mp4" },
@@ -300,7 +307,101 @@ describe("upload source cleanup", () => {
       },
     );
     expect(fail.status).toBe(200);
-    expect(await env.CLIPS_BUCKET.get(uploadKey)).toBeNull();
+    expect(await env.CLIPS_BUCKET.get(uploadKey)).not.toBeNull();
+  });
+
+  it("creates two clips from the same uploadKey end-to-end", async () => {
+    const uploadKey = "uploads/shared-source.mp4";
+    await env.CLIPS_BUCKET.put(uploadKey, new Uint8Array([0, 1, 2, 3]), {
+      httpMetadata: { contentType: "video/mp4" },
+    });
+
+    const createClip = async (title: string) => {
+      const response = await workerFetch("http://example.com/api/clips", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title,
+          source: { type: "upload", key: uploadKey },
+          trimStart: 0,
+          trimEnd: 5,
+        }),
+      });
+      expect(response.status).toBe(201);
+      return (await response.json()) as { id: string };
+    };
+
+    const waitForTerminal = async (clipId: string) => {
+      let lastBody: Record<string, unknown> = { status: "queued" };
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        const statusResponse = await workerFetch(
+          `http://example.com/api/clips/${clipId}`,
+        );
+        expect(statusResponse.status).toBe(200);
+        lastBody = (await statusResponse.json()) as Record<string, unknown>;
+        if (lastBody.status === "complete" || lastBody.status === "failed") {
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      return lastBody;
+    };
+
+    const first = await createClip("shared upload A");
+    const firstResult = await waitForTerminal(first.id);
+    expect(firstResult.status).toBe("complete");
+    expect(await env.CLIPS_BUCKET.get(uploadKey)).not.toBeNull();
+
+    const second = await createClip("shared upload B");
+    expect(second.id).not.toBe(first.id);
+    const secondResult = await waitForTerminal(second.id);
+    expect(secondResult.status).toBe("complete");
+    expect(await env.CLIPS_BUCKET.get(uploadKey)).not.toBeNull();
+  });
+});
+
+describe("upload source sweep", () => {
+  it("isUploadSourceExpired respects the 24h window", () => {
+    const uploaded = new Date("2026-01-01T12:00:00Z");
+    const beforeExpiry = new Date(
+      uploaded.getTime() + UPLOAD_SOURCE_MAX_AGE_MS - 1,
+    );
+    const atExpiry = new Date(uploaded.getTime() + UPLOAD_SOURCE_MAX_AGE_MS);
+    const afterExpiry = new Date(
+      uploaded.getTime() + UPLOAD_SOURCE_MAX_AGE_MS + 1,
+    );
+
+    expect(isUploadSourceExpired(uploaded, beforeExpiry)).toBe(false);
+    expect(isUploadSourceExpired(uploaded, atExpiry)).toBe(true);
+    expect(isUploadSourceExpired(uploaded, afterExpiry)).toBe(true);
+  });
+
+  it("sweepExpiredUploadSources retains freshly uploaded objects", async () => {
+    const uploadKey = "uploads/sweep-fresh.mp4";
+    await env.CLIPS_BUCKET.put(uploadKey, new Uint8Array([0, 1, 2, 3]), {
+      httpMetadata: { contentType: "video/mp4" },
+    });
+
+    const deleted = await sweepExpiredUploadSources(env.CLIPS_BUCKET);
+    expect(deleted).toBe(0);
+    expect(await env.CLIPS_BUCKET.get(uploadKey)).not.toBeNull();
+  });
+
+  it("sweepExpiredUploadSources deletes objects older than 24h", async () => {
+    const staleKey = "uploads/sweep-stale-delete.mp4";
+    await env.CLIPS_BUCKET.put(staleKey, new Uint8Array([4, 5, 6, 7]), {
+      httpMetadata: { contentType: "video/mp4" },
+    });
+
+    const staleObject = await env.CLIPS_BUCKET.head(staleKey);
+    expect(staleObject).not.toBeNull();
+    const now = new Date(
+      staleObject!.uploaded.getTime() + UPLOAD_SOURCE_MAX_AGE_MS + 60_000,
+    );
+
+    const deleted = await sweepExpiredUploadSources(env.CLIPS_BUCKET, { now });
+    expect(deleted).toBeGreaterThanOrEqual(1);
+    expect(await env.CLIPS_BUCKET.get(staleKey)).toBeNull();
   });
 });
 
@@ -343,7 +444,7 @@ describe("deferred upload artifact staging", () => {
     expect(lastBody.status).toBe("complete");
     expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).not.toBeNull();
     expect(await env.CLIPS_BUCKET.get(keys.thumbnailKey)).not.toBeNull();
-    expect(await env.CLIPS_BUCKET.get(uploadKey)).toBeNull();
+    expect(await env.CLIPS_BUCKET.get(uploadKey)).not.toBeNull();
 
     const persisted = await getClipById(env.DB, clipId);
     expect(persisted?.status).toBe("complete");
@@ -394,7 +495,7 @@ describe("deferred upload artifact staging", () => {
     expect(persisted?.failure_mode).toBe("confirmed");
     expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).toBeNull();
     expect(await env.CLIPS_BUCKET.get(keys.thumbnailKey)).toBeNull();
-    expect(await env.CLIPS_BUCKET.get(uploadKey)).toBeNull();
+    expect(await env.CLIPS_BUCKET.get(uploadKey)).not.toBeNull();
   });
 
   it("reports uploading during deferred artifact copy", async () => {
@@ -484,7 +585,7 @@ describe("deferred upload artifact staging", () => {
     expect(recovered?.failure_mode).toBeNull();
     expect(recovered?.output_mp4_key).toBe(keys.mp4Key);
     expect(recovered?.output_thumbnail_key).toBe(keys.thumbnailKey);
-    expect(await env.CLIPS_BUCKET.get(uploadKey)).toBeNull();
+    expect(await env.CLIPS_BUCKET.get(uploadKey)).not.toBeNull();
   });
 });
 

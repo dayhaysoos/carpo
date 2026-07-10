@@ -1,6 +1,40 @@
 /** Upload source objects live under this R2 prefix (distinct from clip outputs). */
 export const UPLOAD_KEY_PREFIX = "uploads/";
 
+/** User-upload sources are retained for rapid re-clipping; swept after this age. */
+export const UPLOAD_SOURCE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+export function isUploadSourceExpired(
+  uploaded: Date,
+  now: Date,
+  maxAgeMs = UPLOAD_SOURCE_MAX_AGE_MS,
+): boolean {
+  return now.getTime() - uploaded.getTime() >= maxAgeMs;
+}
+
+export async function sweepExpiredUploadSources(
+  bucket: R2Bucket,
+  options?: { now?: Date; maxAgeMs?: number },
+): Promise<number> {
+  const now = options?.now ?? new Date();
+  const maxAgeMs = options?.maxAgeMs ?? UPLOAD_SOURCE_MAX_AGE_MS;
+  let deleted = 0;
+  let cursor: string | undefined;
+
+  do {
+    const listing = await bucket.list({ prefix: UPLOAD_KEY_PREFIX, cursor });
+    for (const object of listing.objects) {
+      if (isUploadSourceExpired(object.uploaded, now, maxAgeMs)) {
+        await bucket.delete(object.key);
+        deleted += 1;
+      }
+    }
+    cursor = listing.truncated ? listing.cursor : undefined;
+  } while (cursor);
+
+  return deleted;
+}
+
 /** Worker-streaming cap (paid Workers request body limit is 100MB). */
 export const MAX_UPLOAD_SIZE_WORKER_BYTES = 95 * 1024 * 1024;
 

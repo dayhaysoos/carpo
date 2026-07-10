@@ -24,7 +24,8 @@ const DEFAULT_MAX_UPLOAD_BYTES = 95 * 1024 * 1024;
 
 export function CreatorForm({ onClipCreated }: CreatorFormProps) {
   const [searchParams] = useSearchParams();
-  const [sourceMode, setSourceMode] = useState<SourceMode>("youtube");
+  const [sourceMode, setSourceMode] = useState<SourceMode>("upload");
+  const [clipCreatedNotice, setClipCreatedNotice] = useState(false);
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
   const [caption, setCaption] = useState("");
@@ -88,17 +89,19 @@ export function CreatorForm({ onClipCreated }: CreatorFormProps) {
     mutationFn: createClip,
     onSuccess: () => {
       onClipCreated();
-      setUrl("");
       setTitle("");
       setCaption("");
-      setQuality(DEFAULT_CLIP_QUALITY);
-      setUrlTouched(false);
-      setSelectedFile(null);
-      setUploadKey(null);
-      setUploadError(null);
-      setUploadProgress(null);
+      setClipCreatedNotice(true);
     },
   });
+
+  useEffect(() => {
+    if (!clipCreatedNotice) {
+      return;
+    }
+    const timeout = setTimeout(() => setClipCreatedNotice(false), 5000);
+    return () => clearTimeout(timeout);
+  }, [clipCreatedNotice]);
 
   const handleSourceModeChange = (mode: SourceMode) => {
     setSourceMode(mode);
@@ -381,6 +384,12 @@ export function CreatorForm({ onClipCreated }: CreatorFormProps) {
       <button type="submit" className="btn-primary" disabled={!canCreate || mutation.isPending}>
         {mutation.isPending ? "Creating…" : "Create clip"}
       </button>
+
+      {clipCreatedNotice && (
+        <p className="form-success" role="status">
+          Clip created — check the status panel
+        </p>
+      )}
     </form>
   );
 }
