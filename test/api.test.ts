@@ -6,6 +6,7 @@ import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { JOB_SECRET_HEADER, HELPER_TOKEN_HEADER } from "../src/auth";
 import { getClipById, outputKeysForClip } from "../src/db";
+import { ENCODER_POOL_INSTANCE } from "../src/encoder-pool";
 import { dispatchEncodingJob, failClipAmbiguous } from "../src/jobs";
 import type { EncoderJobSpec } from "../src/types";
 import {
@@ -21,6 +22,7 @@ import {
   STUB_DEFERRED_AMBIGUOUS_FAILURE_UPLOAD_KEY,
   STUB_DEFERRED_SLOW_UPLOAD_KEY,
   STUB_NO_CALLBACKS_SLOW_RUN_URL,
+  STUB_QUEUE_HOLD_URL,
   STUB_SKIP_COMPLETE_CALLBACK_URL,
   STUB_VERIFY_WORKER_BASE_URL,
   STUB_GIF_FAILURE_MP4_KEY,
@@ -56,9 +58,34 @@ function helperHeaders(token?: string): Record<string, string> {
 }
 
 async function getLastDispatch(clipId: string): Promise<EncoderJobSpec | null> {
-  const container = env.ENCODER_CONTAINER.getByName(clipId);
-  const response = await container.fetch("http://encoder/__carpo/last-dispatch");
+  const container = env.ENCODER_CONTAINER.getByName(ENCODER_POOL_INSTANCE);
+  const response = await container.fetch(
+    `http://encoder/__carpo/last-dispatch?jobId=${clipId}`,
+  );
   return (await response.json()) as EncoderJobSpec | null;
+}
+
+async function getMaxEncoderConcurrency(): Promise<number> {
+  const container = env.ENCODER_CONTAINER.getByName(ENCODER_POOL_INSTANCE);
+  const response = await container.fetch("http://encoder/__carpo/max-concurrency");
+  const body = (await response.json()) as { maxConcurrentRuns: number };
+  return body.maxConcurrentRuns;
+}
+
+async function releaseEncoderQueueHold(): Promise<void> {
+  const container = env.ENCODER_CONTAINER.getByName(ENCODER_POOL_INSTANCE);
+  await container.fetch("http://encoder/__carpo/queue-hold-release", {
+    method: "POST",
+  });
+}
+
+async function getEncoderJobEvents(jobId: string): Promise<string[]> {
+  const container = env.ENCODER_CONTAINER.getByName(ENCODER_POOL_INSTANCE);
+  const response = await container.fetch(
+    `http://encoder/__carpo/job-events?jobId=${jobId}`,
+  );
+  const body = (await response.json()) as { events: string[] };
+  return body.events;
 }
 
 async function uploadTestVideo(): Promise<string> {
@@ -1812,6 +1839,179 @@ describe("dispatchEncodingJob", () => {
   });
 });
 
+describe("warm encoder queue", () => {
+  it("serializes back-to-back clip dispatches on the shared encoder instance", async () => {
+    const first = await workerFetch("http://example.com/api/clips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "queue serialize first",
+        source: { type: "youtube", url: STUB_QUEUE_HOLD_URL },
+        trimStart: 1,
+        trimEnd: 4,
+        filters: [],
+      }),
+    });
+    expect(first.status).toBe(201);
+    const firstClip = (await first.json()) as { id: string };
+
+    const second = await workerFetch("http://example.com/api/clips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "queue serialize second",
+        source: {
+          type: "youtube",
+          url: "https://www.youtube.com/watch?v=queue-serialize-second",
+        },
+        trimStart: 1,
+        trimEnd: 4,
+        filters: [],
+      }),
+    });
+    expect(second.status).toBe(201);
+    const secondClip = (await second.json()) as { id: string };
+
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const firstRecord = await getClipById(env.DB, firstClip.id);
+      if (firstRecord?.status === "downloading") {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    const secondWhileFirstHeld = await getClipById(env.DB, secondClip.id);
+    expect(secondWhileFirstHeld?.status).toBe("queued");
+
+    await releaseEncoderQueueHold();
+
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      const firstRecord = await getClipById(env.DB, firstClip.id);
+      const secondRecord = await getClipById(env.DB, secondClip.id);
+      if (
+        firstRecord?.status === "complete" &&
+        secondRecord?.status === "complete"
+      ) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    expect((await getClipById(env.DB, firstClip.id))?.status).toBe("complete");
+    expect((await getClipById(env.DB, secondClip.id))?.status).toBe("complete");
+    expect(await getMaxEncoderConcurrency()).toBe(1);
+  });
+
+  it("serializes a GIF export behind an in-flight clip job", async () => {
+    const clip = await createYoutubeClip("queue gif behind clip");
+    const keys = outputKeysForClip(clip.clipId);
+
+    await env.CLIPS_BUCKET.put(keys.mp4Key, new Uint8Array([0x00, 0x00, 0x00, 0x1c]), {
+      httpMetadata: { contentType: "video/mp4" },
+    });
+    await env.CLIPS_BUCKET.put(keys.thumbnailKey, new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), {
+      httpMetadata: { contentType: "image/jpeg" },
+    });
+    await env.DB.prepare(
+      `UPDATE clips
+       SET status = 'complete',
+           output_mp4_key = ?,
+           output_thumbnail_key = ?
+       WHERE id = ?`,
+    )
+      .bind(keys.mp4Key, keys.thumbnailKey, clip.clipId)
+      .run();
+
+    const held = await workerFetch("http://example.com/api/clips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "queue gif blocker",
+        source: { type: "youtube", url: STUB_QUEUE_HOLD_URL },
+        trimStart: 1,
+        trimEnd: 4,
+        filters: [],
+      }),
+    });
+    expect(held.status).toBe(201);
+    const heldClip = (await held.json()) as { id: string };
+
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const record = await getClipById(env.DB, heldClip.id);
+      if (record?.status === "downloading") {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    const gifResponse = await workerFetch(
+      `http://example.com/api/clips/${clip.clipId}/gif`,
+      { method: "POST" },
+    );
+    expect(gifResponse.status).toBe(202);
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(await getMaxEncoderConcurrency()).toBe(1);
+
+    await releaseEncoderQueueHold();
+
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      const record = await getClipById(env.DB, clip.clipId);
+      if (record?.output_gif_key) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    expect((await getClipById(env.DB, clip.clipId))?.output_gif_key).toBe(keys.gifKey);
+    expect(await getMaxEncoderConcurrency()).toBe(1);
+  });
+
+  it("stages an upload source before run-start cleanup and completes the clip", async () => {
+    const uploadKey = "uploads/stage-order-check.mp4";
+    await env.CLIPS_BUCKET.put(uploadKey, new Uint8Array([0, 1, 2, 3]), {
+      httpMetadata: { contentType: "video/mp4" },
+    });
+
+    const response = await workerFetch("http://example.com/api/clips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "stage-before-run ordering",
+        source: { type: "upload", key: uploadKey },
+        trimStart: 0,
+        trimEnd: 5,
+      }),
+    });
+    expect(response.status).toBe(201);
+    const created = (await response.json()) as { id: string };
+    const clipId = created.id;
+
+    let lastBody: Record<string, unknown> = { status: "queued" };
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const statusResponse = await workerFetch(
+        `http://example.com/api/clips/${clipId}`,
+      );
+      lastBody = (await statusResponse.json()) as Record<string, unknown>;
+      if (lastBody.status === "complete" || lastBody.status === "failed") {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    // The clip only completes if the freshly staged source survived the
+    // run-start defensive cleanup (the production-breaking Bugbot finding).
+    expect(lastBody.status).toBe("complete");
+
+    const events = await getEncoderJobEvents(clipId);
+    expect(events.indexOf("stage-source")).toBeGreaterThanOrEqual(0);
+    expect(events.indexOf("run-start")).toBeGreaterThan(
+      events.indexOf("stage-source"),
+    );
+    expect(events[events.length - 1]).toBe("cleanup");
+  });
+});
+
 describe("GET /api/clips/:id", () => {
   it("returns 404 for unknown clips", async () => {
     const response = await workerFetch(
@@ -2181,7 +2381,10 @@ async function waitForGifStatus(
   target: "encoding" | "complete" | "failed",
 ) {
   let lastBody: Record<string, unknown> = {};
-  for (let attempt = 0; attempt < 40; attempt += 1) {
+  // GIF jobs share the warm-encoder FIFO queue with clip jobs, so allow a
+  // wider poll budget than a single-job wait to absorb queued work from
+  // earlier tests.
+  for (let attempt = 0; attempt < 120; attempt += 1) {
     const response = await workerFetch(`http://example.com/api/clips/${clipId}`);
     expect(response.status).toBe(200);
     lastBody = (await response.json()) as Record<string, unknown>;

@@ -10,11 +10,10 @@ import {
   outputKeysForClip,
   updateClipStatus,
 } from "./db";
+import { ENCODER_POOL_INSTANCE } from "./encoder-pool";
 import type { Env } from "./env";
 import type { ClipStatus, CreateClipRequest, EncoderJobSpec, FailureMode, GifEncoderJobSpec } from "./types";
 import { extractCaptionFromFilters } from "./validation";
-
-const ACTIVITY_RENEWAL_MS = 30_000;
 
 function isStickyTerminal(
   status: ClipStatus,
@@ -155,7 +154,7 @@ export async function dispatchEncodingJob(
       return;
     }
 
-    const container = env.ENCODER_CONTAINER.getByName(clipId);
+    const container = env.ENCODER_CONTAINER.getByName(ENCODER_POOL_INSTANCE);
     const outputKeys = outputKeysForClip(clipId);
     const workerBaseUrl =
       env.WORKER_BASE_URL || workerOrigin || "http://localhost:8787";
@@ -189,30 +188,23 @@ export async function dispatchEncodingJob(
         detail || `Encoder container start failed (${startResponse.status})`,
       );
     }
-    await markContainerJobRunningSafe(container, true);
-    const keepAlive = startActivityRenewal(container);
-
-    try {
-      // Hand off to the DO; it returns immediately and runs /run in waitUntil so
-      // terminal status survives worker waitUntil timeouts.
-      runPosted = true;
-      const dispatchResponse = await container.fetch(
-        "http://encoder/__carpo/dispatch",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(jobSpec),
-        },
+    // Hand off to the DO; it returns 202 immediately and runs the job in
+    // waitUntil behind a FIFO queue. Keepalive and queue lifecycle live in the
+    // DO — the worker only warms the container via /__carpo/start.
+    runPosted = true;
+    const dispatchResponse = await container.fetch(
+      "http://encoder/__carpo/dispatch",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(jobSpec),
+      },
+    );
+    if (!dispatchResponse.ok) {
+      const detail = await dispatchResponse.text();
+      throw new Error(
+        detail || `Encoder dispatch failed (${dispatchResponse.status})`,
       );
-      if (!dispatchResponse.ok) {
-        const detail = await dispatchResponse.text();
-        throw new Error(
-          detail || `Encoder dispatch failed (${dispatchResponse.status})`,
-        );
-      }
-    } finally {
-      clearInterval(keepAlive);
-      await markContainerJobRunningSafe(container, false);
     }
   } catch (error) {
     const message =
@@ -320,41 +312,6 @@ export async function applyStatusUpdate(
   await updateClipStatus(env.DB, clipId, status, errorMessage ?? null);
 }
 
-async function markContainerJobRunning(
-  container: DurableObjectStub,
-  running: boolean,
-): Promise<void> {
-  await container.fetch("http://encoder/__carpo/job-running", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ running }),
-  });
-}
-
-async function markContainerJobRunningSafe(
-  container: DurableObjectStub,
-  running: boolean,
-): Promise<void> {
-  try {
-    await markContainerJobRunning(container, running);
-  } catch (error) {
-    console.error(
-      `Failed to mark container job running=${running}:`,
-      error instanceof Error ? error.message : error,
-    );
-  }
-}
-
-function startActivityRenewal(
-  container: DurableObjectStub,
-): ReturnType<typeof setInterval> {
-  return setInterval(() => {
-    void container.fetch("http://encoder/__carpo/renew-activity", {
-      method: "POST",
-    });
-  }, ACTIVITY_RENEWAL_MS);
-}
-
 async function cleanupUploadSource(env: Env, clipId: string): Promise<void> {
   const record = await getClipById(env.DB, clipId);
   if (!record) {
@@ -381,7 +338,7 @@ export async function dispatchGifExportJob(
       return;
     }
 
-    const container = env.ENCODER_CONTAINER.getByName(`gif-${clipId}`);
+    const container = env.ENCODER_CONTAINER.getByName(ENCODER_POOL_INSTANCE);
     const gifKey = outputKeysForClip(clipId).gifKey;
 
     const startResponse = await container.fetch("http://encoder/__carpo/start", {
@@ -395,61 +352,53 @@ export async function dispatchGifExportJob(
         detail || `GIF encoder container start failed (${startResponse.status})`,
       );
     }
-    await markContainerJobRunningSafe(container, true);
-    const keepAlive = startActivityRenewal(container);
+    const jobSpec: GifEncoderJobSpec = {
+      jobId: clipId,
+      jobType: "gif",
+      sourceMp4Key: record.output_mp4_key,
+      source: { type: "file", path: `/tmp/carpo-src-${clipId}` },
+      outputs: { gifKey },
+    };
 
-    try {
-      const jobSpec: GifEncoderJobSpec = {
-        jobId: clipId,
-        jobType: "gif",
-        sourceMp4Key: record.output_mp4_key,
-        source: { type: "file", path: "/tmp/carpo-upload-source.mp4" },
-        outputs: { gifKey },
-      };
+    const response = await container.fetch("http://encoder/__carpo/gif-run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(jobSpec),
+    });
 
-      const response = await container.fetch("http://encoder/__carpo/gif-run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(jobSpec),
-      });
-
-      if (!response.ok) {
-        const detail = await response.text();
-        const parsed = parseGifEncoderRunResult(detail);
-        await markGifFailed(
-          env.DB,
-          clipId,
-          parsed?.errorMessage ?? `GIF encoder rejected job: ${detail}`,
-        );
-        return;
-      }
-
-      const result = (await response.json()) as GifEncoderRunResult;
-
-      if (result.status === "failed") {
-        await markGifFailed(
-          env.DB,
-          clipId,
-          result.errorMessage ?? "GIF encoding failed",
-        );
-        return;
-      }
-
-      if (result.status !== "complete") {
-        await markGifFailed(
-          env.DB,
-          clipId,
-          `Unexpected GIF encoder status: ${result.status ?? "unknown"}`,
-        );
-        return;
-      }
-
-      const storedGifKey = result.outputs?.gifKey ?? gifKey;
-      await markGifComplete(env.DB, clipId, storedGifKey);
-    } finally {
-      clearInterval(keepAlive);
-      await markContainerJobRunningSafe(container, false);
+    if (!response.ok) {
+      const detail = await response.text();
+      const parsed = parseGifEncoderRunResult(detail);
+      await markGifFailed(
+        env.DB,
+        clipId,
+        parsed?.errorMessage ?? `GIF encoder rejected job: ${detail}`,
+      );
+      return;
     }
+
+    const result = (await response.json()) as GifEncoderRunResult;
+
+    if (result.status === "failed") {
+      await markGifFailed(
+        env.DB,
+        clipId,
+        result.errorMessage ?? "GIF encoding failed",
+      );
+      return;
+    }
+
+    if (result.status !== "complete") {
+      await markGifFailed(
+        env.DB,
+        clipId,
+        `Unexpected GIF encoder status: ${result.status ?? "unknown"}`,
+      );
+      return;
+    }
+
+    const storedGifKey = result.outputs?.gifKey ?? gifKey;
+    await markGifComplete(env.DB, clipId, storedGifKey);
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Unknown GIF encoding error";

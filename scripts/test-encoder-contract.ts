@@ -2492,6 +2492,7 @@ function runStageSourceContract(frameCounterPath: string) {
   fs.mkdirSync(outputDir, { recursive: true });
   const encoderPort = 18084;
   const stageContainer = `${containerName}-stage-source`;
+  const jobId = "stage-source-contract";
 
   run("docker", ["rm", "-f", stageContainer]);
   run("docker", [
@@ -2515,7 +2516,7 @@ function runStageSourceContract(frameCounterPath: string) {
 conn = http.client.HTTPConnection("127.0.0.1", ${encoderPort})
 conn.request(
     "POST",
-    "/stage-source",
+    "/stage-source?job=${jobId}",
     body=b"0\\r\\n\\r\\n",
     headers={
         "Content-Type": "video/mp4",
@@ -2532,6 +2533,36 @@ print(conn.getresponse().status)`,
       );
     }
 
+    for (const [endpoint, badJob] of [
+      ["stage-source", "bad%2Fjob"],
+      ["stage-source", "bad.job"],
+      ["cleanup", "bad.job"],
+    ] as const) {
+      const invalidJob = spawnSync(
+        "curl",
+        [
+          "-sS",
+          "-o",
+          "/dev/null",
+          "-w",
+          "%{http_code}",
+          "-X",
+          "POST",
+          `http://127.0.0.1:${encoderPort}/${endpoint}?job=${badJob}`,
+          "-H",
+          "Content-Length: 4",
+          "--data-binary",
+          "test",
+        ],
+        { encoding: "utf-8" },
+      );
+      if (invalidJob.stdout?.trim() !== "400") {
+        throw new Error(
+          `Expected 400 for /${endpoint} with invalid job=${badJob}, got ${invalidJob.stdout}`,
+        );
+      }
+    }
+
     const sourceBytes = fs.readFileSync(frameCounterPath);
     const stagedPath = path.join(outputDir, "staged-upload-source.mp4");
     fs.writeFileSync(stagedPath, sourceBytes);
@@ -2546,7 +2577,7 @@ print(conn.getresponse().status)`,
         "%{http_code}",
         "-X",
         "POST",
-        `http://127.0.0.1:${encoderPort}/stage-source`,
+        `http://127.0.0.1:${encoderPort}/stage-source?job=${jobId}`,
         "-H",
         `Content-Length: ${sourceBytes.length}`,
         "-H",
@@ -2567,9 +2598,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, ${JSON.stringify(path.join(root, "container"))})
-from encoder import STAGED_UPLOAD_PATH
+from encoder import staged_source_path
 
-staged = Path(STAGED_UPLOAD_PATH)
+staged = staged_source_path(${JSON.stringify(jobId)})
 assert staged.exists(), "staged upload source missing"
 assert staged.stat().st_size == ${sourceBytes.length}, staged.stat().st_size
 print("Staged upload source size matches Content-Length")
@@ -2597,7 +2628,7 @@ declared = ${declaredLength}
 actual = ${truncatedLength}
 body = b"x" * actual
 request = (
-    f"POST /stage-source HTTP/1.1\\r\\n"
+    f"POST /stage-source?job=${jobId} HTTP/1.1\\r\\n"
     f"Host: 127.0.0.1:${encoderPort}\\r\\n"
     f"Content-Type: video/mp4\\r\\n"
     f"Content-Length: {declared}\\r\\n"
@@ -2631,9 +2662,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, ${JSON.stringify(path.join(root, "container"))})
-from encoder import STAGED_UPLOAD_PATH
+from encoder import staged_source_path
 
-staged = Path(STAGED_UPLOAD_PATH)
+staged = staged_source_path(${JSON.stringify(jobId)})
 assert not staged.exists(), "truncated upload should not leave staged file"
 print("Truncated upload left no staged file")
 `;
@@ -2837,6 +2868,196 @@ function runEncoderGifContract(fixturePath: string) {
   }
 }
 
+function runSequentialTwoJobContract(frameCounterPath: string) {
+  const sequentialDir = path.join(outputDir, "sequential-two-job");
+  fs.rmSync(sequentialDir, { recursive: true, force: true });
+  fs.mkdirSync(sequentialDir, { recursive: true });
+
+  const firstJobId = "sequential-job-1";
+  const secondJobId = "sequential-job-2";
+  const trimStart = 2.5;
+  const trimEnd = 5;
+
+  // Byte-for-byte mirror of the EncoderContainer DO call sequence for each
+  // job: POST /stage-source?job=X (source bytes) → POST /run with
+  // source={type:"file", path:"/tmp/carpo-src-X"} + deferArtifactUpload →
+  // GET /outputs/X/... → POST /cleanup?job=X. The staged source MUST survive
+  // the run-start defensive cleanup, which is exactly the flow production
+  // upload clips and GIF exports use.
+  const jobFor = (jobId: string, prefix: string) => ({
+    jobId,
+    source: { type: "file", path: `/tmp/carpo-src-${jobId}` },
+    trimStart,
+    trimEnd,
+    deferArtifactUpload: true,
+    maxClipLengthSeconds: 60,
+    outputs: {
+      mp4Key: `${prefix}.mp4`,
+      thumbnailKey: `${prefix}.jpg`,
+    },
+  });
+
+  const firstJobPath = path.join(sequentialDir, "first-job.json");
+  const secondJobPath = path.join(sequentialDir, "second-job.json");
+  fs.writeFileSync(firstJobPath, JSON.stringify(jobFor(firstJobId, "first")));
+  fs.writeFileSync(secondJobPath, JSON.stringify(jobFor(secondJobId, "second")));
+
+  const sequentialContainer = `${containerName}-sequential`;
+  const encoderPort = 18079;
+  run("docker", ["rm", "-f", sequentialContainer]);
+  run("docker", [
+    "run",
+    "-d",
+    "--name",
+    sequentialContainer,
+    "-p",
+    `${encoderPort}:8080`,
+    imageName,
+  ]);
+
+  const sourceBytes = fs.readFileSync(frameCounterPath);
+
+  const stageSource = (jobId: string) => {
+    const staged = spawnSync(
+      "curl",
+      [
+        "-sS",
+        "-o",
+        "/dev/null",
+        "-w",
+        "%{http_code}",
+        "-X",
+        "POST",
+        `http://127.0.0.1:${encoderPort}/stage-source?job=${jobId}`,
+        "-H",
+        `Content-Length: ${sourceBytes.length}`,
+        "-H",
+        "Content-Type: video/mp4",
+        "--data-binary",
+        `@${frameCounterPath}`,
+      ],
+      { encoding: "utf-8" },
+    );
+    if (staged.stdout?.trim() !== "204") {
+      throw new Error(
+        `stage-source for ${jobId} failed (${staged.stdout})`,
+      );
+    }
+  };
+
+  const runJob = (jobPath: string, label: string) => {
+    const encode = spawnSync(
+      "curl",
+      [
+        "-fsS",
+        "-X",
+        "POST",
+        `http://127.0.0.1:${encoderPort}/run`,
+        "-H",
+        "Content-Type: application/json",
+        "-d",
+        `@${jobPath}`,
+      ],
+      { encoding: "utf-8" },
+    );
+    if (encode.status !== 0) {
+      const logs = run("docker", ["logs", sequentialContainer]);
+      throw new Error(
+        `${label} sequential job failed\n${encode.stderr}\ncontainer logs:\n${logs}`,
+      );
+    }
+    const result = JSON.parse(encode.stdout) as {
+      status: string;
+      errorMessage?: string;
+    };
+    if (result.status !== "staged") {
+      throw new Error(
+        `${label} job expected staged status, got ${result.status}: ${result.errorMessage ?? ""}`,
+      );
+    }
+  };
+
+  const outputStatus = (jobId: string, name: string): string => {
+    const probe = spawnSync(
+      "curl",
+      [
+        "-sS",
+        "-o",
+        "/dev/null",
+        "-w",
+        "%{http_code}",
+        `http://127.0.0.1:${encoderPort}/outputs/${jobId}/${name}`,
+      ],
+      { encoding: "utf-8" },
+    );
+    return probe.stdout?.trim() ?? "";
+  };
+
+  const cleanupJob = (jobId: string) => {
+    const cleanup = spawnSync(
+      "curl",
+      [
+        "-sS",
+        "-o",
+        "/dev/null",
+        "-w",
+        "%{http_code}",
+        "-X",
+        "POST",
+        `http://127.0.0.1:${encoderPort}/cleanup?job=${jobId}`,
+      ],
+      { encoding: "utf-8" },
+    );
+    if (cleanup.stdout?.trim() !== "204") {
+      throw new Error(`Cleanup for ${jobId} failed (${cleanup.stdout})`);
+    }
+  };
+
+  const assertStagedSourceGone = (jobId: string) => {
+    const script = `
+import sys
+sys.path.insert(0, "/app")
+from encoder import staged_source_path
+assert not staged_source_path(${JSON.stringify(jobId)}).exists(), "staged source not cleaned"
+print("staged source cleaned for ${jobId}")
+`;
+    run("docker", ["exec", sequentialContainer, "python3", "-c", script]);
+  };
+
+  try {
+    waitForHealth(encoderPort);
+
+    stageSource(firstJobId);
+    runJob(firstJobPath, "First");
+    if (outputStatus(firstJobId, "clip.mp4") !== "200") {
+      throw new Error("First job MP4 not served");
+    }
+    if (outputStatus(firstJobId, "thumbnail.jpg") !== "200") {
+      throw new Error("First job thumbnail not served");
+    }
+    cleanupJob(firstJobId);
+    assertStagedSourceGone(firstJobId);
+
+    stageSource(secondJobId);
+    runJob(secondJobPath, "Second");
+    if (outputStatus(secondJobId, "clip.mp4") !== "200") {
+      throw new Error("Second job MP4 not served");
+    }
+    if (outputStatus(firstJobId, "clip.mp4") !== "404") {
+      throw new Error("First job outputs should remain cleaned up");
+    }
+    cleanupJob(secondJobId);
+    assertStagedSourceGone(secondJobId);
+    if (outputStatus(secondJobId, "clip.mp4") !== "404") {
+      throw new Error("Second job outputs were not cleaned up");
+    }
+
+    console.log("Encoder sequential two-job contract test passed");
+  } finally {
+    run("docker", ["rm", "-f", sequentialContainer]);
+  }
+}
+
 function main() {
   assertDockerAvailable();
   assertFfmpegAvailable();
@@ -2852,6 +3073,7 @@ function main() {
   testImageToolchainSmoke();
   testProcessGroupKill();
   runStageSourceContract(frameCounterPath);
+  runSequentialTwoJobContract(frameCounterPath);
   runEncoderYoutubeFailFastContract(frameCounterPath);
   runEncoderQualityContract(frameCounterPath, frameCounterHdPath);
   runEncoderEncodeFailureContract();
