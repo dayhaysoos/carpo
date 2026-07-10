@@ -62,42 +62,48 @@ def main():
     print(f"upload: {time.monotonic() - t0:.1f}s")
 
     clip_ids = []
+    completed_ids = []
     durations = []
-    for i, (a, b) in enumerate(TRIMS, 1):
-        t0 = time.monotonic()
-        clip = api(base, "POST", "/api/clips", {
-            "title": f"perf {i} ({a}-{b}s)",
-            "source": {"type": "upload", "key": put["key"]},
-            "trimStart": a, "trimEnd": b,
-            "filters": [{"type": "caption", "text": "perf"}] if i == 3 else [],
-        })
-        clip_ids.append(clip["id"])
-        final = poll_clip(base, clip["id"])
-        total = time.monotonic() - t0
-        status = final["status"] if final else "timeout"
-        err = (final or {}).get("errorMessage")
-        if status == "complete":
-            durations.append(total)
-        print(f"clip {i} [{a}-{b}s]{' +caption' if i == 3 else ''}: "
-              f"{total:.1f}s -> {status}{' ' + err if err else ''}")
+    try:
+        for i, (a, b) in enumerate(TRIMS, 1):
+            t0 = time.monotonic()
+            clip = api(base, "POST", "/api/clips", {
+                "title": f"perf {i} ({a}-{b}s)",
+                "source": {"type": "upload", "key": put["key"]},
+                "trimStart": a, "trimEnd": b,
+                "filters": [{"type": "caption", "text": "perf"}] if i == 3 else [],
+            })
+            clip_ids.append(clip["id"])
+            final = poll_clip(base, clip["id"])
+            total = time.monotonic() - t0
+            status = final["status"] if final else "timeout"
+            err = (final or {}).get("errorMessage")
+            if status == "complete":
+                completed_ids.append(clip["id"])
+                durations.append(total)
+            print(f"clip {i} [{a}-{b}s]{' +caption' if i == 3 else ''}: "
+                  f"{total:.1f}s -> {status}{' ' + err if err else ''}")
 
-    if clip_ids:
-        cid = clip_ids[0]
-        t0 = time.monotonic()
-        api(base, "POST", f"/api/clips/{cid}/gif")
-        while time.monotonic() - t0 < 180:
-            c = api(base, "GET", f"/api/clips/{cid}")
-            if c["gifStatus"] in ("complete", "failed"):
-                print(f"gif export: {time.monotonic() - t0:.1f}s -> {c['gifStatus']}")
-                break
-            time.sleep(0.5)
-
-    for cid in clip_ids:
-        req = urllib.request.Request(
-            f"{base}/api/clips/{cid}", method="DELETE", headers=HEADERS,
-        )
-        urllib.request.urlopen(req, timeout=30)
-    print("cleaned up test clips")
+        if completed_ids:
+            cid = completed_ids[0]
+            t0 = time.monotonic()
+            api(base, "POST", f"/api/clips/{cid}/gif")
+            while time.monotonic() - t0 < 180:
+                c = api(base, "GET", f"/api/clips/{cid}")
+                if c["gifStatus"] in ("complete", "failed"):
+                    print(f"gif export: {time.monotonic() - t0:.1f}s -> {c['gifStatus']}")
+                    break
+                time.sleep(0.5)
+    finally:
+        for cid in clip_ids:
+            try:
+                req = urllib.request.Request(
+                    f"{base}/api/clips/{cid}", method="DELETE", headers=HEADERS,
+                )
+                urllib.request.urlopen(req, timeout=30)
+            except Exception as exc:
+                print(f"cleanup failed for {cid[:8]}: {exc}", file=sys.stderr)
+        print("cleaned up test clips")
 
     if durations:
         print(f"\nsummary: {len(durations)} clips complete, "
