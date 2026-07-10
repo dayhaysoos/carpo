@@ -35,6 +35,7 @@ SECTION_DURATION_SLACK_SECONDS = 0.5
 SECTION_MISALIGNED_MESSAGE = "section download misaligned; falling back to server"
 SECTION_TOO_SHORT_MESSAGE = "section download too short"
 FFPROBE_TIMEOUT_SECONDS = 30
+PROCESS_POLL_INTERVAL_SECONDS = 0.5
 YTDLP_UPDATE_INTERVAL_SECONDS = 24 * 60 * 60
 YTDLP_UPDATE_TIMEOUT_SECONDS = 60
 ERROR_MESSAGE_MAX_LENGTH = 500
@@ -409,32 +410,64 @@ def find_downloaded_file(workdir: Path) -> Path:
     return candidates[0]
 
 
-def kill_process_group(proc: subprocess.Popen) -> None:
+def kill_process_group(proc: Any) -> None:
     try:
         os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
     except ProcessLookupError:
         pass
 
 
-def run_ytdlp(command: list[str], timeout_seconds: float) -> None:
+def poll_process(
+    proc: Any,
+    timeout_seconds: float,
+    *,
+    is_shutdown: Callable[[], bool] | None = None,
+    clock: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+    kill: Callable[[Any], None] = kill_process_group,
+) -> str:
+    if is_shutdown is None:
+        is_shutdown = lambda: _shutdown_requested
+    deadline = clock() + timeout_seconds
+    while proc.poll() is None:
+        if is_shutdown():
+            kill(proc)
+            proc.wait()
+            return "shutdown"
+        if clock() >= deadline:
+            kill(proc)
+            proc.wait()
+            return "timeout"
+        sleep(PROCESS_POLL_INTERVAL_SECONDS)
+    return "completed"
+
+
+def run_ytdlp(command: list[str], timeout_seconds: float, clip_id: str) -> None:
     # start_new_session puts yt-dlp and its ffmpeg children in their own
-    # process group so a timeout kill cannot orphan the children.
-    proc = subprocess.Popen(
-        command,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        start_new_session=True,
-    )
-    try:
-        stdout, stderr = proc.communicate(timeout=timeout_seconds)
-    except subprocess.TimeoutExpired as exc:
-        kill_process_group(proc)
-        proc.wait()
-        raise RuntimeError(f"yt-dlp timed out after {timeout_seconds:.0f}s") from exc
-    if proc.returncode != 0:
-        detail = (stderr or "").strip() or (stdout or "").strip() or f"exit code {proc.returncode}"
-        raise RuntimeError(f"yt-dlp failed: {detail}")
+    # process group so a kill cannot orphan the children. Output goes to temp
+    # files instead of pipes so termination cannot deadlock on a full buffer.
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as out_file, \
+            tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as err_file:
+        proc = subprocess.Popen(
+            command,
+            stdout=out_file,
+            stderr=err_file,
+            start_new_session=True,
+        )
+        outcome = poll_process(proc, timeout_seconds)
+        if outcome == "shutdown":
+            raise JobAborted(clip_id)
+        if outcome == "timeout":
+            raise RuntimeError(f"yt-dlp timed out after {timeout_seconds:.0f}s")
+        if proc.returncode != 0:
+            err_file.seek(0)
+            out_file.seek(0)
+            detail = (
+                err_file.read().strip()
+                or out_file.read().strip()
+                or f"exit code {proc.returncode}"
+            )
+            raise RuntimeError(f"yt-dlp failed: {detail}")
 
 
 def upload_file_put(
@@ -553,7 +586,7 @@ def process_job(
 
         download_budget = check_deadline(deadline)
         download_started = time.monotonic()
-        run_ytdlp(command, ytdlp_timeout_for_budget(download_budget))
+        run_ytdlp(command, ytdlp_timeout_for_budget(download_budget), clip_id)
         source_path = find_downloaded_file(workdir)
         size_bytes = source_path.stat().st_size
         size_mb = size_bytes / (1024 * 1024)

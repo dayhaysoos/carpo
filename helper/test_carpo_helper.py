@@ -26,6 +26,7 @@ from carpo_helper import (
     SECTION_MISALIGNED_MESSAGE,
     SECTION_TOO_SHORT_MESSAGE,
     parse_claim_payload,
+    poll_process,
     remaining_budget,
     render_config_json,
     resolve_upload_url,
@@ -302,6 +303,97 @@ class FakeClock:
 
     def __call__(self) -> float:
         return self.now
+
+
+class FakeProcess:
+    def __init__(self, finishes_after_polls: int | None = None, returncode: int = 0) -> None:
+        self.finishes_after_polls = finishes_after_polls
+        self.returncode: int | None = None
+        self._final_returncode = returncode
+        self.polls = 0
+        self.killed = False
+        self.reaped = False
+
+    def poll(self) -> int | None:
+        self.polls += 1
+        if (
+            self.finishes_after_polls is not None
+            and self.polls > self.finishes_after_polls
+        ):
+            self.returncode = self._final_returncode
+        return self.returncode
+
+    def wait(self) -> int:
+        self.reaped = True
+        self.returncode = self._final_returncode
+        return self.returncode
+
+
+class PollProcessTests(unittest.TestCase):
+    def test_completed_process(self) -> None:
+        proc = FakeProcess(finishes_after_polls=2)
+        clock = FakeClock(0.0)
+        outcome = poll_process(
+            proc,
+            180.0,
+            is_shutdown=lambda: False,
+            clock=clock,
+            sleep=lambda s: setattr(clock, "now", clock.now + s),
+            kill=lambda p: setattr(p, "killed", True),
+        )
+        self.assertEqual(outcome, "completed")
+        self.assertFalse(proc.killed)
+
+    def test_shutdown_kills_and_returns(self) -> None:
+        proc = FakeProcess()
+        clock = FakeClock(0.0)
+        outcome = poll_process(
+            proc,
+            180.0,
+            is_shutdown=lambda: True,
+            clock=clock,
+            sleep=lambda s: setattr(clock, "now", clock.now + s),
+            kill=lambda p: setattr(p, "killed", True),
+        )
+        self.assertEqual(outcome, "shutdown")
+        self.assertTrue(proc.killed)
+        self.assertTrue(proc.reaped)
+
+    def test_timeout_kills_and_returns(self) -> None:
+        proc = FakeProcess()
+        clock = FakeClock(0.0)
+        outcome = poll_process(
+            proc,
+            10.0,
+            is_shutdown=lambda: False,
+            clock=clock,
+            sleep=lambda s: setattr(clock, "now", clock.now + s),
+            kill=lambda p: setattr(p, "killed", True),
+        )
+        self.assertEqual(outcome, "timeout")
+        self.assertTrue(proc.killed)
+        self.assertTrue(proc.reaped)
+
+    def test_shutdown_mid_download(self) -> None:
+        shutdown_state = {"flag": False}
+        proc = FakeProcess()
+        clock = FakeClock(0.0)
+
+        def sleep(seconds: float) -> None:
+            clock.now += seconds
+            if clock.now >= 2.0:
+                shutdown_state["flag"] = True
+
+        outcome = poll_process(
+            proc,
+            180.0,
+            is_shutdown=lambda: shutdown_state["flag"],
+            clock=clock,
+            sleep=sleep,
+            kill=lambda p: setattr(p, "killed", True),
+        )
+        self.assertEqual(outcome, "shutdown")
+        self.assertTrue(proc.killed)
 
 
 class ApiTimeoutTests(unittest.TestCase):
