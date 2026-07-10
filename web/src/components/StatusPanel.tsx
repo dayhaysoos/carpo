@@ -46,7 +46,7 @@ export function StatusPanel() {
     refetchInterval: (query) => {
       const clips = query.state.data?.clips ?? [];
       const hasInFlight = clips.some((clip) => !isTerminalStatus(clip.status));
-      return hasInFlight ? 2000 : false;
+      return hasInFlight ? 1000 : false;
     },
   });
 

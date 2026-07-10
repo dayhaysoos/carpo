@@ -180,7 +180,7 @@ export function LibraryPage() {
       const clips = query.state.data?.clips ?? [];
       const hasInFlight = clips.some((clip) => !isTerminalStatus(clip.status));
       const hasGifEncoding = clips.some((clip) => clip.gifStatus === "encoding");
-      return hasInFlight || hasGifEncoding ? 2000 : false;
+      return hasInFlight || hasGifEncoding ? 1000 : false;
     },
   });
 
