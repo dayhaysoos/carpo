@@ -88,6 +88,22 @@ async function getEncoderJobEvents(jobId: string): Promise<string[]> {
   return body.events;
 }
 
+async function getContainerStartCount(): Promise<number> {
+  const container = env.ENCODER_CONTAINER.getByName(ENCODER_POOL_INSTANCE);
+  const response = await container.fetch("http://encoder/__carpo/container-starts");
+  const body = (await response.json()) as { count: number };
+  return body.count;
+}
+
+async function setPrewarmStartFailure(enabled: boolean): Promise<void> {
+  const container = env.ENCODER_CONTAINER.getByName(ENCODER_POOL_INSTANCE);
+  await container.fetch("http://encoder/__carpo/set-prewarm-start-failure", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled }),
+  });
+}
+
 async function uploadTestVideo(): Promise<string> {
   const slotResponse = await workerFetch("http://example.com/api/upload-url", {
     method: "POST",
@@ -159,6 +175,86 @@ describe("POST /api/upload-url", () => {
     expect(body.maxSizeBytes).toBeGreaterThan(0);
     expect(body.contentType).toBe("video/mp4");
     expect(body.method).toBe("PUT");
+  });
+
+  it("pre-warms the encoder container without affecting the response", async () => {
+    const startsBefore = await getContainerStartCount();
+
+    const response = await workerFetch("http://example.com/api/upload-url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contentType: "video/mp4",
+        sizeBytes: 1024,
+        filename: "clip.mp4",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      key: string;
+      uploadUrl: string;
+      maxSizeBytes: number;
+      contentType: string;
+      method: string;
+    };
+    expect(body.key).toMatch(/^uploads\/[0-9a-f-]+\.mp4$/i);
+    expect(body.uploadUrl).toContain(encodeURIComponent(body.key));
+    expect(body.maxSizeBytes).toBeGreaterThan(0);
+    expect(body.contentType).toBe("video/mp4");
+    expect(body.method).toBe("PUT");
+
+    expect(await getContainerStartCount()).toBe(startsBefore + 1);
+  });
+
+  it("does not pre-warm the encoder for invalid upload-url requests", async () => {
+    const startsBefore = await getContainerStartCount();
+
+    const response = await workerFetch("http://example.com/api/upload-url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contentType: "image/png",
+        sizeBytes: 1024,
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(await getContainerStartCount()).toBe(startsBefore);
+  });
+
+  it("returns a normal upload-url response when encoder pre-warm fails", async () => {
+    await setPrewarmStartFailure(true);
+    try {
+      const startsBefore = await getContainerStartCount();
+
+      const response = await workerFetch("http://example.com/api/upload-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contentType: "video/mp4",
+          sizeBytes: 1024,
+          filename: "clip.mp4",
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        key: string;
+        uploadUrl: string;
+        maxSizeBytes: number;
+        contentType: string;
+        method: string;
+      };
+      expect(body.key).toMatch(/^uploads\/[0-9a-f-]+\.mp4$/i);
+      expect(body.uploadUrl).toContain(encodeURIComponent(body.key));
+      expect(body.contentType).toBe("video/mp4");
+      expect(body.method).toBe("PUT");
+
+      expect(await getContainerStartCount()).toBe(startsBefore + 1);
+    } finally {
+      await setPrewarmStartFailure(false);
+    }
   });
 
   it("rejects unsupported content types", async () => {
