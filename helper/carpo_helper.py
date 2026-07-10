@@ -647,7 +647,29 @@ def process_job(
 
         download_budget = check_deadline(deadline)
         download_started = time.monotonic()
-        run_ytdlp(command, ytdlp_timeout_for_budget(download_budget), clip_id)
+        try:
+            run_ytdlp(command, ytdlp_timeout_for_budget(download_budget), clip_id)
+        except RuntimeError as exc:
+            # Browser cookies are an optimization; under launchd the Keychain
+            # is often unreadable, so a cookie failure must not fail the job.
+            if not config.get("cookiesFromBrowser"):
+                raise
+            logging.warning(
+                "cookie download failed clipId=%s; retrying without cookies: %s",
+                clip_id,
+                truncate_error_message(str(exc)),
+            )
+            command = build_ytdlp_command(
+                yt_dlp_path=config["ytDlpPath"],
+                url=url,
+                section_start=section_start,
+                section_end=section_end,
+                quality=quality,
+                output_dir=workdir,
+                cookies_from_browser=None,
+            )
+            retry_budget = check_deadline(deadline)
+            run_ytdlp(command, ytdlp_timeout_for_budget(retry_budget), clip_id)
         source_path = find_downloaded_file(workdir)
         size_bytes = source_path.stat().st_size
         size_mb = size_bytes / (1024 * 1024)
