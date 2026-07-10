@@ -33,6 +33,7 @@ from carpo_helper import (
     section_alignment_error,
     section_bounds,
     truncate_error_message,
+    update_due,
     validate_config,
     ytdlp_format_for_quality,
     ytdlp_timeout_for_budget,
@@ -327,6 +328,21 @@ class FakeProcess:
         self.reaped = True
         self.returncode = self._final_returncode
         return self.returncode
+
+
+class UpdateDueTests(unittest.TestCase):
+    def test_not_due_before_interval(self) -> None:
+        self.assertFalse(update_due(0.0, 1000.0, interval=86400.0))
+
+    def test_due_at_interval_boundary(self) -> None:
+        self.assertTrue(update_due(0.0, 86400.0, interval=86400.0))
+
+    def test_due_after_interval(self) -> None:
+        self.assertTrue(update_due(100.0, 100000.0, interval=86400.0))
+
+    def test_default_interval_is_24h(self) -> None:
+        self.assertFalse(update_due(0.0, 24 * 60 * 60 - 1))
+        self.assertTrue(update_due(0.0, 24 * 60 * 60))
 
 
 class PollProcessTests(unittest.TestCase):

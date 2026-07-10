@@ -13,6 +13,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -727,6 +728,22 @@ def update_ytdlp(config: dict[str, Any]) -> None:
         logging.warning("yt-dlp update error: %s", exc)
 
 
+def update_due(
+    last_update: float,
+    now: float,
+    interval: float = YTDLP_UPDATE_INTERVAL_SECONDS,
+) -> bool:
+    return now - last_update >= interval
+
+
+# yt-dlp invocations racing a self-update are fine: pip/brew swap the binary
+# atomically, so no locking between the updater thread and downloads.
+def spawn_ytdlp_updater(config: dict[str, Any]) -> threading.Thread:
+    thread = threading.Thread(target=update_ytdlp, args=(config,), daemon=True)
+    thread.start()
+    return thread
+
+
 def handle_shutdown_signal(_signum: int, _frame: Any) -> None:
     global _shutdown_requested
     _shutdown_requested = True
@@ -742,8 +759,10 @@ def configure_logging() -> None:
 
 
 def run_loop(config: dict[str, Any], *, once: bool = False, dry_run: bool = False) -> None:
-    update_ytdlp(config)
+    updater: threading.Thread | None = None
     last_update = time.monotonic()
+    if not once:
+        updater = spawn_ytdlp_updater(config)
     backoff_seconds = config["pollIntervalSeconds"]
 
     while not _shutdown_requested:
@@ -776,8 +795,10 @@ def run_loop(config: dict[str, Any], *, once: bool = False, dry_run: bool = Fals
         if once:
             return
 
-        if time.monotonic() - last_update >= YTDLP_UPDATE_INTERVAL_SECONDS:
-            update_ytdlp(config)
+        if update_due(last_update, time.monotonic()) and (
+            updater is None or not updater.is_alive()
+        ):
+            updater = spawn_ytdlp_updater(config)
             last_update = time.monotonic()
 
 
