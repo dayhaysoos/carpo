@@ -235,10 +235,20 @@ export class EncoderContainer extends Container<Env> {
   private async executeClipRun(job: RunJobSpec): Promise<Response> {
     const clipId = job.jobId;
     const jobId = sanitizeJobId(clipId);
+    const phaseStarted = Date.now();
+    let lastPhase = phaseStarted;
+    const logPhase = (name: string) => {
+      const now = Date.now();
+      console.log(
+        `clip ${clipId} phase ${name}: ${now - lastPhase}ms (total ${now - phaseStarted}ms)`,
+      );
+      lastPhase = now;
+    };
 
     try {
       if (job.source?.type === "upload") {
         const staged = await this.stageUploadSource(job.source.key, jobId);
+        logPhase("stage-source");
         if (!staged.ok) {
           await failClip(this.env, clipId, staged.error);
           return Response.json(
@@ -262,6 +272,7 @@ export class EncoderContainer extends Container<Env> {
           body: JSON.stringify(job),
         }),
       );
+      logPhase("encoder-run");
 
       const rawBody = await response.text();
       const classified = classifyEncoderRunResponse(
@@ -275,6 +286,7 @@ export class EncoderContainer extends Container<Env> {
         if (result.status === "staged" || result.status === "complete") {
           try {
             await this.uploadDeferredArtifacts(job.outputs, jobId);
+            logPhase("upload-artifacts");
           } catch (error) {
             await this.cleanupDeferredArtifacts(job.outputs);
             const message =
