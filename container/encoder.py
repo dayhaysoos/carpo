@@ -24,6 +24,10 @@ MAX_CLIP_LENGTH_SECONDS = 60
 HOST = "0.0.0.0"
 PORT = int(os.environ.get("PORT", "8080"))
 STAGED_UPLOAD_PATH = "/tmp/carpo-upload-source.mp4"
+STAGED_SOURCE_PREFIX = "/tmp/carpo-src-"
+OUTPUTS_BASE_DIR = Path("/outputs")
+JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]+$")
+JOB_ARTIFACT_MAX_AGE_SECONDS = 3600
 STAGE_SOURCE_CHUNK_SIZE = 1024 * 1024
 JOB_SECRET_HEADER = "X-Carpo-Job-Secret"
 MAX_CALLBACK_ATTEMPTS = 5
@@ -47,7 +51,6 @@ YOUTUBE_USE_DOWNLOAD_SECTIONS = True
 ENCODE_TIMEOUT_SECONDS = 600
 UPLOAD_TIMEOUT_SECONDS = 600
 VIDEO_CONTAINER_EXTENSIONS = ("mp4", "mkv", "webm")
-DEFERRED_OUTPUT_DIR = Path("/tmp/carpo-output")
 GIF_OUTPUT_NAME = "clip.gif"
 GIF_FPS = 12
 GIF_MAX_WIDTH = 480
@@ -111,6 +114,60 @@ ENCODE_FAILURE_MESSAGE = (
 
 def log(message: str) -> None:
     print(message, flush=True)
+
+
+def sanitize_job_id(job_id: str) -> str:
+    if not job_id or not JOB_ID_PATTERN.match(job_id):
+        raise ValueError("Invalid job ID")
+    return job_id
+
+
+def staged_source_path(job_id: str) -> Path:
+    return Path(f"{STAGED_SOURCE_PREFIX}{sanitize_job_id(job_id)}")
+
+
+def job_output_dir(job_id: str) -> Path:
+    return OUTPUTS_BASE_DIR / sanitize_job_id(job_id)
+
+
+def parse_job_id_from_query(path: str) -> str | None:
+    query = path.split("?", 1)[1] if "?" in path else ""
+    for part in query.split("&"):
+        if part.startswith("job="):
+            return sanitize_job_id(part[4:])
+    return None
+
+
+def cleanup_job_artifacts(job_id: str) -> None:
+    safe_id = sanitize_job_id(job_id)
+    staged_source_path(safe_id).unlink(missing_ok=True)
+    output_dir = job_output_dir(safe_id)
+    if output_dir.exists():
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def sweep_stale_job_artifacts() -> None:
+    cutoff = time.time() - JOB_ARTIFACT_MAX_AGE_SECONDS
+    for path in Path("/tmp").glob("carpo-src-*"):
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink(missing_ok=True)
+        except OSError:
+            continue
+    if OUTPUTS_BASE_DIR.exists():
+        for output_dir in OUTPUTS_BASE_DIR.iterdir():
+            if not output_dir.is_dir():
+                continue
+            try:
+                if output_dir.stat().st_mtime < cutoff:
+                    shutil.rmtree(output_dir, ignore_errors=True)
+            except OSError:
+                continue
+
+
+def prepare_job_workspace(job_id: str) -> None:
+    cleanup_job_artifacts(job_id)
+    sweep_stale_job_artifacts()
 
 
 def log_ytdlp_environment() -> None:
@@ -1354,8 +1411,8 @@ class TruncatedBodyError(ValueError):
     """Raised when fewer bytes were received than Content-Length declared."""
 
 
-def stream_upload_source(rfile, length: int) -> None:
-    path = Path(STAGED_UPLOAD_PATH)
+def stream_upload_source(rfile, length: int, job_id: str) -> None:
+    path = staged_source_path(job_id)
     path.parent.mkdir(parents=True, exist_ok=True)
 
     received = 0
@@ -1412,6 +1469,9 @@ def process_gif_job(job: dict[str, Any]) -> dict[str, Any]:
         message = str(exc) or "GIF job validation failed"
         return run_result("failed", job, error_message=message)
 
+    job_id = sanitize_job_id(str(job.get("jobId", "")))
+    prepare_job_workspace(job_id)
+
     with tempfile.TemporaryDirectory(prefix="carpo-gif-") as tmp:
         workdir = Path(tmp)
         try:
@@ -1431,8 +1491,9 @@ def process_gif_job(job: dict[str, Any]) -> dict[str, Any]:
                     out_dir / Path(outputs.get("gifKey", GIF_OUTPUT_NAME)).name,
                 )
             elif defer_upload:
-                DEFERRED_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(output_gif, DEFERRED_OUTPUT_DIR / GIF_OUTPUT_NAME)
+                out_dir = job_output_dir(job_id)
+                out_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(output_gif, out_dir / GIF_OUTPUT_NAME)
             else:
                 raise RuntimeError("GIF artifact upload is not configured")
 
@@ -1464,6 +1525,9 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001 - validation bugs become confirmed failures
         message = str(exc) or "Job validation failed"
         return run_result("failed", job, error_message=message)
+
+    job_id = sanitize_job_id(str(job.get("jobId", "")))
+    prepare_job_workspace(job_id)
 
     with tempfile.TemporaryDirectory(prefix="carpo-encode-") as tmp:
         workdir = Path(tmp)
@@ -1555,9 +1619,10 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
             if job.get("localOutputDir"):
                 copy_outputs_locally(job, output_mp4, output_thumb)
             elif defer_upload:
-                DEFERRED_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(output_mp4, DEFERRED_OUTPUT_DIR / "clip.mp4")
-                shutil.copy2(output_thumb, DEFERRED_OUTPUT_DIR / "thumbnail.jpg")
+                out_dir = job_output_dir(job_id)
+                out_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(output_mp4, out_dir / "clip.mp4")
+                shutil.copy2(output_thumb, out_dir / "thumbnail.jpg")
             else:
                 upload_artifacts(
                     job,
@@ -1621,15 +1686,25 @@ class EncoderHandler(BaseHTTPRequestHandler):
         if self.path == "/health":
             self._send_json(200, {"ok": True})
             return
-        if self.path == "/outputs/clip.mp4":
-            return self._send_file(DEFERRED_OUTPUT_DIR / "clip.mp4", "video/mp4")
-        if self.path == "/outputs/thumbnail.jpg":
-            return self._send_file(
-                DEFERRED_OUTPUT_DIR / "thumbnail.jpg",
-                "image/jpeg",
-            )
-        if self.path == "/outputs/clip.gif":
-            return self._send_file(DEFERRED_OUTPUT_DIR / GIF_OUTPUT_NAME, "image/gif")
+        if self.path.startswith("/outputs/"):
+            parts = self.path[len("/outputs/") :].split("/", 1)
+            if len(parts) == 2:
+                job_id, name = parts
+                content_types = {
+                    "clip.mp4": "video/mp4",
+                    "thumbnail.jpg": "image/jpeg",
+                    "clip.gif": "image/gif",
+                }
+                if name in content_types:
+                    try:
+                        safe_id = sanitize_job_id(job_id)
+                    except ValueError:
+                        self.send_error(404, "Not found")
+                        return
+                    return self._send_file(
+                        job_output_dir(safe_id) / name,
+                        content_types[name],
+                    )
         self.send_error(404, "Not found")
 
     def _send_file(self, path: Path, content_type: str) -> None:
@@ -1645,7 +1720,11 @@ class EncoderHandler(BaseHTTPRequestHandler):
             shutil.copyfileobj(handle, self.wfile)
 
     def do_POST(self) -> None:  # noqa: N802
-        if self.path == "/stage-source":
+        if self.path.startswith("/stage-source"):
+            job_id = parse_job_id_from_query(self.path)
+            if not job_id:
+                self.send_error(400, "job query parameter required")
+                return
             content_length = self.headers.get("Content-Length")
             if content_length is None or not content_length.strip():
                 self.send_error(411, "Length Required")
@@ -1659,12 +1738,26 @@ class EncoderHandler(BaseHTTPRequestHandler):
                 self.send_error(411, "Length Required")
                 return
             try:
-                stream_upload_source(self.rfile, length)
+                stream_upload_source(self.rfile, length, job_id)
             except TruncatedBodyError:
                 self.send_error(400, "Bad Request")
                 return
             except Exception as exc:  # noqa: BLE001
                 self._send_json(500, {"status": "failed", "errorMessage": str(exc)})
+                return
+            self.send_response(204)
+            self.end_headers()
+            return
+
+        if self.path.startswith("/cleanup"):
+            job_id = parse_job_id_from_query(self.path)
+            if not job_id:
+                self.send_error(400, "job query parameter required")
+                return
+            try:
+                cleanup_job_artifacts(job_id)
+            except ValueError as exc:
+                self.send_error(400, str(exc))
                 return
             self.send_response(204)
             self.end_headers()

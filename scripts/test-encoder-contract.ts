@@ -2492,6 +2492,7 @@ function runStageSourceContract(frameCounterPath: string) {
   fs.mkdirSync(outputDir, { recursive: true });
   const encoderPort = 18084;
   const stageContainer = `${containerName}-stage-source`;
+  const jobId = "stage-source-contract";
 
   run("docker", ["rm", "-f", stageContainer]);
   run("docker", [
@@ -2515,7 +2516,7 @@ function runStageSourceContract(frameCounterPath: string) {
 conn = http.client.HTTPConnection("127.0.0.1", ${encoderPort})
 conn.request(
     "POST",
-    "/stage-source",
+    "/stage-source?job=${jobId}",
     body=b"0\\r\\n\\r\\n",
     headers={
         "Content-Type": "video/mp4",
@@ -2546,7 +2547,7 @@ print(conn.getresponse().status)`,
         "%{http_code}",
         "-X",
         "POST",
-        `http://127.0.0.1:${encoderPort}/stage-source`,
+        `http://127.0.0.1:${encoderPort}/stage-source?job=${jobId}`,
         "-H",
         `Content-Length: ${sourceBytes.length}`,
         "-H",
@@ -2567,9 +2568,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, ${JSON.stringify(path.join(root, "container"))})
-from encoder import STAGED_UPLOAD_PATH
+from encoder import staged_source_path
 
-staged = Path(STAGED_UPLOAD_PATH)
+staged = staged_source_path(${JSON.stringify(jobId)})
 assert staged.exists(), "staged upload source missing"
 assert staged.stat().st_size == ${sourceBytes.length}, staged.stat().st_size
 print("Staged upload source size matches Content-Length")
@@ -2597,7 +2598,7 @@ declared = ${declaredLength}
 actual = ${truncatedLength}
 body = b"x" * actual
 request = (
-    f"POST /stage-source HTTP/1.1\\r\\n"
+    f"POST /stage-source?job=${jobId} HTTP/1.1\\r\\n"
     f"Host: 127.0.0.1:${encoderPort}\\r\\n"
     f"Content-Type: video/mp4\\r\\n"
     f"Content-Length: {declared}\\r\\n"
@@ -2631,9 +2632,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, ${JSON.stringify(path.join(root, "container"))})
-from encoder import STAGED_UPLOAD_PATH
+from encoder import staged_source_path
 
-staged = Path(STAGED_UPLOAD_PATH)
+staged = staged_source_path(${JSON.stringify(jobId)})
 assert not staged.exists(), "truncated upload should not leave staged file"
 print("Truncated upload left no staged file")
 `;
@@ -2837,6 +2838,188 @@ function runEncoderGifContract(fixturePath: string) {
   }
 }
 
+function runSequentialTwoJobContract(frameCounterPath: string) {
+  const sequentialDir = path.join(outputDir, "sequential-two-job");
+  fs.rmSync(sequentialDir, { recursive: true, force: true });
+  fs.mkdirSync(sequentialDir, { recursive: true });
+
+  const firstJobId = "sequential-job-1";
+  const secondJobId = "sequential-job-2";
+  const trimStart = 2.5;
+  const trimEnd = 5;
+
+  const firstJob = {
+    jobId: firstJobId,
+    source: { type: "file", path: "/fixture/framecounter.mp4" },
+    trimStart,
+    trimEnd,
+    deferArtifactUpload: true,
+    maxClipLengthSeconds: 60,
+    outputs: {
+      mp4Key: "first.mp4",
+      thumbnailKey: "first.jpg",
+    },
+  };
+  const secondJob = {
+    jobId: secondJobId,
+    source: { type: "file", path: "/fixture/framecounter.mp4" },
+    trimStart,
+    trimEnd,
+    deferArtifactUpload: true,
+    maxClipLengthSeconds: 60,
+    outputs: {
+      mp4Key: "second.mp4",
+      thumbnailKey: "second.jpg",
+    },
+  };
+
+  const firstJobPath = path.join(sequentialDir, "first-job.json");
+  const secondJobPath = path.join(sequentialDir, "second-job.json");
+  fs.writeFileSync(firstJobPath, JSON.stringify(firstJob));
+  fs.writeFileSync(secondJobPath, JSON.stringify(secondJob));
+
+  const sequentialContainer = `${containerName}-sequential`;
+  const encoderPort = 18079;
+  run("docker", ["rm", "-f", sequentialContainer]);
+  run("docker", [
+    "run",
+    "-d",
+    "--name",
+    sequentialContainer,
+    "-p",
+    `${encoderPort}:8080`,
+    "-v",
+    `${frameCounterPath}:/fixture/framecounter.mp4:ro`,
+    imageName,
+  ]);
+
+  try {
+    waitForHealth(encoderPort);
+
+    const first = spawnSync(
+      "curl",
+      [
+        "-fsS",
+        "-X",
+        "POST",
+        `http://127.0.0.1:${encoderPort}/run`,
+        "-H",
+        "Content-Type: application/json",
+        "-d",
+        `@${firstJobPath}`,
+      ],
+      { encoding: "utf-8" },
+    );
+    if (first.status !== 0) {
+      throw new Error(`First sequential job failed\n${first.stderr}`);
+    }
+    const firstResult = JSON.parse(first.stdout) as { status: string };
+    if (firstResult.status !== "staged") {
+      throw new Error(`First job expected staged status, got ${firstResult.status}`);
+    }
+
+    const firstMp4 = spawnSync(
+      "curl",
+      ["-fsS", "-o", "/dev/null", "-w", "%{http_code}", `http://127.0.0.1:${encoderPort}/outputs/${firstJobId}/clip.mp4`],
+      { encoding: "utf-8" },
+    );
+    if (firstMp4.stdout?.trim() !== "200") {
+      throw new Error(`First job MP4 not served (${firstMp4.stdout})`);
+    }
+
+    const firstCleanup = spawnSync(
+      "curl",
+      [
+        "-fsS",
+        "-o",
+        "/dev/null",
+        "-w",
+        "%{http_code}",
+        "-X",
+        "POST",
+        `http://127.0.0.1:${encoderPort}/cleanup?job=${firstJobId}`,
+      ],
+      { encoding: "utf-8" },
+    );
+    if (firstCleanup.stdout?.trim() !== "204") {
+      throw new Error(`First job cleanup failed (${firstCleanup.stdout})`);
+    }
+
+    const second = spawnSync(
+      "curl",
+      [
+        "-fsS",
+        "-X",
+        "POST",
+        `http://127.0.0.1:${encoderPort}/run`,
+        "-H",
+        "Content-Type: application/json",
+        "-d",
+        `@${secondJobPath}`,
+      ],
+      { encoding: "utf-8" },
+    );
+    if (second.status !== 0) {
+      throw new Error(`Second sequential job failed\n${second.stderr}`);
+    }
+    const secondResult = JSON.parse(second.stdout) as { status: string };
+    if (secondResult.status !== "staged") {
+      throw new Error(`Second job expected staged status, got ${secondResult.status}`);
+    }
+
+    const secondMp4 = spawnSync(
+      "curl",
+      ["-fsS", "-o", "/dev/null", "-w", "%{http_code}", `http://127.0.0.1:${encoderPort}/outputs/${secondJobId}/clip.mp4`],
+      { encoding: "utf-8" },
+    );
+    if (secondMp4.stdout?.trim() !== "200") {
+      throw new Error(`Second job MP4 not served (${secondMp4.stdout})`);
+    }
+
+    const firstCleaned = spawnSync(
+      "curl",
+      ["-fsS", "-o", "/dev/null", "-w", "%{http_code}", `http://127.0.0.1:${encoderPort}/outputs/${firstJobId}/clip.mp4`],
+      { encoding: "utf-8" },
+    );
+    if (firstCleaned.stdout?.trim() !== "404") {
+      throw new Error(
+        `First job outputs should remain cleaned up (got ${firstCleaned.stdout})`,
+      );
+    }
+
+    const cleanup = spawnSync(
+      "curl",
+      [
+        "-fsS",
+        "-o",
+        "/dev/null",
+        "-w",
+        "%{http_code}",
+        "-X",
+        "POST",
+        `http://127.0.0.1:${encoderPort}/cleanup?job=${secondJobId}`,
+      ],
+      { encoding: "utf-8" },
+    );
+    if (cleanup.stdout?.trim() !== "204") {
+      throw new Error(`Cleanup endpoint failed (${cleanup.stdout})`);
+    }
+
+    const secondAfterCleanup = spawnSync(
+      "curl",
+      ["-fsS", "-o", "/dev/null", "-w", "%{http_code}", `http://127.0.0.1:${encoderPort}/outputs/${secondJobId}/clip.mp4`],
+      { encoding: "utf-8" },
+    );
+    if (secondAfterCleanup.stdout?.trim() !== "404") {
+      throw new Error(`Second job outputs were not cleaned up (${secondAfterCleanup.stdout})`);
+    }
+
+    console.log("Encoder sequential two-job contract test passed");
+  } finally {
+    run("docker", ["rm", "-f", sequentialContainer]);
+  }
+}
+
 function main() {
   assertDockerAvailable();
   assertFfmpegAvailable();
@@ -2852,6 +3035,7 @@ function main() {
   testImageToolchainSmoke();
   testProcessGroupKill();
   runStageSourceContract(frameCounterPath);
+  runSequentialTwoJobContract(frameCounterPath);
   runEncoderYoutubeFailFastContract(frameCounterPath);
   runEncoderQualityContract(frameCounterPath, frameCounterHdPath);
   runEncoderEncodeFailureContract();
