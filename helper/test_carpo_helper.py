@@ -25,8 +25,10 @@ from carpo_helper import (
     load_config,
     SECTION_MISALIGNED_MESSAGE,
     SECTION_TOO_SHORT_MESSAGE,
+    PUT_SOCKET_TIMEOUT_CAP_SECONDS,
     parse_claim_payload,
     poll_process,
+    put_socket_timeout,
     remaining_budget,
     render_config_json,
     resolve_upload_url,
@@ -274,6 +276,18 @@ class SectionAlignmentTests(unittest.TestCase):
 
     def test_all_missing_proceeds(self) -> None:
         self.assertIsNone(section_alignment_error(None, None, 20.0, 7.0))
+
+
+class PutSocketTimeoutTests(unittest.TestCase):
+    def test_large_budget_capped_at_30(self) -> None:
+        self.assertEqual(put_socket_timeout(230.0), PUT_SOCKET_TIMEOUT_CAP_SECONDS)
+
+    def test_small_budget_used_directly(self) -> None:
+        self.assertEqual(put_socket_timeout(20.0), 20.0)
+
+    def test_tiny_budget_floored_at_5(self) -> None:
+        self.assertEqual(put_socket_timeout(2.0), API_TIMEOUT_FLOOR_SECONDS)
+        self.assertEqual(put_socket_timeout(0.0), API_TIMEOUT_FLOOR_SECONDS)
 
 
 class DeadlineReaderTests(unittest.TestCase):

@@ -30,6 +30,7 @@ MIN_PUT_BUDGET_SECONDS = 15.0
 MIN_API_BUDGET_SECONDS = 10.0
 API_TIMEOUT_SECONDS = 60.0
 API_TIMEOUT_FLOOR_SECONDS = 5.0
+PUT_SOCKET_TIMEOUT_CAP_SECONDS = 30.0
 DEADLINE_EXCEEDED_MESSAGE = "helper deadline exceeded"
 SECTION_START_DRIFT_TOLERANCE_SECONDS = 0.25
 SECTION_DURATION_SLACK_SECONDS = 0.5
@@ -100,6 +101,14 @@ def api_timeout_for_budget(
     floor: float = API_TIMEOUT_FLOOR_SECONDS,
 ) -> float:
     return max(floor, min(base_timeout, budget))
+
+
+def put_socket_timeout(
+    budget: float,
+    cap: float = PUT_SOCKET_TIMEOUT_CAP_SECONDS,
+    floor: float = API_TIMEOUT_FLOOR_SECONDS,
+) -> float:
+    return max(floor, min(cap, budget))
 
 
 def parse_claim_payload(job: Any) -> dict[str, Any]:
@@ -498,8 +507,14 @@ def upload_file_put(
             headers=headers,
             method="PUT",
         )
+        # DeadlineReader bounds total duration; the socket timeout only needs
+        # to bound a single stalled operation and must stay well under the
+        # server's claim-sweep margin.
         try:
-            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            with urllib.request.urlopen(
+                request,
+                timeout=put_socket_timeout(timeout_seconds),
+            ) as response:
                 if response.status not in (200, 201):
                     raise RuntimeError(f"Upload failed with status {response.status}")
         except urllib.error.HTTPError as exc:
