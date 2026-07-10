@@ -30,6 +30,8 @@ JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]+$")
 JOB_ARTIFACT_MAX_AGE_SECONDS = 3600
 STAGE_SOURCE_CHUNK_SIZE = 1024 * 1024
 JOB_SECRET_HEADER = "X-Carpo-Job-Secret"
+# Cloudflare's edge 403-bans urllib's default Python-urllib UA (error 1010).
+USER_AGENT = "carpo-encoder/1.0"
 MAX_CALLBACK_ATTEMPTS = 5
 MAX_INTERMEDIATE_CALLBACK_ATTEMPTS = 3
 INITIAL_CALLBACK_BACKOFF_SECONDS = 0.5
@@ -231,7 +233,7 @@ def post_status(
         payload["errorMessage"] = error_message
 
     data = json.dumps(payload).encode("utf-8")
-    headers = {"Content-Type": "application/json"}
+    headers = {"Content-Type": "application/json", "User-Agent": USER_AGENT}
     if secret:
         headers[JOB_SECRET_HEADER] = secret
 
@@ -942,7 +944,7 @@ def download_upload(
     *,
     secret: str | None = None,
 ) -> Path:
-    headers: dict[str, str] = {}
+    headers: dict[str, str] = {"User-Agent": USER_AGENT}
     if secret:
         headers[JOB_SECRET_HEADER] = secret
 
@@ -1374,7 +1376,7 @@ def upload_file(
 ) -> None:
     with local_path.open("rb") as handle:
         data = handle.read()
-    headers = {"Content-Type": content_type}
+    headers = {"Content-Type": content_type, "User-Agent": USER_AGENT}
     if secret:
         headers[JOB_SECRET_HEADER] = secret
     request = urllib.request.Request(
