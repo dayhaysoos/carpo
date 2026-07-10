@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 import sys
@@ -13,6 +14,8 @@ from pathlib import Path
 from carpo_helper import (
     API_TIMEOUT_FLOOR_SECONDS,
     API_TIMEOUT_SECONDS,
+    DeadlineExceeded,
+    DeadlineReader,
     JOB_DEADLINE_SECONDS,
     MIN_PUT_BUDGET_SECONDS,
     YTDLP_SUBPROCESS_TIMEOUT_SECONDS,
@@ -211,6 +214,36 @@ class DeadlineBudgetTests(unittest.TestCase):
 
     def test_put_budget_floor(self) -> None:
         self.assertGreater(MIN_PUT_BUDGET_SECONDS, 0.0)
+
+
+class DeadlineReaderTests(unittest.TestCase):
+    def test_reads_succeed_before_deadline(self) -> None:
+        clock = FakeClock(0.0)
+        reader = DeadlineReader(io.BytesIO(b"hello world"), 10.0, clock=clock)
+        self.assertEqual(reader.read(5), b"hello")
+        self.assertEqual(reader.read(), b" world")
+
+    def test_read_raises_after_deadline(self) -> None:
+        clock = FakeClock(20.0)
+        reader = DeadlineReader(io.BytesIO(b"hello"), 10.0, clock=clock)
+        with self.assertRaises(DeadlineExceeded):
+            reader.read(1)
+
+    def test_deadline_crossed_mid_stream(self) -> None:
+        clock = FakeClock(0.0)
+        reader = DeadlineReader(io.BytesIO(b"abcdef"), 10.0, clock=clock)
+        self.assertEqual(reader.read(3), b"abc")
+        clock.now = 10.0
+        with self.assertRaises(DeadlineExceeded):
+            reader.read(3)
+
+
+class FakeClock:
+    def __init__(self, now: float) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
 
 
 class ApiTimeoutTests(unittest.TestCase):

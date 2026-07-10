@@ -17,7 +17,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 HELPER_TOKEN_HEADER = "X-Carpo-Helper-Token"
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "carpo-helper" / "config.json"
@@ -49,6 +49,30 @@ class JobAborted(Exception):
     def __init__(self, clip_id: str):
         super().__init__("helper shutting down")
         self.clip_id = clip_id
+
+
+class DeadlineExceeded(RuntimeError):
+    def __init__(self) -> None:
+        super().__init__(DEADLINE_EXCEEDED_MESSAGE)
+
+
+class DeadlineReader:
+    """File-like wrapper that bounds total stream duration, not just socket idle time."""
+
+    def __init__(
+        self,
+        raw: Any,
+        deadline: float,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._raw = raw
+        self._deadline = deadline
+        self._clock = clock
+
+    def read(self, size: int = -1) -> bytes:
+        if self._clock() >= self._deadline:
+            raise DeadlineExceeded()
+        return self._raw.read(size)
 
 
 def remaining_budget(deadline: float, now: float) -> float:
@@ -334,6 +358,7 @@ def upload_file_put(
     file_path: Path,
     content_type: str,
     timeout_seconds: float,
+    deadline: float,
 ) -> None:
     resolved = resolve_upload_url(config["baseUrl"], upload_url)
     file_size = file_path.stat().st_size
@@ -350,7 +375,7 @@ def upload_file_put(
     with file_path.open("rb") as handle:
         request = urllib.request.Request(
             resolved,
-            data=handle,
+            data=DeadlineReader(handle, deadline),
             headers=headers,
             method="PUT",
         )
@@ -397,7 +422,7 @@ def check_abort(clip_id: str) -> None:
 def check_deadline(deadline: float, minimum_budget: float = 0.0) -> float:
     budget = remaining_budget(deadline, time.monotonic())
     if budget <= minimum_budget:
-        raise RuntimeError(DEADLINE_EXCEEDED_MESSAGE)
+        raise DeadlineExceeded()
     return budget
 
 
@@ -501,7 +526,7 @@ def process_job(
 
         check_abort(clip_id)
         put_budget = check_deadline(deadline, MIN_PUT_BUDGET_SECONDS)
-        upload_file_put(config, upload_url, source_path, content_type, put_budget)
+        upload_file_put(config, upload_url, source_path, content_type, put_budget, deadline)
         logging.info("uploaded clipId=%s key=%s", clip_id, upload_key)
 
         check_abort(clip_id)
@@ -541,7 +566,22 @@ def try_claim(config: dict[str, Any]) -> dict[str, Any] | None:
     if status == 204:
         return None
     if status == 200:
-        return json.loads(body.decode("utf-8"))
+        raw = body.decode("utf-8", errors="replace")
+        try:
+            job = json.loads(raw)
+        except json.JSONDecodeError:
+            job = None
+        clip_id = job.get("clipId") if isinstance(job, dict) else None
+        if not isinstance(clip_id, str) or not clip_id.strip():
+            # Without a clipId there is no way to POST /fail for this claim;
+            # the server's 5-minute claim sweep re-queues the job.
+            logging.error(
+                "claim returned 200 but response is unparseable or missing clipId "
+                "(server claim sweep will recover the job): %s",
+                truncate_error_message(raw),
+            )
+            return None
+        return job
     detail = body.decode("utf-8", errors="replace")
     raise RuntimeError(f"claim request failed ({status}): {detail}")
 
