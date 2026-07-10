@@ -21,6 +21,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 HELPER_TOKEN_HEADER = "X-Carpo-Helper-Token"
+# Cloudflare's edge rejects urllib's default Python-urllib UA (error 1010).
+USER_AGENT = "carpo-helper/1.0"
 DEFAULT_CONFIG_PATH = Path.home() / ".config" / "carpo-helper" / "config.json"
 SECTION_PADDING_SECONDS = 3
 YTDLP_SUBPROCESS_TIMEOUT_SECONDS = 180
@@ -415,7 +417,11 @@ def resolve_config_path(cli_path: str | None) -> Path:
 
 
 def api_headers(config: dict[str, Any], *, include_helper_token: bool = False) -> dict[str, str]:
-    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": USER_AGENT,
+    }
     if include_helper_token:
         headers[HELPER_TOKEN_HEADER] = config["helperToken"]
     cf_id = config.get("cfAccessClientId")
@@ -531,6 +537,7 @@ def upload_file_put(
     headers = {
         "Content-Type": content_type,
         "Content-Length": str(file_size),
+        "User-Agent": USER_AGENT,
     }
     cf_id = config.get("cfAccessClientId")
     cf_secret = config.get("cfAccessClientSecret")
