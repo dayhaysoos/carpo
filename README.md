@@ -12,6 +12,10 @@ Successor to [gfycat-machine](https://github.com/ndejesus1227/gfycat-machine), r
 - **Storage:** R2 (clips + thumbnails), D1 (clip records)
 - **Auth:** Cloudflare Access in front of the whole app
 
+## Helper daemon
+
+For reliable YouTube downloads from a residential IP, see [helper/README.md](helper/README.md).
+
 ## Status
 
 Planning. See the issue tracker for the PRD and build slices.

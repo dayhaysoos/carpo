@@ -16,6 +16,7 @@
     "test": "vitest run",
     "test:api": "vitest run test/api.test.ts",
     "test:encoder": "node --experimental-strip-types scripts/test-encoder-contract.ts",
+    "test:helper": "python3 -m unittest discover helper",
     "db:migrate:local": "wrangler d1 migrations apply carpo --local"
   },
   "dependencies": {
