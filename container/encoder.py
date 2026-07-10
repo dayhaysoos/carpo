@@ -141,7 +141,11 @@ def parse_job_id_from_query(path: str) -> str | None:
 def cleanup_job_artifacts(job_id: str) -> None:
     safe_id = sanitize_job_id(job_id)
     staged_source_path(safe_id).unlink(missing_ok=True)
-    output_dir = job_output_dir(safe_id)
+    cleanup_job_outputs(safe_id)
+
+
+def cleanup_job_outputs(job_id: str) -> None:
+    output_dir = job_output_dir(sanitize_job_id(job_id))
     if output_dir.exists():
         shutil.rmtree(output_dir, ignore_errors=True)
 
@@ -166,7 +170,12 @@ def sweep_stale_job_artifacts() -> None:
 
 
 def prepare_job_workspace(job_id: str) -> None:
-    cleanup_job_artifacts(job_id)
+    # Only clear leftover OUTPUTS for this job id. The staged source at
+    # /tmp/carpo-src-<jobId> is expected input: the DO stages it via
+    # POST /stage-source?job=<jobId> immediately before POST /run, so deleting
+    # it here would destroy the source we are about to encode. Stale staged
+    # sources from crashed jobs are reclaimed by the 1-hour mtime sweep below.
+    cleanup_job_outputs(job_id)
     sweep_stale_job_artifacts()
 
 
@@ -1721,7 +1730,11 @@ class EncoderHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         if self.path.startswith("/stage-source"):
-            job_id = parse_job_id_from_query(self.path)
+            try:
+                job_id = parse_job_id_from_query(self.path)
+            except ValueError as exc:
+                self.send_error(400, str(exc))
+                return
             if not job_id:
                 self.send_error(400, "job query parameter required")
                 return
@@ -1750,15 +1763,15 @@ class EncoderHandler(BaseHTTPRequestHandler):
             return
 
         if self.path.startswith("/cleanup"):
-            job_id = parse_job_id_from_query(self.path)
-            if not job_id:
-                self.send_error(400, "job query parameter required")
-                return
             try:
-                cleanup_job_artifacts(job_id)
+                job_id = parse_job_id_from_query(self.path)
             except ValueError as exc:
                 self.send_error(400, str(exc))
                 return
+            if not job_id:
+                self.send_error(400, "job query parameter required")
+                return
+            cleanup_job_artifacts(job_id)
             self.send_response(204)
             self.end_headers()
             return

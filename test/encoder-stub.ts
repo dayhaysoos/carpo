@@ -64,6 +64,41 @@ export class EncoderStub extends DurableObject<Env> {
   private maxConcurrentRuns = 0;
   private queueHoldRelease: (() => void) | null = null;
   private queueHoldPromise: Promise<void> | null = null;
+  // Mirrors the container filesystem: staged per-job sources and per-job
+  // output dirs, so tests catch ordering bugs (e.g. run-start cleanup
+  // deleting a freshly staged source) instead of hiding them.
+  private stagedSources = new Set<string>();
+  private jobOutputs = new Set<string>();
+  private jobEvents = new Map<string, string[]>();
+
+  private recordJobEvent(jobId: string, event: string): void {
+    const events = this.jobEvents.get(jobId) ?? [];
+    events.push(event);
+    this.jobEvents.set(jobId, events);
+  }
+
+  /** Same contract as encoder.py stage_source: write per-job source file. */
+  private stageSource(jobId: string): void {
+    this.stagedSources.add(jobId);
+    this.recordJobEvent(jobId, "stage-source");
+  }
+
+  /**
+   * Same contract as encoder.py prepare_job_workspace: run-start defensive
+   * cleanup removes leftover per-job OUTPUTS only — never the staged source,
+   * which was staged immediately before /run and is the job's input.
+   */
+  private prepareJobWorkspace(jobId: string): void {
+    this.jobOutputs.delete(jobId);
+    this.recordJobEvent(jobId, "run-start");
+  }
+
+  /** Same contract as encoder.py cleanup_job_artifacts (POST /cleanup). */
+  private cleanupJob(jobId: string): void {
+    this.stagedSources.delete(jobId);
+    this.jobOutputs.delete(jobId);
+    this.recordJobEvent(jobId, "cleanup");
+  }
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -78,6 +113,11 @@ export class EncoderStub extends DurableObject<Env> {
 
     if (url.pathname === "/__carpo/max-concurrency") {
       return Response.json({ maxConcurrentRuns: this.maxConcurrentRuns });
+    }
+
+    if (url.pathname === "/__carpo/job-events") {
+      const jobId = url.searchParams.get("jobId") ?? "";
+      return Response.json({ events: this.jobEvents.get(jobId) ?? [] });
     }
 
     if (url.pathname === "/__carpo/queue-hold-release" && request.method === "POST") {
@@ -115,6 +155,7 @@ export class EncoderStub extends DurableObject<Env> {
       if (!jobId || !/^[A-Za-z0-9-]+$/.test(jobId)) {
         return new Response("job query parameter required", { status: 400 });
       }
+      this.stageSource(jobId);
       return new Response(null, { status: 204 });
     }
 
@@ -123,6 +164,7 @@ export class EncoderStub extends DurableObject<Env> {
       if (!jobId || !/^[A-Za-z0-9-]+$/.test(jobId)) {
         return new Response("job query parameter required", { status: 400 });
       }
+      this.cleanupJob(jobId);
       return new Response(null, { status: 204 });
     }
 
@@ -334,37 +376,55 @@ export class EncoderStub extends DurableObject<Env> {
         );
       }
 
-      if (job.sourceMp4Key.includes("stub-gif-failure")) {
+      // Same ordering as the real DO: stage MP4 first, then /run — whose
+      // start-of-job cleanup must not delete the freshly staged source.
+      this.stageSource(job.jobId);
+      this.prepareJobWorkspace(job.jobId);
+      if (!this.stagedSources.has(job.jobId)) {
         return Response.json(
           {
             status: "failed",
-            errorMessage: "GIF encoding failed (simulated)",
+            errorMessage: "Local file path is required for GIF source",
           },
           { status: 500 },
         );
       }
 
-      await this.env.CLIPS_BUCKET.put(job.outputs.gifKey, FAKE_GIF, {
-        httpMetadata: { contentType: "image/gif" },
-      });
+      try {
+        if (job.sourceMp4Key.includes("stub-gif-failure")) {
+          return Response.json(
+            {
+              status: "failed",
+              errorMessage: "GIF encoding failed (simulated)",
+            },
+            { status: 500 },
+          );
+        }
 
-      const head = await this.env.CLIPS_BUCKET.head(job.outputs.gifKey);
-      if (!head) {
-        return Response.json(
-          {
-            status: "failed",
-            errorMessage: "GIF artifact was not durably stored in R2",
-          },
-          { status: 500 },
-        );
+        await this.env.CLIPS_BUCKET.put(job.outputs.gifKey, FAKE_GIF, {
+          httpMetadata: { contentType: "image/gif" },
+        });
+
+        const head = await this.env.CLIPS_BUCKET.head(job.outputs.gifKey);
+        if (!head) {
+          return Response.json(
+            {
+              status: "failed",
+              errorMessage: "GIF artifact was not durably stored in R2",
+            },
+            { status: 500 },
+          );
+        }
+
+        await markGifComplete(this.env.DB, job.jobId, job.outputs.gifKey);
+
+        return Response.json({
+          status: "complete",
+          outputs: { gifKey: job.outputs.gifKey },
+        });
+      } finally {
+        this.cleanupJob(job.jobId);
       }
-
-      await markGifComplete(this.env.DB, job.jobId, job.outputs.gifKey);
-
-      return Response.json({
-        status: "complete",
-        outputs: { gifKey: job.outputs.gifKey },
-      });
     });
   }
 
@@ -374,9 +434,38 @@ export class EncoderStub extends DurableObject<Env> {
     return this.withRunSlot(async () => {
       await markClipDownloadingIfQueued(this.env.DB, job.jobId);
 
-      for (const status of ["downloading", "encoding", "uploading"] as const) {
-        await applyStatusUpdate(this.env, job.jobId, status);
+      // Mirror the real DO/container ordering for upload sources: the DO
+      // stages the source via POST /stage-source?job=<id> FIRST, then posts
+      // /run, whose start-of-job cleanup must not delete that staged source.
+      // Staging eagerly here (not lazily inside the encode) keeps the stub
+      // honest about that ordering.
+      this.stageSource(job.jobId);
+      this.prepareJobWorkspace(job.jobId);
+      if (!this.stagedSources.has(job.jobId)) {
+        const result = {
+          status: "failed",
+          errorMessage: "Local file path is required for file source",
+        };
+        await recordEncoderRunOutcome(this.env, job.jobId, {
+          kind: "ok",
+          result,
+          httpOk: false,
+        });
+        return Response.json(result, { status: 500 });
       }
+
+      try {
+        return await this.runDeferredUploadEncode(job);
+      } finally {
+        this.cleanupJob(job.jobId);
+      }
+    });
+  }
+
+  private async runDeferredUploadEncode(job: EncoderJobSpec): Promise<Response> {
+    for (const status of ["downloading", "encoding", "uploading"] as const) {
+      await applyStatusUpdate(this.env, job.jobId, status);
+    }
 
       const slowDeferredCopy = job.source.key.includes("stub-deferred-slow-upload");
       if (slowDeferredCopy) {
@@ -442,6 +531,5 @@ export class EncoderStub extends DurableObject<Env> {
         status: "complete",
         outputs: job.outputs,
       });
-    });
   }
 }

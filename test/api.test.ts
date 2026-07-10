@@ -79,6 +79,15 @@ async function releaseEncoderQueueHold(): Promise<void> {
   });
 }
 
+async function getEncoderJobEvents(jobId: string): Promise<string[]> {
+  const container = env.ENCODER_CONTAINER.getByName(ENCODER_POOL_INSTANCE);
+  const response = await container.fetch(
+    `http://encoder/__carpo/job-events?jobId=${jobId}`,
+  );
+  const body = (await response.json()) as { events: string[] };
+  return body.events;
+}
+
 async function uploadTestVideo(): Promise<string> {
   const slotResponse = await workerFetch("http://example.com/api/upload-url", {
     method: "POST",
@@ -1957,6 +1966,50 @@ describe("warm encoder queue", () => {
     expect((await getClipById(env.DB, clip.clipId))?.output_gif_key).toBe(keys.gifKey);
     expect(await getMaxEncoderConcurrency()).toBe(1);
   });
+
+  it("stages an upload source before run-start cleanup and completes the clip", async () => {
+    const uploadKey = "uploads/stage-order-check.mp4";
+    await env.CLIPS_BUCKET.put(uploadKey, new Uint8Array([0, 1, 2, 3]), {
+      httpMetadata: { contentType: "video/mp4" },
+    });
+
+    const response = await workerFetch("http://example.com/api/clips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "stage-before-run ordering",
+        source: { type: "upload", key: uploadKey },
+        trimStart: 0,
+        trimEnd: 5,
+      }),
+    });
+    expect(response.status).toBe(201);
+    const created = (await response.json()) as { id: string };
+    const clipId = created.id;
+
+    let lastBody: Record<string, unknown> = { status: "queued" };
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const statusResponse = await workerFetch(
+        `http://example.com/api/clips/${clipId}`,
+      );
+      lastBody = (await statusResponse.json()) as Record<string, unknown>;
+      if (lastBody.status === "complete" || lastBody.status === "failed") {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    // The clip only completes if the freshly staged source survived the
+    // run-start defensive cleanup (the production-breaking Bugbot finding).
+    expect(lastBody.status).toBe("complete");
+
+    const events = await getEncoderJobEvents(clipId);
+    expect(events.indexOf("stage-source")).toBeGreaterThanOrEqual(0);
+    expect(events.indexOf("run-start")).toBeGreaterThan(
+      events.indexOf("stage-source"),
+    );
+    expect(events[events.length - 1]).toBe("cleanup");
+  });
 });
 
 describe("GET /api/clips/:id", () => {
@@ -2328,7 +2381,10 @@ async function waitForGifStatus(
   target: "encoding" | "complete" | "failed",
 ) {
   let lastBody: Record<string, unknown> = {};
-  for (let attempt = 0; attempt < 40; attempt += 1) {
+  // GIF jobs share the warm-encoder FIFO queue with clip jobs, so allow a
+  // wider poll budget than a single-job wait to absorb queued work from
+  // earlier tests.
+  for (let attempt = 0; attempt < 120; attempt += 1) {
     const response = await workerFetch(`http://example.com/api/clips/${clipId}`);
     expect(response.status).toBe(200);
     lastBody = (await response.json()) as Record<string, unknown>;
