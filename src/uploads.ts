@@ -1,6 +1,47 @@
 /** Upload source objects live under this R2 prefix (distinct from clip outputs). */
 export const UPLOAD_KEY_PREFIX = "uploads/";
 
+// Two-tier TTL: clip creation rejects upload sources at ACCEPT_TTL sharp,
+// while the sweep only deletes objects older than SWEEP_TTL (ACCEPT_TTL plus
+// a one-hour grace margin). An object accepted just under the 24h line thus
+// keeps a full hour of sweep immunity — far longer than any encode — so the
+// opportunistic sweep on list requests can never delete a source that a
+// just-created clip's dispatch is still staging.
+export const UPLOAD_SOURCE_ACCEPT_TTL_MS = 24 * 60 * 60 * 1000;
+export const UPLOAD_SOURCE_SWEEP_TTL_MS =
+  UPLOAD_SOURCE_ACCEPT_TTL_MS + 60 * 60 * 1000;
+
+export function isUploadSourceExpired(
+  uploaded: Date,
+  now: Date,
+  ttlMs = UPLOAD_SOURCE_ACCEPT_TTL_MS,
+): boolean {
+  return now.getTime() - uploaded.getTime() >= ttlMs;
+}
+
+export async function sweepExpiredUploadSources(
+  bucket: R2Bucket,
+  options?: { now?: Date; maxAgeMs?: number },
+): Promise<number> {
+  const now = options?.now ?? new Date();
+  const maxAgeMs = options?.maxAgeMs ?? UPLOAD_SOURCE_SWEEP_TTL_MS;
+  let deleted = 0;
+  let cursor: string | undefined;
+
+  do {
+    const listing = await bucket.list({ prefix: UPLOAD_KEY_PREFIX, cursor });
+    for (const object of listing.objects) {
+      if (isUploadSourceExpired(object.uploaded, now, maxAgeMs)) {
+        await bucket.delete(object.key);
+        deleted += 1;
+      }
+    }
+    cursor = listing.truncated ? listing.cursor : undefined;
+  } while (cursor);
+
+  return deleted;
+}
+
 /** Worker-streaming cap (paid Workers request body limit is 100MB). */
 export const MAX_UPLOAD_SIZE_WORKER_BYTES = 95 * 1024 * 1024;
 

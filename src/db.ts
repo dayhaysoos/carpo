@@ -244,16 +244,10 @@ export async function deleteClipArtifacts(
   await Promise.all([...keysToDelete].map((key) => bucket.delete(key)));
 }
 
-export async function deleteUploadSource(
+export async function deleteHelperUploadSource(
   bucket: R2Bucket,
-  record: Pick<
-    ClipRecord,
-    "source_type" | "source_ref" | "helper_upload_key"
-  >,
+  record: Pick<ClipRecord, "helper_upload_key">,
 ): Promise<void> {
-  if (record.source_type === "upload") {
-    await bucket.delete(record.source_ref);
-  }
   if (record.helper_upload_key) {
     await bucket.delete(record.helper_upload_key);
   }

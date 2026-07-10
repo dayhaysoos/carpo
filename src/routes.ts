@@ -16,8 +16,10 @@ import type { ClipRecord, ClipStatus } from "./types";
 import {
   decodeUploadPathParam,
   generateUploadKey,
+  isUploadSourceExpired,
   maxUploadSizeBytes,
   normalizeUploadContentType,
+  sweepExpiredUploadSources,
   validateUploadUrlRequest,
 } from "./uploads";
 import { validateCreateClipRequest } from "./validation";
@@ -172,6 +174,20 @@ async function handleCreateClip(
         404,
       );
     }
+    if (isUploadSourceExpired(object.uploaded, new Date())) {
+      return json(
+        {
+          error: "Upload expired",
+          details: [
+            {
+              field: "source.key",
+              message: "Uploaded source has expired; re-upload the file before creating a clip",
+            },
+          ],
+        },
+        410,
+      );
+    }
   }
 
   const clipId = crypto.randomUUID();
@@ -214,6 +230,7 @@ async function handleListClips(
 
   await sweepAndRecoverHelperClips(env, url.origin, ctx);
   await sweepStaleClips(env.DB);
+  ctx.waitUntil(sweepExpiredUploadSources(env.CLIPS_BUCKET));
   const { clips, total } = await listClips(env.DB, limit, offset);
   const prefix = env.R2_PUBLIC_PREFIX;
 

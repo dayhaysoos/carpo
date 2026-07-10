@@ -1,6 +1,6 @@
 import {
   deleteClipArtifacts,
-  deleteUploadSource,
+  deleteHelperUploadSource,
   getClipById,
   markGifComplete,
   markGifFailed,
@@ -249,7 +249,7 @@ export async function failClip(
 
   await deleteClipArtifacts(env.CLIPS_BUCKET, clipId);
   if (record) {
-    await deleteUploadSource(env.CLIPS_BUCKET, record);
+    await deleteHelperUploadSource(env.CLIPS_BUCKET, record);
   }
 }
 
@@ -360,7 +360,7 @@ async function cleanupUploadSource(env: Env, clipId: string): Promise<void> {
   if (!record) {
     return;
   }
-  await deleteUploadSource(env.CLIPS_BUCKET, record);
+  await deleteHelperUploadSource(env.CLIPS_BUCKET, record);
 }
 
 interface GifEncoderRunResult {
