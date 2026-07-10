@@ -1,15 +1,22 @@
 /** Upload source objects live under this R2 prefix (distinct from clip outputs). */
 export const UPLOAD_KEY_PREFIX = "uploads/";
 
-/** User-upload sources are retained for rapid re-clipping; swept after this age. */
-export const UPLOAD_SOURCE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+// Two-tier TTL: clip creation rejects upload sources at ACCEPT_TTL sharp,
+// while the sweep only deletes objects older than SWEEP_TTL (ACCEPT_TTL plus
+// a one-hour grace margin). An object accepted just under the 24h line thus
+// keeps a full hour of sweep immunity — far longer than any encode — so the
+// opportunistic sweep on list requests can never delete a source that a
+// just-created clip's dispatch is still staging.
+export const UPLOAD_SOURCE_ACCEPT_TTL_MS = 24 * 60 * 60 * 1000;
+export const UPLOAD_SOURCE_SWEEP_TTL_MS =
+  UPLOAD_SOURCE_ACCEPT_TTL_MS + 60 * 60 * 1000;
 
 export function isUploadSourceExpired(
   uploaded: Date,
   now: Date,
-  maxAgeMs = UPLOAD_SOURCE_MAX_AGE_MS,
+  ttlMs = UPLOAD_SOURCE_ACCEPT_TTL_MS,
 ): boolean {
-  return now.getTime() - uploaded.getTime() >= maxAgeMs;
+  return now.getTime() - uploaded.getTime() >= ttlMs;
 }
 
 export async function sweepExpiredUploadSources(
@@ -17,7 +24,7 @@ export async function sweepExpiredUploadSources(
   options?: { now?: Date; maxAgeMs?: number },
 ): Promise<number> {
   const now = options?.now ?? new Date();
-  const maxAgeMs = options?.maxAgeMs ?? UPLOAD_SOURCE_MAX_AGE_MS;
+  const maxAgeMs = options?.maxAgeMs ?? UPLOAD_SOURCE_SWEEP_TTL_MS;
   let deleted = 0;
   let cursor: string | undefined;
 

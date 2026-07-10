@@ -16,6 +16,7 @@ import type { ClipRecord, ClipStatus } from "./types";
 import {
   decodeUploadPathParam,
   generateUploadKey,
+  isUploadSourceExpired,
   maxUploadSizeBytes,
   normalizeUploadContentType,
   sweepExpiredUploadSources,
@@ -171,6 +172,20 @@ async function handleCreateClip(
           ],
         },
         404,
+      );
+    }
+    if (isUploadSourceExpired(object.uploaded, new Date())) {
+      return json(
+        {
+          error: "Upload expired",
+          details: [
+            {
+              field: "source.key",
+              message: "Uploaded source has expired; re-upload the file before creating a clip",
+            },
+          ],
+        },
+        410,
       );
     }
   }

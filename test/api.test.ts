@@ -11,7 +11,8 @@ import type { EncoderJobSpec } from "../src/types";
 import {
   isUploadSourceExpired,
   sweepExpiredUploadSources,
-  UPLOAD_SOURCE_MAX_AGE_MS,
+  UPLOAD_SOURCE_ACCEPT_TTL_MS,
+  UPLOAD_SOURCE_SWEEP_TTL_MS,
 } from "../src/uploads";
 import {
   STUB_AMBIGUOUS_FAILURE_URL,
@@ -361,19 +362,40 @@ describe("upload source cleanup", () => {
 });
 
 describe("upload source sweep", () => {
-  it("isUploadSourceExpired respects the 24h window", () => {
+  it("isUploadSourceExpired rejects at the 24h accept TTL", () => {
     const uploaded = new Date("2026-01-01T12:00:00Z");
     const beforeExpiry = new Date(
-      uploaded.getTime() + UPLOAD_SOURCE_MAX_AGE_MS - 1,
+      uploaded.getTime() + UPLOAD_SOURCE_ACCEPT_TTL_MS - 1,
     );
-    const atExpiry = new Date(uploaded.getTime() + UPLOAD_SOURCE_MAX_AGE_MS);
+    const atExpiry = new Date(
+      uploaded.getTime() + UPLOAD_SOURCE_ACCEPT_TTL_MS,
+    );
     const afterExpiry = new Date(
-      uploaded.getTime() + UPLOAD_SOURCE_MAX_AGE_MS + 1,
+      uploaded.getTime() + UPLOAD_SOURCE_ACCEPT_TTL_MS + 1,
     );
 
     expect(isUploadSourceExpired(uploaded, beforeExpiry)).toBe(false);
     expect(isUploadSourceExpired(uploaded, atExpiry)).toBe(true);
     expect(isUploadSourceExpired(uploaded, afterExpiry)).toBe(true);
+  });
+
+  it("sweep TTL grants a grace hour past the accept TTL", () => {
+    const uploaded = new Date("2026-01-01T12:00:00Z");
+    // Aged between 24h and 25h: rejected for new clips, but not swept.
+    const withinGrace = new Date(
+      uploaded.getTime() + UPLOAD_SOURCE_ACCEPT_TTL_MS + 30 * 60 * 1000,
+    );
+    expect(isUploadSourceExpired(uploaded, withinGrace)).toBe(true);
+    expect(
+      isUploadSourceExpired(uploaded, withinGrace, UPLOAD_SOURCE_SWEEP_TTL_MS),
+    ).toBe(false);
+
+    const pastGrace = new Date(
+      uploaded.getTime() + UPLOAD_SOURCE_SWEEP_TTL_MS,
+    );
+    expect(
+      isUploadSourceExpired(uploaded, pastGrace, UPLOAD_SOURCE_SWEEP_TTL_MS),
+    ).toBe(true);
   });
 
   it("sweepExpiredUploadSources retains freshly uploaded objects", async () => {
@@ -387,7 +409,26 @@ describe("upload source sweep", () => {
     expect(await env.CLIPS_BUCKET.get(uploadKey)).not.toBeNull();
   });
 
-  it("sweepExpiredUploadSources deletes objects older than 24h", async () => {
+  it("sweepExpiredUploadSources retains objects aged between 24h and 25h", async () => {
+    const graceKey = "uploads/sweep-grace-keep.mp4";
+    await env.CLIPS_BUCKET.put(graceKey, new Uint8Array([8, 9, 10, 11]), {
+      httpMetadata: { contentType: "video/mp4" },
+    });
+
+    const object = await env.CLIPS_BUCKET.head(graceKey);
+    expect(object).not.toBeNull();
+    // Pretend the object is 24h30m old: past accept TTL, inside sweep grace.
+    const now = new Date(
+      object!.uploaded.getTime() +
+        UPLOAD_SOURCE_ACCEPT_TTL_MS +
+        30 * 60 * 1000,
+    );
+
+    await sweepExpiredUploadSources(env.CLIPS_BUCKET, { now });
+    expect(await env.CLIPS_BUCKET.get(graceKey)).not.toBeNull();
+  });
+
+  it("sweepExpiredUploadSources deletes objects older than the sweep TTL", async () => {
     const staleKey = "uploads/sweep-stale-delete.mp4";
     await env.CLIPS_BUCKET.put(staleKey, new Uint8Array([4, 5, 6, 7]), {
       httpMetadata: { contentType: "video/mp4" },
@@ -396,7 +437,7 @@ describe("upload source sweep", () => {
     const staleObject = await env.CLIPS_BUCKET.head(staleKey);
     expect(staleObject).not.toBeNull();
     const now = new Date(
-      staleObject!.uploaded.getTime() + UPLOAD_SOURCE_MAX_AGE_MS + 60_000,
+      staleObject!.uploaded.getTime() + UPLOAD_SOURCE_SWEEP_TTL_MS + 60_000,
     );
 
     const deleted = await sweepExpiredUploadSources(env.CLIPS_BUCKET, { now });
