@@ -14,3 +14,4 @@ fixtures/*.jpg
 fixtures/*.png
 __pycache__/
 *.pyc
+.dev.vars

@@ -70,6 +70,8 @@ export class EncoderStub extends DurableObject<Env> {
   private stagedSources = new Set<string>();
   private jobOutputs = new Set<string>();
   private jobEvents = new Map<string, string[]>();
+  private containerStartCount = 0;
+  private prewarmStartShouldFail = false;
 
   private recordJobEvent(jobId: string, event: string): void {
     const events = this.jobEvents.get(jobId) ?? [];
@@ -120,6 +122,19 @@ export class EncoderStub extends DurableObject<Env> {
       return Response.json({ events: this.jobEvents.get(jobId) ?? [] });
     }
 
+    if (url.pathname === "/__carpo/container-starts") {
+      return Response.json({ count: this.containerStartCount });
+    }
+
+    if (
+      url.pathname === "/__carpo/set-prewarm-start-failure" &&
+      request.method === "POST"
+    ) {
+      const body = (await request.json()) as { enabled?: boolean };
+      this.prewarmStartShouldFail = body.enabled === true;
+      return new Response(null, { status: 204 });
+    }
+
     if (url.pathname === "/__carpo/queue-hold-release" && request.method === "POST") {
       this.queueHoldRelease?.();
       this.queueHoldRelease = null;
@@ -128,6 +143,8 @@ export class EncoderStub extends DurableObject<Env> {
     }
 
     if (url.pathname === "/__carpo/start") {
+      this.containerStartCount += 1;
+
       let sourceUrl = "";
       try {
         const body = (await request.json()) as {
@@ -140,6 +157,9 @@ export class EncoderStub extends DurableObject<Env> {
         // Start body is optional; production encoder ignores it.
       }
 
+      if (!sourceUrl && this.prewarmStartShouldFail) {
+        return new Response("container prewarm start failed", { status: 503 });
+      }
       if (sourceUrl.includes("stub-container-start-failure")) {
         return new Response("container start failed", { status: 503 });
       }

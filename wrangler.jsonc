@@ -31,7 +31,8 @@
     {
       "class_name": "EncoderContainer",
       "image": "./container/Dockerfile",
-      "instance_type": "standard-1",
+      // ffmpeg is CPU-bound; standard-4 bills per active second only.
+      "instance_type": "standard-4",
       "max_instances": 10
     }
   ],

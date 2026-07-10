@@ -10,7 +10,7 @@ import {
   outputKeysForClip,
   updateClipStatus,
 } from "./db";
-import { ENCODER_POOL_INSTANCE } from "./encoder-pool";
+import { ENCODER_POOL_INSTANCE, prewarmEncoder } from "./encoder-pool";
 import type { Env } from "./env";
 import type { ClipStatus, CreateClipRequest, EncoderJobSpec, FailureMode, GifEncoderJobSpec } from "./types";
 import { extractCaptionFromFilters } from "./validation";
@@ -177,17 +177,7 @@ export async function dispatchEncodingJob(
         thumbnail: `${workerBaseUrl}/api/internal/jobs/${clipId}/artifacts/thumbnail`,
       },
     };
-    const startResponse = await container.fetch("http://encoder/__carpo/start", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source: request.source }),
-    });
-    if (!startResponse.ok) {
-      const detail = await startResponse.text();
-      throw new Error(
-        detail || `Encoder container start failed (${startResponse.status})`,
-      );
-    }
+    await prewarmEncoder(env, { body: { source: request.source } });
     // Hand off to the DO; it returns 202 immediately and runs the job in
     // waitUntil behind a FIFO queue. Keepalive and queue lifecycle live in the
     // DO — the worker only warms the container via /__carpo/start.
@@ -341,17 +331,7 @@ export async function dispatchGifExportJob(
     const container = env.ENCODER_CONTAINER.getByName(ENCODER_POOL_INSTANCE);
     const gifKey = outputKeysForClip(clipId).gifKey;
 
-    const startResponse = await container.fetch("http://encoder/__carpo/start", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    });
-    if (!startResponse.ok) {
-      const detail = await startResponse.text();
-      throw new Error(
-        detail || `GIF encoder container start failed (${startResponse.status})`,
-      );
-    }
+    await prewarmEncoder(env, { body: {} });
     const jobSpec: GifEncoderJobSpec = {
       jobId: clipId,
       jobType: "gif",

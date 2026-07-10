@@ -9,6 +9,7 @@ import {
   outputKeysForClip,
 } from "./db";
 import type { Env } from "./env";
+import { prewarmEncoder } from "./encoder-pool";
 import { JOB_SECRET_HEADER, verifyJobSecret } from "./auth";
 import { applyStatusUpdate, dispatchEncodingJob, dispatchGifExportJob } from "./jobs";
 import { recordToResponse } from "./serialize";
@@ -44,7 +45,7 @@ export async function handleRequest(
   }
 
   if (request.method === "POST" && url.pathname === "/api/upload-url") {
-    return handleRequestUploadUrl(request, env, url);
+    return handleRequestUploadUrl(request, env, url, ctx);
   }
 
   if (request.method === "PUT" && url.pathname.startsWith("/api/uploads/")) {
@@ -336,6 +337,7 @@ async function handleRequestUploadUrl(
   request: Request,
   env: Env,
   url: URL,
+  ctx: ExecutionContext,
 ): Promise<Response> {
   let body: unknown;
   try {
@@ -349,6 +351,15 @@ async function handleRequestUploadUrl(
   if (!validation.ok) {
     return json({ error: "Validation failed", details: validation.errors }, 400);
   }
+
+  ctx.waitUntil(
+    prewarmEncoder(env).catch((error) => {
+      console.warn(
+        "Encoder pre-warm failed:",
+        error instanceof Error ? error.message : error,
+      );
+    }),
+  );
 
   const key = generateUploadKey(validation.value.contentType);
   const uploadUrl = `${url.origin}/api/uploads/${encodeURIComponent(key)}`;
