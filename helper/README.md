@@ -29,6 +29,7 @@ Default path: `~/.config/carpo-helper/config.json` (override with `--config` or 
 | `cookiesFromBrowser` | no | `"chrome"` | Passed to `yt-dlp --cookies-from-browser`; empty/null disables |
 | `pollIntervalSeconds` | no | `5` | Seconds between claim polls when idle |
 | `ytDlpPath` | no | `"yt-dlp"` | Path to yt-dlp binary |
+| `ffprobePath` | no | `"ffprobe"` | Path to ffprobe (used to verify section alignment) |
 | `cfAccessClientId` | no | — | Cloudflare Access service token ID |
 | `cfAccessClientSecret` | no | — | Cloudflare Access service token secret |
 

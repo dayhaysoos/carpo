@@ -30,6 +30,11 @@ MIN_API_BUDGET_SECONDS = 10.0
 API_TIMEOUT_SECONDS = 60.0
 API_TIMEOUT_FLOOR_SECONDS = 5.0
 DEADLINE_EXCEEDED_MESSAGE = "helper deadline exceeded"
+SECTION_START_DRIFT_TOLERANCE_SECONDS = 0.25
+SECTION_DURATION_SLACK_SECONDS = 0.5
+SECTION_MISALIGNED_MESSAGE = "section download misaligned; falling back to server"
+SECTION_TOO_SHORT_MESSAGE = "section download too short"
+FFPROBE_TIMEOUT_SECONDS = 30
 YTDLP_UPDATE_INTERVAL_SECONDS = 24 * 60 * 60
 YTDLP_UPDATE_TIMEOUT_SECONDS = 60
 ERROR_MESSAGE_MAX_LENGTH = 500
@@ -43,6 +48,7 @@ QUALITY_MAX_HEIGHT = {"720p": 720, "1080p": 1080}
 DEFAULT_QUALITY = "1080p"
 
 _shutdown_requested = False
+_probe_warning_logged = False
 
 
 class JobAborted(Exception):
@@ -141,6 +147,70 @@ def render_config_json(
         },
         indent=2,
     )
+
+
+def section_alignment_error(
+    start_time: float | None,
+    duration: float | None,
+    trim_end: float,
+    section_start: float,
+) -> str | None:
+    if start_time is not None and abs(start_time) > SECTION_START_DRIFT_TOLERANCE_SECONDS:
+        return SECTION_MISALIGNED_MESSAGE
+    expected_duration = trim_end - section_start
+    if duration is not None and duration < expected_duration - SECTION_DURATION_SLACK_SECONDS:
+        return SECTION_TOO_SHORT_MESSAGE
+    return None
+
+
+def probe_media_value(ffprobe_path: str, path: Path, field: str) -> float | None:
+    try:
+        result = subprocess.run(
+            [
+                ffprobe_path,
+                "-v",
+                "error",
+                "-show_entries",
+                field,
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=FFPROBE_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        return float(result.stdout.strip())
+    except ValueError:
+        return None
+
+
+def verify_section_alignment(
+    config: dict[str, Any],
+    source_path: Path,
+    trim_end: float,
+    section_start: float,
+) -> None:
+    global _probe_warning_logged
+    ffprobe_path = config.get("ffprobePath") or "ffprobe"
+    start_time = probe_media_value(ffprobe_path, source_path, "format=start_time")
+    duration = probe_media_value(ffprobe_path, source_path, "format=duration")
+    if start_time is None and duration is None:
+        if not _probe_warning_logged:
+            logging.warning(
+                "ffprobe unavailable or returned no data; skipping section alignment checks",
+            )
+            _probe_warning_logged = True
+        return
+    error = section_alignment_error(start_time, duration, trim_end, section_start)
+    if error:
+        raise RuntimeError(error)
 
 
 def section_bounds(trim_start: float, trim_end: float) -> tuple[float, float]:
@@ -248,6 +318,10 @@ def validate_config(raw: Any) -> dict[str, Any]:
     if not isinstance(yt_dlp_path, str) or not yt_dlp_path.strip():
         raise ValueError("ytDlpPath must be a non-empty string")
 
+    ffprobe_path = raw.get("ffprobePath", "ffprobe")
+    if not isinstance(ffprobe_path, str) or not ffprobe_path.strip():
+        raise ValueError("ffprobePath must be a non-empty string")
+
     cf_id = raw.get("cfAccessClientId")
     cf_secret = raw.get("cfAccessClientSecret")
     if (cf_id is None) ^ (cf_secret is None):
@@ -266,6 +340,7 @@ def validate_config(raw: Any) -> dict[str, Any]:
         "cookiesFromBrowser": cookies_from_browser,
         "pollIntervalSeconds": poll_interval_seconds,
         "ytDlpPath": yt_dlp_path.strip(),
+        "ffprobePath": ffprobe_path.strip(),
         "cfAccessClientId": cf_id.strip() if isinstance(cf_id, str) else None,
         "cfAccessClientSecret": cf_secret.strip() if isinstance(cf_secret, str) else None,
     }
@@ -334,21 +409,31 @@ def find_downloaded_file(workdir: Path) -> Path:
     return candidates[0]
 
 
-def run_ytdlp(command: list[str], timeout_seconds: float) -> None:
+def kill_process_group(proc: subprocess.Popen) -> None:
     try:
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-            check=False,
-        )
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def run_ytdlp(command: list[str], timeout_seconds: float) -> None:
+    # start_new_session puts yt-dlp and its ffmpeg children in their own
+    # process group so a timeout kill cannot orphan the children.
+    proc = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout_seconds)
     except subprocess.TimeoutExpired as exc:
+        kill_process_group(proc)
+        proc.wait()
         raise RuntimeError(f"yt-dlp timed out after {timeout_seconds:.0f}s") from exc
-    if result.returncode != 0:
-        stderr = (result.stderr or "").strip()
-        stdout = (result.stdout or "").strip()
-        detail = stderr or stdout or f"exit code {result.returncode}"
+    if proc.returncode != 0:
+        detail = (stderr or "").strip() or (stdout or "").strip() or f"exit code {proc.returncode}"
         raise RuntimeError(f"yt-dlp failed: {detail}")
 
 
@@ -481,6 +566,7 @@ def process_job(
         )
 
         check_abort(clip_id)
+        verify_section_alignment(config, source_path, trim_end, section_start)
         content_type = content_type_for_path(source_path)
         if content_type is None:
             raise RuntimeError(

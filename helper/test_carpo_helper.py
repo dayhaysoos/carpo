@@ -23,10 +23,13 @@ from carpo_helper import (
     build_ytdlp_command,
     content_type_for_path,
     load_config,
+    SECTION_MISALIGNED_MESSAGE,
+    SECTION_TOO_SHORT_MESSAGE,
     parse_claim_payload,
     remaining_budget,
     render_config_json,
     resolve_upload_url,
+    section_alignment_error,
     section_bounds,
     truncate_error_message,
     validate_config,
@@ -124,6 +127,17 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertEqual(config["cookiesFromBrowser"], "chrome")
         self.assertEqual(config["pollIntervalSeconds"], 5.0)
         self.assertEqual(config["ytDlpPath"], "yt-dlp")
+        self.assertEqual(config["ffprobePath"], "ffprobe")
+
+    def test_invalid_ffprobe_path(self) -> None:
+        with self.assertRaisesRegex(ValueError, "ffprobePath"):
+            validate_config(
+                {
+                    "baseUrl": "https://carpo.example.com",
+                    "helperToken": "secret",
+                    "ffprobePath": "  ",
+                },
+            )
 
     def test_missing_base_url(self) -> None:
         with self.assertRaisesRegex(ValueError, "baseUrl"):
@@ -214,6 +228,50 @@ class DeadlineBudgetTests(unittest.TestCase):
 
     def test_put_budget_floor(self) -> None:
         self.assertGreater(MIN_PUT_BUDGET_SECONDS, 0.0)
+
+
+class SectionAlignmentTests(unittest.TestCase):
+    def test_aligned_section_passes(self) -> None:
+        self.assertIsNone(section_alignment_error(0.1, 16.0, 20.0, 7.0))
+
+    def test_zero_start_time_passes(self) -> None:
+        self.assertIsNone(section_alignment_error(0.0, 13.0, 20.0, 7.0))
+
+    def test_drifted_start_time_fails(self) -> None:
+        self.assertEqual(
+            section_alignment_error(0.5, 16.0, 20.0, 7.0),
+            SECTION_MISALIGNED_MESSAGE,
+        )
+
+    def test_negative_drift_fails(self) -> None:
+        self.assertEqual(
+            section_alignment_error(-0.5, 16.0, 20.0, 7.0),
+            SECTION_MISALIGNED_MESSAGE,
+        )
+
+    def test_short_duration_fails(self) -> None:
+        self.assertEqual(
+            section_alignment_error(0.0, 10.0, 20.0, 7.0),
+            SECTION_TOO_SHORT_MESSAGE,
+        )
+
+    def test_duration_within_slack_passes(self) -> None:
+        self.assertIsNone(section_alignment_error(0.0, 12.6, 20.0, 7.0))
+
+    def test_missing_start_time_still_checks_duration(self) -> None:
+        self.assertEqual(
+            section_alignment_error(None, 10.0, 20.0, 7.0),
+            SECTION_TOO_SHORT_MESSAGE,
+        )
+
+    def test_missing_duration_still_checks_start(self) -> None:
+        self.assertEqual(
+            section_alignment_error(1.0, None, 20.0, 7.0),
+            SECTION_MISALIGNED_MESSAGE,
+        )
+
+    def test_all_missing_proceeds(self) -> None:
+        self.assertIsNone(section_alignment_error(None, None, 20.0, 7.0))
 
 
 class DeadlineReaderTests(unittest.TestCase):
