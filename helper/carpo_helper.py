@@ -36,7 +36,8 @@ SECTION_START_DRIFT_TOLERANCE_SECONDS = 0.25
 SECTION_DURATION_SLACK_SECONDS = 0.5
 SECTION_MISALIGNED_MESSAGE = "section download misaligned; falling back to server"
 SECTION_TOO_SHORT_MESSAGE = "section download too short"
-FFPROBE_TIMEOUT_SECONDS = 30
+PROBE_TIMEOUT_CAP_SECONDS = 10.0
+PROBE_TIMEOUT_FLOOR_SECONDS = 2.0
 PROCESS_POLL_INTERVAL_SECONDS = 0.5
 YTDLP_UPDATE_INTERVAL_SECONDS = 24 * 60 * 60
 YTDLP_UPDATE_TIMEOUT_SECONDS = 60
@@ -174,7 +175,39 @@ def section_alignment_error(
     return None
 
 
-def probe_media_value(ffprobe_path: str, path: Path, field: str) -> float | None:
+def probe_timeout_for_budget(
+    budget: float,
+    cap: float = PROBE_TIMEOUT_CAP_SECONDS,
+    floor: float = PROBE_TIMEOUT_FLOOR_SECONDS,
+) -> float | None:
+    if budget < floor:
+        return None
+    return min(cap, budget)
+
+
+def parse_ffprobe_format(output: str) -> tuple[float | None, float | None]:
+    try:
+        data = json.loads(output)
+    except json.JSONDecodeError:
+        return None, None
+    fmt = data.get("format") if isinstance(data, dict) else None
+    if not isinstance(fmt, dict):
+        return None, None
+
+    def as_number(value: Any) -> float | None:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    return as_number(fmt.get("start_time")), as_number(fmt.get("duration"))
+
+
+def probe_section_media(
+    ffprobe_path: str,
+    path: Path,
+    timeout_seconds: float,
+) -> tuple[float | None, float | None]:
     try:
         result = subprocess.run(
             [
@@ -182,24 +215,21 @@ def probe_media_value(ffprobe_path: str, path: Path, field: str) -> float | None
                 "-v",
                 "error",
                 "-show_entries",
-                field,
+                "format=start_time,duration",
                 "-of",
-                "default=noprint_wrappers=1:nokey=1",
+                "json",
                 str(path),
             ],
             capture_output=True,
             text=True,
-            timeout=FFPROBE_TIMEOUT_SECONDS,
+            timeout=timeout_seconds,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired):
-        return None
+        return None, None
     if result.returncode != 0:
-        return None
-    try:
-        return float(result.stdout.strip())
-    except ValueError:
-        return None
+        return None, None
+    return parse_ffprobe_format(result.stdout)
 
 
 def verify_section_alignment(
@@ -207,15 +237,23 @@ def verify_section_alignment(
     source_path: Path,
     trim_end: float,
     section_start: float,
+    budget: float,
 ) -> None:
     global _probe_warning_logged
+    timeout_seconds = probe_timeout_for_budget(budget)
+    if timeout_seconds is None:
+        logging.warning(
+            "insufficient budget for section alignment check; skipping "
+            "(server-side encode still validates bounds)",
+        )
+        return
     ffprobe_path = config.get("ffprobePath") or "ffprobe"
-    start_time = probe_media_value(ffprobe_path, source_path, "format=start_time")
-    duration = probe_media_value(ffprobe_path, source_path, "format=duration")
+    start_time, duration = probe_section_media(ffprobe_path, source_path, timeout_seconds)
     if start_time is None and duration is None:
         if not _probe_warning_logged:
             logging.warning(
-                "ffprobe unavailable or returned no data; skipping section alignment checks",
+                "ffprobe unavailable, timed out, or returned no data; "
+                "skipping section alignment checks",
             )
             _probe_warning_logged = True
         return
@@ -615,7 +653,13 @@ def process_job(
         )
 
         check_abort(clip_id)
-        verify_section_alignment(config, source_path, trim_end, section_start)
+        verify_section_alignment(
+            config,
+            source_path,
+            trim_end,
+            section_start,
+            remaining_budget(deadline, time.monotonic()),
+        )
         content_type = content_type_for_path(source_path)
         if content_type is None:
             raise RuntimeError(

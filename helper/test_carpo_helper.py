@@ -27,7 +27,9 @@ from carpo_helper import (
     SECTION_TOO_SHORT_MESSAGE,
     PUT_SOCKET_TIMEOUT_CAP_SECONDS,
     parse_claim_payload,
+    parse_ffprobe_format,
     poll_process,
+    probe_timeout_for_budget,
     put_socket_timeout,
     remaining_budget,
     render_config_json,
@@ -232,6 +234,51 @@ class DeadlineBudgetTests(unittest.TestCase):
 
     def test_put_budget_floor(self) -> None:
         self.assertGreater(MIN_PUT_BUDGET_SECONDS, 0.0)
+
+
+class ProbeTimeoutTests(unittest.TestCase):
+    def test_large_budget_capped_at_10(self) -> None:
+        self.assertEqual(probe_timeout_for_budget(200.0), 10.0)
+
+    def test_small_budget_used_directly(self) -> None:
+        self.assertEqual(probe_timeout_for_budget(6.0), 6.0)
+
+    def test_budget_at_floor_allowed(self) -> None:
+        self.assertEqual(probe_timeout_for_budget(2.0), 2.0)
+
+    def test_budget_below_floor_skips(self) -> None:
+        self.assertIsNone(probe_timeout_for_budget(1.9))
+        self.assertIsNone(probe_timeout_for_budget(0.0))
+
+
+class ParseFfprobeFormatTests(unittest.TestCase):
+    def test_both_fields_present(self) -> None:
+        output = '{"format": {"start_time": "0.000000", "duration": "16.05"}}'
+        start_time, duration = parse_ffprobe_format(output)
+        self.assertEqual(start_time, 0.0)
+        self.assertEqual(duration, 16.05)
+
+    def test_missing_start_time(self) -> None:
+        output = '{"format": {"duration": "16.05"}}'
+        start_time, duration = parse_ffprobe_format(output)
+        self.assertIsNone(start_time)
+        self.assertEqual(duration, 16.05)
+
+    def test_missing_duration(self) -> None:
+        output = '{"format": {"start_time": "1.5"}}'
+        start_time, duration = parse_ffprobe_format(output)
+        self.assertEqual(start_time, 1.5)
+        self.assertIsNone(duration)
+
+    def test_non_numeric_values(self) -> None:
+        output = '{"format": {"start_time": "N/A", "duration": "N/A"}}'
+        self.assertEqual(parse_ffprobe_format(output), (None, None))
+
+    def test_invalid_json(self) -> None:
+        self.assertEqual(parse_ffprobe_format("not json"), (None, None))
+
+    def test_missing_format_key(self) -> None:
+        self.assertEqual(parse_ffprobe_format('{"streams": []}'), (None, None))
 
 
 class SectionAlignmentTests(unittest.TestCase):
