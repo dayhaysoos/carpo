@@ -128,6 +128,7 @@ export interface SourceVideoRecord {
   thumbnail_key: string | null;
   archived_at: string | null;
   youtube_title_resolved_at: string | null;
+  youtube_title_checked_at: string | null;
   created_at: string;
   updated_at: string;
 }

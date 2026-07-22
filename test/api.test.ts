@@ -2361,6 +2361,86 @@ describe("source video library", () => {
     }
   });
 
+  it("backs off after YouTube title timeouts and rate limits", async () => {
+    const timeoutVideoId = crypto.randomUUID();
+    const rateLimitedVideoId = crypto.randomUUID();
+    const timeoutUrl = "https://www.youtube.com/watch?v=titleTimeout01";
+    const rateLimitedUrl = "https://www.youtube.com/watch?v=titleRateLimit01";
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO source_videos (id, source_type, source_ref, title)
+         VALUES (?, 'youtube', ?, 'Timeout clip name')`,
+      ).bind(timeoutVideoId, timeoutUrl),
+      env.DB.prepare(
+        `INSERT INTO source_videos (id, source_type, source_ref, title)
+         VALUES (?, 'youtube', ?, 'Rate limited clip name')`,
+      ).bind(rateLimitedVideoId, rateLimitedUrl),
+    ]);
+
+    const savedTimeout = env.YOUTUBE_TITLE_TIMEOUT_MS;
+    env.YOUTUBE_TITLE_TIMEOUT_MS = "10";
+    const originalFetch = globalThis.fetch;
+    const requests = new Map<string, number>();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
+      async (input, init) => {
+        const url = new URL(
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.href
+              : input.url,
+        );
+        if (
+          url.origin === "https://www.youtube.com" &&
+          url.pathname === "/oembed"
+        ) {
+          const sourceUrl = url.searchParams.get("url") ?? "";
+          requests.set(sourceUrl, (requests.get(sourceUrl) ?? 0) + 1);
+          if (sourceUrl === rateLimitedUrl) {
+            return new Response("Rate limited", { status: 429 });
+          }
+          if (sourceUrl === timeoutUrl) {
+            return new Promise<Response>((_, reject) => {
+              const signal = init?.signal;
+              const rejectOnAbort = () =>
+                reject(signal?.reason ?? new Error("Aborted"));
+              if (signal?.aborted) rejectOnAbort();
+              else signal?.addEventListener("abort", rejectOnAbort, { once: true });
+            });
+          }
+          return new Response("Not found", { status: 404 });
+        }
+        return originalFetch(input, init);
+      },
+    );
+
+    try {
+      const firstResponse = await workerFetch(
+        "http://example.com/api/videos?limit=100",
+      );
+      expect(firstResponse.status).toBe(200);
+      const first = (await firstResponse.json()) as {
+        videos: Array<{ id: string; title: string }>;
+      };
+      expect(first.videos.find((video) => video.id === timeoutVideoId)?.title).toBe(
+        "YouTube video titleTimeout01",
+      );
+      expect(
+        first.videos.find((video) => video.id === rateLimitedVideoId)?.title,
+      ).toBe("YouTube video titleRateLimit01");
+
+      const secondResponse = await workerFetch(
+        "http://example.com/api/videos?limit=100",
+      );
+      expect(secondResponse.status).toBe(200);
+      expect(requests.get(timeoutUrl)).toBe(1);
+      expect(requests.get(rateLimitedUrl)).toBe(1);
+    } finally {
+      fetchSpy.mockRestore();
+      env.YOUTUBE_TITLE_TIMEOUT_MS = savedTimeout;
+    }
+  });
+
   it("retains failed artifact cleanup work for a later retry", async () => {
     const key = `clips/${crypto.randomUUID()}/clip.mp4`;
     await env.DB.prepare(
@@ -2607,7 +2687,7 @@ describe("source video library", () => {
     const video = list.videos.find((item) => item.id === first.videoId);
 
     expect(video).toMatchObject({
-      title: "Grouping test source",
+      title: "YouTube video groupingTest01",
       clipCount: 2,
     });
     expect(video?.thumbnail).toBe(

@@ -11,6 +11,7 @@ declare module "cloudflare:workers" {
     R2_SECRET_ACCESS_KEY?: string;
     R2_BUCKET_NAME?: string;
     WORKER_BASE_URL?: string;
+    YOUTUBE_TITLE_TIMEOUT_MS?: string;
     TEST_MIGRATIONS: import("cloudflare:test").D1Migration[];
   }
 }

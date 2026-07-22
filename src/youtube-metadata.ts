@@ -1,83 +1,98 @@
-import { updateSourceVideoTitle } from "./db";
+import {
+  markSourceVideoTitleChecked,
+  updateSourceVideoTitle,
+} from "./db";
 import { extractYoutubeVideoId } from "./source-videos";
 import type { SourceVideoRecord } from "./types";
 
 const YOUTUBE_OEMBED_URL = "https://www.youtube.com/oembed";
-const TITLE_RESOLUTION_CONCURRENCY = 5;
-
-interface ResolvedYoutubeTitle {
-  title: string;
-  resolved: boolean;
-}
+const DEFAULT_FETCH_TIMEOUT_MS = 2_000;
+const RETRY_BACKOFF_MS = 6 * 60 * 60 * 1_000;
 
 export async function resolveUnresolvedYoutubeTitles(
   db: D1Database,
   videos: SourceVideoRecord[],
+  timeoutMs = DEFAULT_FETCH_TIMEOUT_MS,
 ): Promise<SourceVideoRecord[]> {
-  const resolvedById = new Map<string, ResolvedYoutubeTitle>();
   const unresolved = videos.filter(
     (video) =>
       video.source_type === "youtube" &&
       !video.youtube_title_resolved_at,
   );
+  const titlesById = new Map(
+    unresolved.map((video) => [video.id, fallbackTitle(video.source_ref)]),
+  );
+  const now = Date.now();
+  const due = unresolved.filter(
+    (video) => !wasCheckedRecently(video.youtube_title_checked_at, now),
+  );
 
-  for (
-    let offset = 0;
-    offset < unresolved.length;
-    offset += TITLE_RESOLUTION_CONCURRENCY
-  ) {
-    const batch = unresolved.slice(
-      offset,
-      offset + TITLE_RESOLUTION_CONCURRENCY,
-    );
-    const results = await Promise.all(
-      batch.map(async (video) => {
-        const result = await fetchYoutubeTitle(video.source_ref);
-        await updateSourceVideoTitle(db, video.id, result.title, result.resolved);
-        return { id: video.id, result };
-      }),
-    );
-    for (const { id, result } of results) {
-      resolvedById.set(id, result);
-    }
-  }
+  await Promise.all(
+    due.map(async (video) => {
+      await bestEffortMarkChecked(db, video.id);
+      const title = await fetchYoutubeTitle(video.source_ref, timeoutMs);
+      if (!title) return;
+
+      titlesById.set(video.id, title);
+      try {
+        await updateSourceVideoTitle(db, video.id, title);
+      } catch (error) {
+        console.error("Failed to cache YouTube title", error);
+      }
+    }),
+  );
 
   return videos.map((video) => {
-    const result = resolvedById.get(video.id);
-    if (!result) return video;
-    return {
-      ...video,
-      title: result.title,
-      youtube_title_resolved_at: result.resolved
-        ? new Date().toISOString()
-        : null,
-    };
+    const title = titlesById.get(video.id);
+    return title ? { ...video, title } : video;
   });
+}
+
+async function bestEffortMarkChecked(
+  db: D1Database,
+  videoId: string,
+): Promise<void> {
+  try {
+    await markSourceVideoTitleChecked(db, videoId);
+  } catch (error) {
+    console.error("Failed to mark YouTube title lookup", error);
+  }
 }
 
 async function fetchYoutubeTitle(
   sourceUrl: string,
-): Promise<ResolvedYoutubeTitle> {
-  const videoId = extractYoutubeVideoId(sourceUrl);
-  const fallbackTitle = videoId ? `YouTube video ${videoId}` : "YouTube video";
+  timeoutMs: number,
+): Promise<string | null> {
   const endpoint = new URL(YOUTUBE_OEMBED_URL);
   endpoint.searchParams.set("url", sourceUrl);
   endpoint.searchParams.set("format", "json");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(endpoint);
-    if (response.ok) {
-      const body = (await response.json()) as { title?: unknown };
-      const title = typeof body.title === "string" ? body.title.trim() : "";
-      if (title) {
-        return { title: title.slice(0, 200), resolved: true };
-      }
-    }
+    const response = await fetch(endpoint, { signal: controller.signal });
+    if (!response.ok) return null;
 
-    const permanentlyUnavailable =
-      response.status >= 400 && response.status < 500 && response.status !== 429;
-    return { title: fallbackTitle, resolved: permanentlyUnavailable };
+    const body = (await response.json()) as { title?: unknown };
+    const title = typeof body.title === "string" ? body.title.trim() : "";
+    return title ? title.slice(0, 200) : null;
   } catch {
-    return { title: fallbackTitle, resolved: false };
+    return null;
+  } finally {
+    clearTimeout(timeout);
   }
+}
+
+function fallbackTitle(sourceUrl: string): string {
+  const videoId = extractYoutubeVideoId(sourceUrl);
+  return videoId ? `YouTube video ${videoId}` : "YouTube video";
+}
+
+function wasCheckedRecently(checkedAt: string | null, now: number): boolean {
+  if (!checkedAt) return false;
+  const normalized = checkedAt.includes("T")
+    ? checkedAt
+    : `${checkedAt.replace(" ", "T")}Z`;
+  const checkedAtMs = Date.parse(normalized);
+  return Number.isFinite(checkedAtMs) && now - checkedAtMs < RETRY_BACKOFF_MS;
 }

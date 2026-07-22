@@ -12,4 +12,5 @@ export interface Env {
   WORKER_BASE_URL?: string;
   HELPER_TOKEN?: string;
   HELPER_CLAIM_WINDOW_SECONDS?: string;
+  YOUTUBE_TITLE_TIMEOUT_MS?: string;
 }

@@ -423,7 +423,11 @@ async function handleListSourceVideos(
     offset,
     archived,
   );
-  const titledVideos = await resolveUnresolvedYoutubeTitles(env.DB, videos);
+  const titledVideos = await resolveUnresolvedYoutubeTitles(
+    env.DB,
+    videos,
+    Number(env.YOUTUBE_TITLE_TIMEOUT_MS) || undefined,
+  );
 
   return json({
     videos: titledVideos.map((video) =>
@@ -510,7 +514,11 @@ async function handleGetSourceVideo(
   if (!video) {
     return json({ error: "Video not found" }, 404);
   }
-  const [titledVideo] = await resolveUnresolvedYoutubeTitles(env.DB, [video]);
+  const [titledVideo] = await resolveUnresolvedYoutubeTitles(
+    env.DB,
+    [video],
+    Number(env.YOUTUBE_TITLE_TIMEOUT_MS) || undefined,
+  );
 
   return json({
     video: sourceVideoRecordToResponse(titledVideo, env.R2_PUBLIC_PREFIX),
