@@ -450,6 +450,16 @@ export async function listArtifactDeletions(
   return result.results ?? [];
 }
 
+export async function queueArtifactDeletion(
+  db: D1Database,
+  key: string,
+): Promise<void> {
+  await db
+    .prepare("INSERT OR IGNORE INTO artifact_deletions (key) VALUES (?)")
+    .bind(key)
+    .run();
+}
+
 export async function removeArtifactDeletion(
   db: D1Database,
   key: string,

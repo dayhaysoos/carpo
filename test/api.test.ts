@@ -2733,6 +2733,7 @@ describe("source video library", () => {
       ),
     ]);
     const keys = outputKeysForClip(clipId);
+    let lateDeleteAttempts = 0;
     let releasePut: (() => void) | undefined;
     let signalPutStarted: (() => void) | undefined;
     const putStarted = new Promise<void>((resolve) => {
@@ -2749,6 +2750,14 @@ describe("source video library", () => {
             signalPutStarted?.();
             await putReleased;
             return target.put(...args);
+          };
+        }
+        if (property === "delete") {
+          return async (key: string | string[]) => {
+            if (key === keys.mp4Key && lateDeleteAttempts++ === 0) {
+              throw new Error("temporary late artifact cleanup failure");
+            }
+            return target.delete(key);
           };
         }
         const value = Reflect.get(target, property, target) as unknown;
@@ -2796,6 +2805,15 @@ describe("source video library", () => {
     const uploadResponse = await uploadPromise;
     await waitOnExecutionContext(uploadContext);
     expect(uploadResponse.status).toBe(410);
+    expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).not.toBeNull();
+    const queued = await env.DB.prepare(
+      "SELECT attempts FROM artifact_deletions WHERE key = ?",
+    )
+      .bind(keys.mp4Key)
+      .first<{ attempts: number }>();
+    expect(queued?.attempts).toBe(1);
+
+    await drainArtifactDeletions(env.DB, env.CLIPS_BUCKET);
     expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).toBeNull();
   });
 });

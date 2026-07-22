@@ -13,6 +13,7 @@ import {
   sweepStaleClips,
   markGifEncoding,
   outputKeysForClip,
+  queueArtifactDeletion,
 } from "./db";
 import type { Env } from "./env";
 import { prewarmEncoder } from "./encoder-pool";
@@ -827,7 +828,8 @@ async function handleInternalArtifactUpload(
 
   const clipStillExists = await getClipById(env.DB, clipId);
   if (!clipStillExists) {
-    await env.CLIPS_BUCKET.delete(objectKey);
+    await queueArtifactDeletion(env.DB, objectKey);
+    await drainArtifactDeletions(env.DB, env.CLIPS_BUCKET);
     return json({ error: "Clip was deleted during artifact upload" }, 410);
   }
 
