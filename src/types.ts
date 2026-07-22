@@ -127,6 +127,7 @@ export interface SourceVideoRecord {
   failed_clip_count: number;
   thumbnail_key: string | null;
   archived_at: string | null;
+  youtube_title_resolved_at: string | null;
   created_at: string;
   updated_at: string;
 }

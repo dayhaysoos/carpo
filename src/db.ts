@@ -74,7 +74,20 @@ async function ensureSourceVideo(
   const title = explicitTitle || fallbackSourceTitle(request.source, request.title);
   const id = crypto.randomUUID();
 
-  if (explicitTitle) {
+  if (explicitTitle && sourceType === "youtube") {
+    await db
+      .prepare(
+        `INSERT INTO source_videos (
+           id, source_type, source_ref, title, youtube_title_resolved_at
+         ) VALUES (?, ?, ?, ?, datetime('now'))
+         ON CONFLICT (source_type, source_ref) DO UPDATE SET
+           title = excluded.title,
+           youtube_title_resolved_at = datetime('now'),
+           updated_at = datetime('now')`,
+      )
+      .bind(id, sourceType, sourceRef, title)
+      .run();
+  } else if (explicitTitle) {
     await db
       .prepare(
         `INSERT INTO source_videos (id, source_type, source_ref, title)
@@ -283,6 +296,7 @@ const SOURCE_VIDEO_SELECT = `
       LIMIT 1
     ) AS thumbnail_key,
     source_videos.archived_at,
+    source_videos.youtube_title_resolved_at,
     source_videos.created_at,
     COALESCE(MAX(clips.updated_at), source_videos.updated_at) AS updated_at
   FROM source_videos
@@ -337,6 +351,26 @@ export async function setSourceVideoArchived(
     .bind(id)
     .run();
   return (result.meta.changes ?? 0) > 0;
+}
+
+export async function updateSourceVideoTitle(
+  db: D1Database,
+  id: string,
+  title: string,
+  resolved: boolean,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE source_videos
+       SET title = ?,
+           youtube_title_resolved_at = CASE
+             WHEN ? THEN datetime('now')
+             ELSE youtube_title_resolved_at
+           END
+       WHERE id = ? AND source_type = 'youtube'`,
+    )
+    .bind(title, resolved ? 1 : 0, id)
+    .run();
 }
 
 export async function isRetainedUploadSource(

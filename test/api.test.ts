@@ -3,7 +3,7 @@ import {
   waitOnExecutionContext,
 } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { JOB_SECRET_HEADER, HELPER_TOKEN_HEADER } from "../src/auth";
 import { drainArtifactDeletions } from "../src/artifact-deletions";
 import { handleRequest } from "../src/routes";
@@ -2297,6 +2297,70 @@ describe("GET /api/clips", () => {
 });
 
 describe("source video library", () => {
+  it("resolves and caches the YouTube title instead of using a clip title", async () => {
+    const videoId = crypto.randomUUID();
+    const clipId = crypto.randomUUID();
+    const youtubeUrl = "https://www.youtube.com/watch?v=titleSource01";
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO source_videos (id, source_type, source_ref, title)
+         VALUES (?, 'youtube', ?, 'Name of the clip')`,
+      ).bind(videoId, youtubeUrl),
+      env.DB.prepare(
+        `INSERT INTO clips (
+           id, title, source_type, source_ref, trim_start, trim_end,
+           filters_json, status, callback_secret, video_id
+         ) VALUES (?, 'Name of the clip', 'youtube', ?, 1, 4, '[]', 'complete', ?, ?)`,
+      ).bind(clipId, youtubeUrl, crypto.randomUUID(), videoId),
+    ]);
+
+    const originalFetch = globalThis.fetch;
+    let targetTitleRequests = 0;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
+      async (input, init) => {
+        const url = new URL(
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.href
+              : input.url,
+        );
+        if (
+          url.origin === "https://www.youtube.com" &&
+          url.pathname === "/oembed"
+        ) {
+          if (url.searchParams.get("url") === youtubeUrl) {
+            targetTitleRequests += 1;
+            return Response.json({ title: "The actual YouTube video title" });
+          }
+          return new Response("Not found", { status: 404 });
+        }
+        return originalFetch(input, init);
+      },
+    );
+
+    try {
+      const firstResponse = await workerFetch("http://example.com/api/videos");
+      const first = (await firstResponse.json()) as {
+        videos: Array<{ id: string; title: string }>;
+      };
+      expect(first.videos.find((video) => video.id === videoId)?.title).toBe(
+        "The actual YouTube video title",
+      );
+
+      const secondResponse = await workerFetch("http://example.com/api/videos");
+      const second = (await secondResponse.json()) as {
+        videos: Array<{ id: string; title: string }>;
+      };
+      expect(second.videos.find((video) => video.id === videoId)?.title).toBe(
+        "The actual YouTube video title",
+      );
+      expect(targetTitleRequests).toBe(1);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   it("retains failed artifact cleanup work for a later retry", async () => {
     const key = `clips/${crypto.randomUUID()}/clip.mp4`;
     await env.DB.prepare(

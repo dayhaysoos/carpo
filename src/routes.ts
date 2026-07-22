@@ -41,6 +41,7 @@ import {
 } from "./helper";
 import { normalizeClipSource } from "./source-videos";
 import { drainArtifactDeletions } from "./artifact-deletions";
+import { resolveUnresolvedYoutubeTitles } from "./youtube-metadata";
 
 export async function handleRequest(
   request: Request,
@@ -422,9 +423,10 @@ async function handleListSourceVideos(
     offset,
     archived,
   );
+  const titledVideos = await resolveUnresolvedYoutubeTitles(env.DB, videos);
 
   return json({
-    videos: videos.map((video) =>
+    videos: titledVideos.map((video) =>
       sourceVideoRecordToResponse(video, env.R2_PUBLIC_PREFIX),
     ),
     total,
@@ -508,9 +510,10 @@ async function handleGetSourceVideo(
   if (!video) {
     return json({ error: "Video not found" }, 404);
   }
+  const [titledVideo] = await resolveUnresolvedYoutubeTitles(env.DB, [video]);
 
   return json({
-    video: sourceVideoRecordToResponse(video, env.R2_PUBLIC_PREFIX),
+    video: sourceVideoRecordToResponse(titledVideo, env.R2_PUBLIC_PREFIX),
     clips: clips.map((clip) =>
       recordToResponse(clip, env.R2_PUBLIC_PREFIX),
     ),
