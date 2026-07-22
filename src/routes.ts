@@ -39,6 +39,7 @@ import {
   sweepAndRecoverHelperClips,
 } from "./helper";
 import { normalizeClipSource } from "./source-videos";
+import { drainArtifactDeletions } from "./artifact-deletions";
 
 export async function handleRequest(
   request: Request,
@@ -46,6 +47,7 @@ export async function handleRequest(
   ctx: ExecutionContext,
 ): Promise<Response> {
   const url = new URL(request.url);
+  ctx.waitUntil(drainArtifactDeletions(env.DB, env.CLIPS_BUCKET));
 
   if (request.method === "POST" && url.pathname === "/api/clips") {
     return handleCreateClip(request, env, ctx);
@@ -471,7 +473,6 @@ async function handleDeleteSourceVideo(
   if (!video) {
     return json({ error: "Video not found" }, 404);
   }
-  const clips = await listClipsByVideoId(env.DB, videoId);
   let deleted: boolean;
   try {
     deleted = await deleteSourceVideoRecords(env.DB, videoId);
@@ -482,12 +483,7 @@ async function handleDeleteSourceVideo(
   if (!deleted) {
     return json({ error: "Video not found" }, 404);
   }
-  await Promise.all(
-    clips.map((clip) => deleteClipArtifacts(env.CLIPS_BUCKET, clip.id, clip)),
-  );
-  if (video.source_type === "upload") {
-    await env.CLIPS_BUCKET.delete(video.source_ref);
-  }
+  await drainArtifactDeletions(env.DB, env.CLIPS_BUCKET);
   return new Response(null, { status: 204 });
 }
 
@@ -552,7 +548,10 @@ async function handleListClips(
   });
 }
 
-async function handleDeleteClip(clipId: string, env: Env): Promise<Response> {
+async function handleDeleteClip(
+  clipId: string,
+  env: Env,
+): Promise<Response> {
   if (!clipId) {
     return json({ error: "Clip id is required" }, 400);
   }
@@ -562,12 +561,12 @@ async function handleDeleteClip(clipId: string, env: Env): Promise<Response> {
     return json({ error: "Clip not found" }, 404);
   }
 
-  await deleteClipArtifacts(env.CLIPS_BUCKET, clipId, record);
   const deleted = await deleteClip(env.DB, clipId);
   if (!deleted) {
     return json({ error: "Clip not found" }, 404);
   }
 
+  await drainArtifactDeletions(env.DB, env.CLIPS_BUCKET);
   return new Response(null, { status: 204 });
 }
 

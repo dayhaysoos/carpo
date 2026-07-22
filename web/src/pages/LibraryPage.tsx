@@ -65,6 +65,7 @@ export function LibraryPage() {
     error,
     fetchNextPage,
     hasNextPage,
+    isFetchNextPageError,
     isFetchingNextPage,
     isLoading,
   } = useInfiniteQuery({
@@ -146,6 +147,11 @@ export function LibraryPage() {
                 <VideoCard key={video.id} video={video} />
               ))}
             </div>
+            {isFetchNextPageError && (
+              <p className="form-error" role="alert">
+                Could not load more videos. {error?.message}
+              </p>
+            )}
             {hasNextPage && (
               <div className="library-load-more">
                 <button
@@ -154,7 +160,11 @@ export function LibraryPage() {
                   onClick={() => void fetchNextPage()}
                   disabled={isFetchingNextPage}
                 >
-                  {isFetchingNextPage ? "Loading…" : "Load more videos"}
+                  {isFetchingNextPage
+                    ? "Loading…"
+                    : isFetchNextPageError
+                      ? "Retry loading videos"
+                      : "Load more videos"}
                 </button>
               </div>
             )}

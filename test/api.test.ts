@@ -5,6 +5,7 @@ import {
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { JOB_SECRET_HEADER, HELPER_TOKEN_HEADER } from "../src/auth";
+import { drainArtifactDeletions } from "../src/artifact-deletions";
 import { getClipById, outputKeysForClip } from "../src/db";
 import { ENCODER_POOL_INSTANCE } from "../src/encoder-pool";
 import { dispatchEncodingJob, failClipAmbiguous } from "../src/jobs";
@@ -2295,6 +2296,39 @@ describe("GET /api/clips", () => {
 });
 
 describe("source video library", () => {
+  it("retains failed artifact cleanup work for a later retry", async () => {
+    const key = `clips/${crypto.randomUUID()}/clip.mp4`;
+    await env.DB.prepare(
+      "INSERT INTO artifact_deletions (key) VALUES (?)",
+    )
+      .bind(key)
+      .run();
+
+    let shouldFail = true;
+    const bucket = {
+      delete: async () => {
+        if (shouldFail) throw new Error("temporary R2 failure");
+      },
+    } as unknown as R2Bucket;
+
+    await drainArtifactDeletions(env.DB, bucket);
+    const queued = await env.DB.prepare(
+      "SELECT attempts FROM artifact_deletions WHERE key = ?",
+    )
+      .bind(key)
+      .first<{ attempts: number }>();
+    expect(queued?.attempts).toBe(1);
+
+    shouldFail = false;
+    await drainArtifactDeletions(env.DB, bucket);
+    const afterRetry = await env.DB.prepare(
+      "SELECT key FROM artifact_deletions WHERE key = ?",
+    )
+      .bind(key)
+      .first();
+    expect(afterRetry).toBeNull();
+  });
+
   it("archives and restores a video without deleting its clips", async () => {
     const created = await createYoutubeClip("archive lifecycle clip");
 

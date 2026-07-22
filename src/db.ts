@@ -359,10 +359,18 @@ export async function deleteSourceVideoRecords(
   db: D1Database,
   id: string,
 ): Promise<boolean> {
-  const [, videoResult] = await db.batch([
+  const results = await db.batch([
+    ...queueClipArtifactDeletions(db, "video_id", id),
+    db.prepare(
+      `INSERT OR IGNORE INTO artifact_deletions (key)
+       SELECT source_ref
+       FROM source_videos
+       WHERE id = ? AND source_type = 'upload'`,
+    ).bind(id),
     db.prepare("DELETE FROM clips WHERE video_id = ?").bind(id),
     db.prepare("DELETE FROM source_videos WHERE id = ?").bind(id),
   ]);
+  const videoResult = results[results.length - 1];
   return (videoResult.meta.changes ?? 0) > 0;
 }
 
@@ -396,11 +404,74 @@ export async function listClipsByVideoId(
 }
 
 export async function deleteClip(db: D1Database, id: string): Promise<boolean> {
-  const result = await db
-    .prepare("DELETE FROM clips WHERE id = ?")
-    .bind(id)
-    .run();
+  const results = await db.batch([
+    ...queueClipArtifactDeletions(db, "id", id),
+    db.prepare("DELETE FROM clips WHERE id = ?").bind(id),
+  ]);
+  const result = results[results.length - 1];
   return (result.meta.changes ?? 0) > 0;
+}
+
+function queueClipArtifactDeletions(
+  db: D1Database,
+  field: "id" | "video_id",
+  value: string,
+): D1PreparedStatement[] {
+  const expressions = [
+    "'clips/' || id || '/clip.mp4'",
+    "'clips/' || id || '/thumbnail.jpg'",
+    "'clips/' || id || '/clip.gif'",
+    "output_mp4_key",
+    "output_thumbnail_key",
+    "output_gif_key",
+    "helper_upload_key",
+  ];
+  return expressions.map((expression) =>
+    db.prepare(
+      `INSERT OR IGNORE INTO artifact_deletions (key)
+       SELECT ${expression} FROM clips
+       WHERE ${field} = ? AND ${expression} IS NOT NULL`,
+    ).bind(value),
+  );
+}
+
+export async function listArtifactDeletions(
+  db: D1Database,
+  limit: number,
+): Promise<Array<{ key: string }>> {
+  const result = await db
+    .prepare(
+      `SELECT key FROM artifact_deletions
+       ORDER BY created_at ASC
+       LIMIT ?`,
+    )
+    .bind(limit)
+    .all<{ key: string }>();
+  return result.results ?? [];
+}
+
+export async function removeArtifactDeletion(
+  db: D1Database,
+  key: string,
+): Promise<void> {
+  await db.prepare("DELETE FROM artifact_deletions WHERE key = ?").bind(key).run();
+}
+
+export async function markArtifactDeletionFailed(
+  db: D1Database,
+  key: string,
+  errorMessage: string,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE artifact_deletions
+       SET attempts = attempts + 1,
+           last_error = ?,
+           updated_at = datetime('now')
+       WHERE key = ?`,
+    )
+    .bind(errorMessage, key)
+    .run();
 }
 
 export async function deleteClipArtifacts(
