@@ -30,6 +30,7 @@ export interface YTPlayer {
   seekTo(seconds: number, allowSeekAhead: boolean): void;
   getCurrentTime(): number;
   getDuration(): number;
+  getVideoData(): { title?: string };
   pauseVideo(): void;
   playVideo(): void;
   destroy(): void;
@@ -68,12 +69,14 @@ export function useYoutubePlayer(videoId: string | null) {
   const [ready, setReady] = useState(false);
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
+  const [title, setTitle] = useState("");
 
   useEffect(() => {
     if (!videoId) {
       setReady(false);
       setDuration(0);
       setCurrentTime(0);
+      setTitle("");
       playerRef.current?.destroy();
       playerRef.current = null;
       return;
@@ -107,7 +110,9 @@ export function useYoutubePlayer(videoId: string | null) {
           onReady: (event) => {
             if (cancelled) return;
             const d = event.target.getDuration();
+            const videoData = event.target.getVideoData();
             setDuration(Number.isFinite(d) ? d : 0);
+            setTitle(videoData.title?.trim() ?? "");
             setReady(true);
             rafId = requestAnimationFrame(tick);
           },
@@ -134,6 +139,7 @@ export function useYoutubePlayer(videoId: string | null) {
     ready,
     duration,
     currentTime,
+    title,
     seekTo,
   };
 }

@@ -144,10 +144,14 @@ async function createYoutubeClip(title = "test clip") {
   });
 
   expect(response.status).toBe(201);
-  const body = (await response.json()) as { id: string };
+  const body = (await response.json()) as { id: string; videoId: string };
   const record = await getClipById(env.DB, body.id);
   expect(record?.callback_secret).toBeTruthy();
-  return { clipId: body.id, secret: record!.callback_secret };
+  return {
+    clipId: body.id,
+    videoId: body.videoId,
+    secret: record!.callback_secret,
+  };
 }
 
 describe("POST /api/upload-url", () => {
@@ -566,6 +570,25 @@ describe("upload source sweep", () => {
     const deleted = await sweepExpiredUploadSources(env.CLIPS_BUCKET, { now });
     expect(deleted).toBeGreaterThanOrEqual(1);
     expect(await env.CLIPS_BUCKET.get(staleKey)).toBeNull();
+  });
+
+  it("sweepExpiredUploadSources retains an expired reusable video source", async () => {
+    const retainedKey = "uploads/sweep-retained-video.mp4";
+    await env.CLIPS_BUCKET.put(retainedKey, new Uint8Array([12, 13, 14, 15]), {
+      httpMetadata: { contentType: "video/mp4" },
+    });
+    const object = await env.CLIPS_BUCKET.head(retainedKey);
+    const now = new Date(
+      object!.uploaded.getTime() + UPLOAD_SOURCE_SWEEP_TTL_MS + 60_000,
+    );
+
+    const deleted = await sweepExpiredUploadSources(env.CLIPS_BUCKET, {
+      now,
+      shouldRetain: async (key) => key === retainedKey,
+    });
+
+    expect(deleted).toBe(0);
+    expect(await env.CLIPS_BUCKET.get(retainedKey)).not.toBeNull();
   });
 });
 
@@ -2268,6 +2291,301 @@ describe("GET /api/clips", () => {
     expect(body.offset).toBe(1);
     expect(body.clips).toHaveLength(2);
     expect(body.total).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("source video library", () => {
+  it("archives and restores a video without deleting its clips", async () => {
+    const created = await createYoutubeClip("archive lifecycle clip");
+
+    const archivedResponse = await workerFetch(
+      `http://example.com/api/videos/${created.videoId}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archived: true }),
+      },
+    );
+    expect(archivedResponse.status).toBe(200);
+
+    const activeResponse = await workerFetch("http://example.com/api/videos");
+    const active = (await activeResponse.json()) as {
+      videos: Array<{ id: string }>;
+    };
+    expect(active.videos.some((video) => video.id === created.videoId)).toBe(
+      false,
+    );
+
+    const archivedListResponse = await workerFetch(
+      "http://example.com/api/videos?archived=true",
+    );
+    const archived = (await archivedListResponse.json()) as {
+      videos: Array<{ id: string; archivedAt: string | null }>;
+    };
+    expect(
+      archived.videos.find((video) => video.id === created.videoId),
+    ).toMatchObject({
+      id: created.videoId,
+      archivedAt: expect.any(String),
+    });
+
+    const detailResponse = await workerFetch(
+      `http://example.com/api/videos/${created.videoId}`,
+    );
+    const detail = (await detailResponse.json()) as {
+      clips: Array<{ id: string }>;
+    };
+    expect(detail.clips.some((clip) => clip.id === created.clipId)).toBe(true);
+
+    const restoredResponse = await workerFetch(
+      `http://example.com/api/videos/${created.videoId}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archived: false }),
+      },
+    );
+    expect(restoredResponse.status).toBe(200);
+  });
+
+  it("creates another clip from a retained uploaded video", async () => {
+    const uploadKey = await uploadTestVideo();
+    const firstResponse = await workerFetch("http://example.com/api/clips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "first upload clip",
+        sourceTitle: "Reusable upload.mp4",
+        source: { type: "upload", key: uploadKey },
+        trimStart: 1,
+        trimEnd: 4,
+        filters: [],
+      }),
+    });
+    expect(firstResponse.status).toBe(201);
+    const first = (await firstResponse.json()) as {
+      id: string;
+      videoId: string;
+    };
+
+    const sourceResponse = await workerFetch(
+      `http://example.com/api/videos/${first.videoId}/source`,
+    );
+    expect(sourceResponse.status).toBe(200);
+    expect(sourceResponse.headers.get("content-type")).toBe("video/mp4");
+    expect(new Uint8Array(await sourceResponse.arrayBuffer())).toEqual(
+      new Uint8Array([0x00, 0x00, 0x00, 0x1c, 0x66, 0x74, 0x79, 0x70]),
+    );
+
+    const rangeResponse = await workerFetch(
+      `http://example.com/api/videos/${first.videoId}/source`,
+      { headers: { Range: "bytes=4-7" } },
+    );
+    expect(rangeResponse.status).toBe(206);
+    expect(rangeResponse.headers.get("accept-ranges")).toBe("bytes");
+    expect(rangeResponse.headers.get("content-range")).toBe("bytes 4-7/8");
+    expect(new Uint8Array(await rangeResponse.arrayBuffer())).toEqual(
+      new Uint8Array([0x66, 0x74, 0x79, 0x70]),
+    );
+
+    const secondResponse = await workerFetch(
+      `http://example.com/api/videos/${first.videoId}/clips`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: "second upload clip",
+          trimStart: 5,
+          trimEnd: 8,
+          filters: [],
+          quality: "720p",
+        }),
+      },
+    );
+    expect(secondResponse.status).toBe(201);
+    const second = (await secondResponse.json()) as {
+      id: string;
+      videoId: string;
+      source: { type: string; key: string };
+    };
+    expect(second).toMatchObject({
+      videoId: first.videoId,
+      source: { type: "upload", key: uploadKey },
+    });
+
+    const detailResponse = await workerFetch(
+      `http://example.com/api/videos/${first.videoId}`,
+    );
+    const detail = (await detailResponse.json()) as {
+      video: { clipCount: number };
+      clips: Array<{ id: string }>;
+    };
+    expect(detail.video.clipCount).toBe(2);
+    expect(detail.clips.map((clip) => clip.id)).toEqual(
+      expect.arrayContaining([first.id, second.id]),
+    );
+  });
+
+  it("groups alternate YouTube URL forms into one video project", async () => {
+    const createForUrl = async (url: string, title: string) => {
+      const response = await workerFetch("http://example.com/api/clips", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title,
+          sourceTitle: "Grouping test source",
+          source: { type: "youtube", url },
+          trimStart: 1,
+          trimEnd: 4,
+          filters: [],
+        }),
+      });
+      expect(response.status).toBe(201);
+      return response.json() as Promise<{ id: string; videoId: string }>;
+    };
+
+    const first = await createForUrl(
+      "https://www.youtube.com/watch?v=groupingTest01&utm_source=test",
+      "grouped clip one",
+    );
+    const second = await createForUrl(
+      "https://youtu.be/groupingTest01?t=30",
+      "grouped clip two",
+    );
+
+    expect(second.videoId).toBe(first.videoId);
+
+    const listResponse = await workerFetch("http://example.com/api/videos");
+    expect(listResponse.status).toBe(200);
+    const list = (await listResponse.json()) as {
+      videos: Array<{
+        id: string;
+        title: string;
+        clipCount: number;
+        thumbnail: string | null;
+      }>;
+    };
+    const project = list.videos.find((video) => video.id === first.videoId);
+
+    expect(project).toMatchObject({
+      title: "Grouping test source",
+      clipCount: 2,
+    });
+    expect(project?.thumbnail).toBe(
+      "https://i.ytimg.com/vi/groupingTest01/hqdefault.jpg",
+    );
+
+    const detailResponse = await workerFetch(
+      `http://example.com/api/videos/${first.videoId}`,
+    );
+    expect(detailResponse.status).toBe(200);
+    const detail = (await detailResponse.json()) as {
+      video: { id: string; clipCount: number };
+      clips: Array<{ id: string; videoId: string }>;
+    };
+    expect(detail.video).toMatchObject({ id: first.videoId, clipCount: 2 });
+    expect(detail.clips.map((clip) => clip.id)).toEqual(
+      expect.arrayContaining([first.id, second.id]),
+    );
+    expect(detail.clips.every((clip) => clip.videoId === first.videoId)).toBe(
+      true,
+    );
+  });
+
+  it("keeps a video after its last clip is deleted", async () => {
+    const uniqueResponse = await workerFetch("http://example.com/api/clips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "single clip",
+        sourceTitle: "Delete me",
+        source: {
+          type: "youtube",
+          url: "https://www.youtube.com/watch?v=deleteProject01",
+        },
+        trimStart: 1,
+        trimEnd: 4,
+        filters: [],
+      }),
+    });
+    const unique = (await uniqueResponse.json()) as {
+      id: string;
+      videoId: string;
+    };
+
+    const deleted = await workerFetch(
+      `http://example.com/api/clips/${unique.id}`,
+      { method: "DELETE" },
+    );
+    expect(deleted.status).toBe(204);
+
+    const after = await workerFetch(
+      `http://example.com/api/videos/${unique.videoId}`,
+    );
+    expect(after.status).toBe(200);
+    const detail = (await after.json()) as {
+      video: { id: string; clipCount: number };
+      clips: Array<unknown>;
+    };
+    expect(detail.video).toMatchObject({
+      id: unique.videoId,
+      clipCount: 0,
+    });
+    expect(detail.clips).toEqual([]);
+  });
+
+  it("deletes a video, its uploaded original, and all associated clips explicitly", async () => {
+    const uploadKey = await uploadTestVideo();
+    const createResponse = await workerFetch("http://example.com/api/clips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "delete video clip one",
+        sourceTitle: "Delete video source.mp4",
+        source: { type: "upload", key: uploadKey },
+        trimStart: 1,
+        trimEnd: 4,
+        filters: [],
+      }),
+    });
+    const first = (await createResponse.json()) as {
+      id: string;
+      videoId: string;
+    };
+    const secondResponse = await workerFetch(
+      `http://example.com/api/videos/${first.videoId}/clips`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: "delete video clip two",
+          trimStart: 5,
+          trimEnd: 8,
+          filters: [],
+        }),
+      },
+    );
+    const second = (await secondResponse.json()) as { id: string };
+
+    const deleted = await workerFetch(
+      `http://example.com/api/videos/${first.videoId}`,
+      { method: "DELETE" },
+    );
+    expect(deleted.status).toBe(204);
+
+    expect(await env.CLIPS_BUCKET.get(uploadKey)).toBeNull();
+    const videoAfter = await workerFetch(
+      `http://example.com/api/videos/${first.videoId}`,
+    );
+    expect(videoAfter.status).toBe(404);
+    const firstAfter = await workerFetch(
+      `http://example.com/api/clips/${first.id}`,
+    );
+    const secondAfter = await workerFetch(
+      `http://example.com/api/clips/${second.id}`,
+    );
+    expect(firstAfter.status).toBe(404);
+    expect(secondAfter.status).toBe(404);
   });
 });
 

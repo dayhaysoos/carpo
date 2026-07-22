@@ -1,9 +1,15 @@
 import {
   deleteClip,
   deleteClipArtifacts,
+  deleteSourceVideoRecords,
   getClipById,
+  getSourceVideoById,
   insertClip,
+  isRetainedUploadSource,
   listClips,
+  listClipsByVideoId,
+  listSourceVideos,
+  setSourceVideoArchived,
   sweepStaleClips,
   markGifEncoding,
   outputKeysForClip,
@@ -12,8 +18,8 @@ import type { Env } from "./env";
 import { prewarmEncoder } from "./encoder-pool";
 import { JOB_SECRET_HEADER, verifyJobSecret } from "./auth";
 import { applyStatusUpdate, dispatchEncodingJob, dispatchGifExportJob } from "./jobs";
-import { recordToResponse } from "./serialize";
-import type { ClipRecord, ClipStatus } from "./types";
+import { recordToResponse, sourceVideoRecordToResponse } from "./serialize";
+import type { ClipRecord, ClipStatus, CreateClipRequest } from "./types";
 import {
   decodeUploadPathParam,
   generateUploadKey,
@@ -32,6 +38,7 @@ import {
   scheduleHelperClaimWindowFallback,
   sweepAndRecoverHelperClips,
 } from "./helper";
+import { normalizeClipSource } from "./source-videos";
 
 export async function handleRequest(
   request: Request,
@@ -55,6 +62,38 @@ export async function handleRequest(
 
   if (request.method === "GET" && url.pathname === "/api/clips") {
     return handleListClips(url, env, ctx);
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/videos") {
+    return handleListSourceVideos(url, env, ctx);
+  }
+
+  const videoSourceMatch = url.pathname.match(/^\/api\/videos\/([^/]+)\/source$/);
+  if (request.method === "GET" && videoSourceMatch) {
+    return handleSourceVideoSource(request, videoSourceMatch[1], env);
+  }
+
+  const videoClipsMatch = url.pathname.match(/^\/api\/videos\/([^/]+)\/clips$/);
+  if (request.method === "POST" && videoClipsMatch) {
+    return handleCreateClipForVideo(
+      request,
+      videoClipsMatch[1],
+      env,
+      ctx,
+    );
+  }
+
+  const videoMatch = url.pathname.match(/^\/api\/videos\/([^/]+)$/);
+  if (request.method === "GET" && videoMatch) {
+    return handleGetSourceVideo(videoMatch[1], env, ctx, url.origin);
+  }
+
+  if (request.method === "PATCH" && videoMatch) {
+    return handleUpdateSourceVideo(request, videoMatch[1], env);
+  }
+
+  if (request.method === "DELETE" && videoMatch) {
+    return handleDeleteSourceVideo(videoMatch[1], env);
   }
 
   if (request.method === "POST" && url.pathname === "/api/helper/claim") {
@@ -158,8 +197,13 @@ async function handleCreateClip(
     return json({ error: "Validation failed", details: validation.errors }, 400);
   }
 
-  if (validation.value.source.type === "upload") {
-    const uploadKey = validation.value.source.key;
+  const clipRequest = {
+    ...validation.value,
+    source: normalizeClipSource(validation.value.source),
+  };
+
+  if (clipRequest.source.type === "upload") {
+    const uploadKey = clipRequest.source.key;
     const object = await env.CLIPS_BUCKET.head(uploadKey);
     if (!object) {
       return json(
@@ -191,14 +235,91 @@ async function handleCreateClip(
     }
   }
 
+  return createClipJob(
+    clipRequest,
+    env,
+    ctx,
+    new URL(request.url).origin,
+  );
+}
+
+async function handleCreateClipForVideo(
+  request: Request,
+  videoId: string,
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<Response> {
+  const video = await getSourceVideoById(env.DB, videoId);
+  if (!video) {
+    return json({ error: "Video not found" }, 404);
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON body" }, 400);
+  }
+
+  const source =
+    video.source_type === "youtube"
+      ? { type: "youtube" as const, url: video.source_ref }
+      : { type: "upload" as const, key: video.source_ref };
+  const validation = validateCreateClipRequest(
+    {
+      ...(body && typeof body === "object" ? body : {}),
+      source,
+      sourceTitle: video.title,
+    },
+    Number(env.MAX_CLIP_LENGTH_SECONDS) || 60,
+  );
+  if (!validation.ok) {
+    return json({ error: "Validation failed", details: validation.errors }, 400);
+  }
+
+  if (source.type === "upload") {
+    const object = await env.CLIPS_BUCKET.head(source.key);
+    if (!object) {
+      return json(
+        {
+          error: "Video source unavailable",
+          details: [
+            {
+              field: "videoId",
+              message: "The original uploaded video is no longer available",
+            },
+          ],
+        },
+        409,
+      );
+    }
+  }
+
+  const clipRequest = {
+    ...validation.value,
+    source: normalizeClipSource(validation.value.source),
+  };
+  return createClipJob(
+    clipRequest,
+    env,
+    ctx,
+    new URL(request.url).origin,
+  );
+}
+
+async function createClipJob(
+  clipRequest: CreateClipRequest,
+  env: Env,
+  ctx: ExecutionContext,
+  origin: string,
+): Promise<Response> {
   const clipId = crypto.randomUUID();
-  const origin = new URL(request.url).origin;
   const useHelper =
-    isHelperEnabled(env) && validation.value.source.type === "youtube";
+    isHelperEnabled(env) && clipRequest.source.type === "youtube";
   const record = await insertClip(
     env.DB,
     clipId,
-    validation.value,
+    clipRequest,
     useHelper ? { helperState: "pending" } : undefined,
   );
 
@@ -208,11 +329,184 @@ async function handleCreateClip(
     );
   } else {
     ctx.waitUntil(
-      dispatchEncodingJob(env, clipId, validation.value, origin),
+      dispatchEncodingJob(env, clipId, clipRequest, origin),
     );
   }
 
   return json(recordToResponse(record, env.R2_PUBLIC_PREFIX), 201);
+}
+
+async function handleSourceVideoSource(
+  request: Request,
+  videoId: string,
+  env: Env,
+): Promise<Response> {
+  const video = await getSourceVideoById(env.DB, videoId);
+  if (!video) {
+    return json({ error: "Video not found" }, 404);
+  }
+  if (video.source_type !== "upload") {
+    return json({ error: "Video source is not an upload" }, 400);
+  }
+
+  const rangeHeader = request.headers.get("range");
+  const object = await env.CLIPS_BUCKET.get(
+    video.source_ref,
+    rangeHeader ? { range: request.headers } : undefined,
+  );
+  if (!object) {
+    return json({ error: "Video source unavailable" }, 404);
+  }
+  const headers = new Headers();
+  object.writeHttpMetadata(headers);
+  headers.set("etag", object.httpEtag);
+  headers.set("cache-control", "private, no-store");
+  headers.set("accept-ranges", "bytes");
+
+  const range = rangeHeader
+    ? resolveR2Range(object.range, object.size)
+    : null;
+  if (range) {
+    headers.set(
+      "content-range",
+      `bytes ${range.offset}-${range.offset + range.length - 1}/${object.size}`,
+    );
+    headers.set("content-length", String(range.length));
+  }
+
+  return new Response(object.body, { status: range ? 206 : 200, headers });
+}
+
+function resolveR2Range(
+  range: R2Range | undefined,
+  objectSize: number,
+): { offset: number; length: number } | null {
+  if (!range) {
+    return null;
+  }
+  if ("suffix" in range) {
+    const length = Math.min(range.suffix, objectSize);
+    return { offset: objectSize - length, length };
+  }
+
+  const offset = range.offset ?? 0;
+  const length = range.length ?? objectSize - offset;
+  return { offset, length };
+}
+
+async function handleListSourceVideos(
+  url: URL,
+  env: Env,
+  ctx: ExecutionContext,
+): Promise<Response> {
+  const limit = Math.min(
+    Math.max(parseInt(url.searchParams.get("limit") ?? "", 10) || DEFAULT_LIST_LIMIT, 1),
+    MAX_LIST_LIMIT,
+  );
+  const offset = Math.max(parseInt(url.searchParams.get("offset") ?? "", 10) || 0, 0);
+  const archived = url.searchParams.get("archived") === "true";
+
+  await sweepAndRecoverHelperClips(env, url.origin, ctx);
+  await sweepStaleClips(env.DB);
+  const { videos, total } = await listSourceVideos(
+    env.DB,
+    limit,
+    offset,
+    archived,
+  );
+
+  return json({
+    videos: videos.map((video) =>
+      sourceVideoRecordToResponse(video, env.R2_PUBLIC_PREFIX),
+    ),
+    total,
+    limit,
+    offset,
+  });
+}
+
+async function handleUpdateSourceVideo(
+  request: Request,
+  videoId: string,
+  env: Env,
+): Promise<Response> {
+  if (!videoId) {
+    return json({ error: "Video id is required" }, 400);
+  }
+
+  let body: { archived?: unknown };
+  try {
+    body = (await request.json()) as { archived?: unknown };
+  } catch {
+    return json({ error: "Invalid JSON body" }, 400);
+  }
+  if (typeof body.archived !== "boolean") {
+    return json(
+      {
+        error: "Validation failed",
+        details: [{ field: "archived", message: "archived must be a boolean" }],
+      },
+      400,
+    );
+  }
+
+  const updated = await setSourceVideoArchived(env.DB, videoId, body.archived);
+  if (!updated) {
+    return json({ error: "Video not found" }, 404);
+  }
+  const video = await getSourceVideoById(env.DB, videoId);
+  return json(sourceVideoRecordToResponse(video!, env.R2_PUBLIC_PREFIX));
+}
+
+async function handleDeleteSourceVideo(
+  videoId: string,
+  env: Env,
+): Promise<Response> {
+  const video = await getSourceVideoById(env.DB, videoId);
+  if (!video) {
+    return json({ error: "Video not found" }, 404);
+  }
+  const clips = await listClipsByVideoId(env.DB, videoId);
+  await Promise.all(
+    clips.map((clip) => deleteClipArtifacts(env.CLIPS_BUCKET, clip.id, clip)),
+  );
+  if (video.source_type === "upload") {
+    await env.CLIPS_BUCKET.delete(video.source_ref);
+  }
+  const deleted = await deleteSourceVideoRecords(env.DB, videoId);
+  if (!deleted) {
+    return json({ error: "Video not found" }, 404);
+  }
+  return new Response(null, { status: 204 });
+}
+
+async function handleGetSourceVideo(
+  videoId: string,
+  env: Env,
+  ctx: ExecutionContext,
+  origin: string,
+): Promise<Response> {
+  if (!videoId) {
+    return json({ error: "Video id is required" }, 400);
+  }
+
+  await sweepAndRecoverHelperClips(env, origin, ctx);
+  await sweepStaleClips(env.DB);
+  const [video, clips] = await Promise.all([
+    getSourceVideoById(env.DB, videoId),
+    listClipsByVideoId(env.DB, videoId),
+  ]);
+
+  if (!video) {
+    return json({ error: "Video not found" }, 404);
+  }
+
+  return json({
+    video: sourceVideoRecordToResponse(video, env.R2_PUBLIC_PREFIX),
+    clips: clips.map((clip) =>
+      recordToResponse(clip, env.R2_PUBLIC_PREFIX),
+    ),
+  });
 }
 
 const DEFAULT_LIST_LIMIT = 50;
@@ -231,7 +525,11 @@ async function handleListClips(
 
   await sweepAndRecoverHelperClips(env, url.origin, ctx);
   await sweepStaleClips(env.DB);
-  ctx.waitUntil(sweepExpiredUploadSources(env.CLIPS_BUCKET));
+  ctx.waitUntil(
+    sweepExpiredUploadSources(env.CLIPS_BUCKET, {
+      shouldRetain: (key) => isRetainedUploadSource(env.DB, key),
+    }),
+  );
   const { clips, total } = await listClips(env.DB, limit, offset);
   const prefix = env.R2_PUBLIC_PREFIX;
 

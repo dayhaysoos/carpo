@@ -57,6 +57,7 @@ export type ClipSource = YoutubeSource | UploadSource;
 
 export interface CreateClipRequest {
   title: string;
+  sourceTitle?: string;
   source: ClipSource;
   trimStart: number;
   trimEnd: number;
@@ -86,6 +87,7 @@ export interface ClipRecord {
   helper_state: HelperState | null;
   helper_claimed_at: string | null;
   helper_upload_key: string | null;
+  video_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -98,6 +100,7 @@ export interface ClipOutputs {
 
 export interface ClipResponse {
   id: string;
+  videoId: string;
   title: string;
   source: ClipSource;
   trimStart: number;
@@ -112,6 +115,45 @@ export interface ClipResponse {
   outputs: ClipOutputs;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface SourceVideoRecord {
+  id: string;
+  source_type: SourceType;
+  source_ref: string;
+  title: string;
+  clip_count: number;
+  active_clip_count: number;
+  failed_clip_count: number;
+  thumbnail_key: string | null;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SourceVideoResponse {
+  id: string;
+  title: string;
+  source: ClipSource;
+  clipCount: number;
+  activeClipCount: number;
+  failedClipCount: number;
+  thumbnail: string | null;
+  archivedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SourceVideoListResponse {
+  videos: SourceVideoResponse[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface SourceVideoDetailResponse {
+  video: SourceVideoResponse;
+  clips: ClipResponse[];
 }
 
 export interface ClipListResponse {

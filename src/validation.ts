@@ -39,6 +39,15 @@ export function validateCreateClipRequest(
     errors.push({ field: "title", message: "Title must be 200 characters or fewer" });
   }
 
+  const sourceTitle =
+    typeof input.sourceTitle === "string" ? input.sourceTitle.trim() : "";
+  if (sourceTitle.length > 200) {
+    errors.push({
+      field: "sourceTitle",
+      message: "Source title must be 200 characters or fewer",
+    });
+  }
+
   const source = input.source;
   if (!source || typeof source !== "object") {
     errors.push({ field: "source", message: "Source is required" });
@@ -144,6 +153,7 @@ export function validateCreateClipRequest(
     ok: true,
     value: {
       title,
+      ...(sourceTitle ? { sourceTitle } : {}),
       source: parsedSource,
       trimStart: trimStart!,
       trimEnd: trimEnd!,

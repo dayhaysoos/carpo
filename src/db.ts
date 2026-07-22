@@ -5,10 +5,15 @@ import type {
   FailureMode,
   GifStatus,
   HelperState,
+  SourceVideoRecord,
 } from "./types";
 import { DEFAULT_CLIP_QUALITY } from "./types";
 import { generateCallbackSecret } from "./auth";
 import { extractCaptionFromFilters } from "./validation";
+import {
+  fallbackSourceTitle,
+  sourceReference,
+} from "./source-videos";
 
 export interface InsertClipOptions {
   helperState?: HelperState;
@@ -21,18 +26,19 @@ export async function insertClip(
   options?: InsertClipOptions,
 ): Promise<ClipRecord> {
   const sourceType = request.source.type;
-  const sourceRef =
-    request.source.type === "youtube" ? request.source.url : request.source.key;
+  const sourceRef = sourceReference(request.source);
   const filtersJson = JSON.stringify(request.filters ?? []);
   const callbackSecret = generateCallbackSecret();
   const helperState = options?.helperState ?? null;
+  const videoId = await ensureSourceVideo(db, request);
 
   await db
     .prepare(
       `INSERT INTO clips (
         id, title, source_type, source_ref, trim_start, trim_end,
-        quality, caption, filters_json, status, callback_secret, helper_state
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
+        quality, caption, filters_json, status, callback_secret, helper_state,
+        video_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
     )
     .bind(
       id,
@@ -46,6 +52,7 @@ export async function insertClip(
       filtersJson,
       callbackSecret,
       helperState,
+      videoId,
     )
     .run();
 
@@ -54,6 +61,53 @@ export async function insertClip(
     throw new Error(`Failed to read clip ${id} after insert`);
   }
   return record;
+}
+
+async function ensureSourceVideo(
+  db: D1Database,
+  request: CreateClipRequest,
+): Promise<string> {
+  const sourceType = request.source.type;
+  const sourceRef = sourceReference(request.source);
+  const explicitTitle = request.sourceTitle?.trim();
+  const title = explicitTitle || fallbackSourceTitle(request.source, request.title);
+  const id = crypto.randomUUID();
+
+  if (explicitTitle) {
+    await db
+      .prepare(
+        `INSERT INTO source_videos (id, source_type, source_ref, title)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT (source_type, source_ref) DO UPDATE SET
+           title = excluded.title,
+           updated_at = datetime('now')`,
+      )
+      .bind(id, sourceType, sourceRef, title)
+      .run();
+  } else {
+    await db
+      .prepare(
+        `INSERT INTO source_videos (id, source_type, source_ref, title)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT (source_type, source_ref) DO UPDATE SET
+           updated_at = datetime('now')`,
+      )
+      .bind(id, sourceType, sourceRef, title)
+      .run();
+  }
+
+  const record = await db
+    .prepare(
+      `SELECT id FROM source_videos
+       WHERE source_type = ? AND source_ref = ?`,
+    )
+    .bind(sourceType, sourceRef)
+    .first<{ id: string }>();
+
+  if (!record) {
+    throw new Error("Failed to create source video");
+  }
+  return record.id;
 }
 
 export async function getClipById(
@@ -206,6 +260,138 @@ export async function listClips(
     .all<ClipRecord>();
 
   return { clips: result.results ?? [], total };
+}
+
+const SOURCE_VIDEO_SELECT = `
+  SELECT
+    source_videos.id,
+    source_videos.source_type,
+    source_videos.source_ref,
+    source_videos.title,
+    COUNT(clips.id) AS clip_count,
+    SUM(CASE
+      WHEN clips.status IN ('queued', 'downloading', 'encoding', 'uploading')
+      THEN 1 ELSE 0 END) AS active_clip_count,
+    SUM(CASE WHEN clips.status = 'failed' THEN 1 ELSE 0 END) AS failed_clip_count,
+    (
+      SELECT preview.output_thumbnail_key
+      FROM clips AS preview
+      WHERE preview.video_id = source_videos.id
+        AND preview.output_thumbnail_key IS NOT NULL
+      ORDER BY preview.created_at DESC
+      LIMIT 1
+    ) AS thumbnail_key,
+    source_videos.archived_at,
+    source_videos.created_at,
+    COALESCE(MAX(clips.updated_at), source_videos.updated_at) AS updated_at
+  FROM source_videos
+  LEFT JOIN clips ON clips.video_id = source_videos.id`;
+
+export async function listSourceVideos(
+  db: D1Database,
+  limit: number,
+  offset: number,
+  archived = false,
+): Promise<{ videos: SourceVideoRecord[]; total: number }> {
+  const archiveClause = archived
+    ? "source_videos.archived_at IS NOT NULL"
+    : "source_videos.archived_at IS NULL";
+  const totalResult = await db
+    .prepare(
+      `SELECT COUNT(*) AS count
+       FROM source_videos
+       WHERE ${archiveClause}`,
+    )
+    .first<{ count: number }>();
+
+  const result = await db
+    .prepare(
+      `${SOURCE_VIDEO_SELECT}
+       WHERE ${archiveClause}
+       GROUP BY source_videos.id
+       ORDER BY updated_at DESC
+       LIMIT ? OFFSET ?`,
+    )
+    .bind(limit, offset)
+    .all<SourceVideoRecord>();
+
+  return {
+    videos: result.results ?? [],
+    total: totalResult?.count ?? 0,
+  };
+}
+
+export async function setSourceVideoArchived(
+  db: D1Database,
+  id: string,
+  archived: boolean,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE source_videos
+       SET archived_at = ${archived ? "datetime('now')" : "NULL"},
+           updated_at = datetime('now')
+       WHERE id = ?`,
+    )
+    .bind(id)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function isRetainedUploadSource(
+  db: D1Database,
+  key: string,
+): Promise<boolean> {
+  const record = await db
+    .prepare(
+      `SELECT 1 AS retained
+       FROM source_videos
+       WHERE source_type = 'upload' AND source_ref = ?
+       LIMIT 1`,
+    )
+    .bind(key)
+    .first<{ retained: number }>();
+  return record?.retained === 1;
+}
+
+export async function deleteSourceVideoRecords(
+  db: D1Database,
+  id: string,
+): Promise<boolean> {
+  const [, videoResult] = await db.batch([
+    db.prepare("DELETE FROM clips WHERE video_id = ?").bind(id),
+    db.prepare("DELETE FROM source_videos WHERE id = ?").bind(id),
+  ]);
+  return (videoResult.meta.changes ?? 0) > 0;
+}
+
+export async function getSourceVideoById(
+  db: D1Database,
+  id: string,
+): Promise<SourceVideoRecord | null> {
+  return db
+    .prepare(
+      `${SOURCE_VIDEO_SELECT}
+       WHERE source_videos.id = ?
+       GROUP BY source_videos.id`,
+    )
+    .bind(id)
+    .first<SourceVideoRecord>();
+}
+
+export async function listClipsByVideoId(
+  db: D1Database,
+  videoId: string,
+): Promise<ClipRecord[]> {
+  const result = await db
+    .prepare(
+      `SELECT * FROM clips
+       WHERE video_id = ?
+       ORDER BY created_at DESC`,
+    )
+    .bind(videoId)
+    .all<ClipRecord>();
+  return result.results ?? [];
 }
 
 export async function deleteClip(db: D1Database, id: string): Promise<boolean> {

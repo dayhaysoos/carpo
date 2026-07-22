@@ -49,6 +49,7 @@ export type FilterSpec = CaptionFilter;
 
 export interface CreateClipRequest {
   title: string;
+  sourceTitle?: string;
   source: ClipSource;
   trimStart: number;
   trimEnd: number;
@@ -64,6 +65,7 @@ export interface ClipOutputs {
 
 export interface ClipResponse {
   id: string;
+  videoId: string;
   title: string;
   source: ClipSource;
   trimStart: number;
@@ -78,6 +80,36 @@ export interface ClipResponse {
   outputs: ClipOutputs;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface SourceVideoResponse {
+  id: string;
+  title: string;
+  source: ClipSource;
+  clipCount: number;
+  activeClipCount: number;
+  failedClipCount: number;
+  thumbnail: string | null;
+  archivedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type CreateClipFromVideoRequest = Omit<
+  CreateClipRequest,
+  "source" | "sourceTitle"
+>;
+
+export interface SourceVideoListResponse {
+  videos: SourceVideoResponse[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface SourceVideoDetailResponse {
+  video: SourceVideoResponse;
+  clips: ClipResponse[];
 }
 
 export interface ClipListResponse {

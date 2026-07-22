@@ -21,7 +21,11 @@ export function isUploadSourceExpired(
 
 export async function sweepExpiredUploadSources(
   bucket: R2Bucket,
-  options?: { now?: Date; maxAgeMs?: number },
+  options?: {
+    now?: Date;
+    maxAgeMs?: number;
+    shouldRetain?: (key: string) => boolean | Promise<boolean>;
+  },
 ): Promise<number> {
   const now = options?.now ?? new Date();
   const maxAgeMs = options?.maxAgeMs ?? UPLOAD_SOURCE_SWEEP_TTL_MS;
@@ -31,7 +35,10 @@ export async function sweepExpiredUploadSources(
   do {
     const listing = await bucket.list({ prefix: UPLOAD_KEY_PREFIX, cursor });
     for (const object of listing.objects) {
-      if (isUploadSourceExpired(object.uploaded, now, maxAgeMs)) {
+      if (
+        isUploadSourceExpired(object.uploaded, now, maxAgeMs) &&
+        !(await options?.shouldRetain?.(object.key))
+      ) {
         await bucket.delete(object.key);
         deleted += 1;
       }

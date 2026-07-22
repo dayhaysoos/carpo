@@ -3,6 +3,10 @@ import type {
   ClipListResponse,
   ClipResponse,
   CreateClipRequest,
+  CreateClipFromVideoRequest,
+  SourceVideoDetailResponse,
+  SourceVideoListResponse,
+  SourceVideoResponse,
   UploadUrlResponse,
 } from "./types";
 
@@ -103,6 +107,85 @@ export async function listClips(
     throw new Error(body.error || `Request failed (${response.status})`);
   }
   return response.json() as Promise<ClipListResponse>;
+}
+
+export async function listSourceVideos(
+  limit = 50,
+  offset = 0,
+  archived = false,
+): Promise<SourceVideoListResponse> {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+    archived: String(archived),
+  });
+  const response = await fetch(`/api/videos?${params}`);
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiError;
+    throw new Error(body.error || `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<SourceVideoListResponse>;
+}
+
+export async function createClipFromSourceVideo(
+  videoId: string,
+  request: CreateClipFromVideoRequest,
+): Promise<ClipResponse> {
+  const response = await fetch(
+    `/api/videos/${encodeURIComponent(videoId)}/clips`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiError;
+    const detail = body.details?.map((d) => d.message).join("; ");
+    throw new Error(detail || body.error || `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<ClipResponse>;
+}
+
+export async function setSourceVideoArchived(
+  videoId: string,
+  archived: boolean,
+): Promise<SourceVideoResponse> {
+  const response = await fetch(`/api/videos/${encodeURIComponent(videoId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ archived }),
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiError;
+    throw new Error(body.error || `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<SourceVideoResponse>;
+}
+
+export async function deleteSourceVideo(videoId: string): Promise<void> {
+  const response = await fetch(`/api/videos/${encodeURIComponent(videoId)}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiError;
+    throw new Error(body.error || `Request failed (${response.status})`);
+  }
+}
+
+export function sourceVideoUploadUrl(videoId: string): string {
+  return `/api/videos/${encodeURIComponent(videoId)}/source`;
+}
+
+export async function getSourceVideo(
+  id: string,
+): Promise<SourceVideoDetailResponse> {
+  const response = await fetch(`/api/videos/${encodeURIComponent(id)}`);
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiError;
+    throw new Error(body.error || `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<SourceVideoDetailResponse>;
 }
 
 export async function deleteClip(id: string): Promise<void> {

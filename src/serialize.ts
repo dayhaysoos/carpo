@@ -1,4 +1,12 @@
-import type { ClipRecord, ClipResponse, ClipSource, FilterSpec } from "./types";
+import type {
+  ClipRecord,
+  ClipResponse,
+  ClipSource,
+  FilterSpec,
+  SourceVideoRecord,
+  SourceVideoResponse,
+} from "./types";
+import { extractYoutubeVideoId } from "./source-videos";
 
 export function parseFilters(filtersJson: string): FilterSpec[] {
   try {
@@ -22,6 +30,7 @@ export function recordToResponse(
 ): ClipResponse {
   return {
     id: record.id,
+    videoId: record.video_id ?? "",
     title: record.title,
     source: recordToSource(record),
     trimStart: record.trim_start,
@@ -44,6 +53,35 @@ export function recordToResponse(
     },
     gifStatus: record.gif_status ?? "none",
     gifErrorMessage: record.gif_error_message,
+    createdAt: record.created_at,
+    updatedAt: record.updated_at,
+  };
+}
+
+export function sourceVideoRecordToResponse(
+  record: SourceVideoRecord,
+  artifactPrefix: string,
+): SourceVideoResponse {
+  const source: ClipSource =
+    record.source_type === "youtube"
+      ? { type: "youtube", url: record.source_ref }
+      : { type: "upload", key: record.source_ref };
+  const youtubeId =
+    source.type === "youtube" ? extractYoutubeVideoId(source.url) : null;
+
+  return {
+    id: record.id,
+    title: record.title,
+    source,
+    clipCount: Number(record.clip_count),
+    activeClipCount: Number(record.active_clip_count),
+    failedClipCount: Number(record.failed_clip_count),
+    thumbnail: record.thumbnail_key
+      ? `${artifactPrefix}/${record.thumbnail_key}`
+      : youtubeId
+        ? `https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg`
+        : null,
+    archivedAt: record.archived_at,
     createdAt: record.created_at,
     updatedAt: record.updated_at,
   };

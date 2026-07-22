@@ -1,11 +1,24 @@
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { createClip, requestUploadUrl, uploadFileWithProgress } from "../api";
+import { Link, useSearchParams } from "react-router-dom";
+import {
+  createClip,
+  createClipFromSourceVideo,
+  getSourceVideo,
+  requestUploadUrl,
+  sourceVideoUploadUrl,
+  uploadFileWithProgress,
+} from "../api";
 import { useNativeVideoPlayer } from "../hooks/useNativeVideoPlayer";
 import { useTrimRange } from "../hooks/useTrimRange";
 import { useYoutubePlayer } from "../hooks/useYoutubePlayer";
-import { MAX_CAPTION_LENGTH, MAX_CLIP_LENGTH_SECONDS, type ClipQuality, DEFAULT_CLIP_QUALITY } from "../types";
+import {
+  MAX_CAPTION_LENGTH,
+  MAX_CLIP_LENGTH_SECONDS,
+  type ClipQuality,
+  type CreateClipRequest,
+  DEFAULT_CLIP_QUALITY,
+} from "../types";
 import {
   contentTypeForFile,
   formatUploadProgress,
@@ -24,6 +37,7 @@ const DEFAULT_MAX_UPLOAD_BYTES = 95 * 1024 * 1024;
 
 export function CreatorForm({ onClipCreated }: CreatorFormProps) {
   const [searchParams] = useSearchParams();
+  const reusableVideoId = searchParams.get("video") ?? "";
   const [sourceMode, setSourceMode] = useState<SourceMode>("upload");
   const [clipCreatedNotice, setClipCreatedNotice] = useState(false);
   const [url, setUrl] = useState("");
@@ -37,6 +51,17 @@ export function CreatorForm({ onClipCreated }: CreatorFormProps) {
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
   const [maxUploadBytes, setMaxUploadBytes] = useState(DEFAULT_MAX_UPLOAD_BYTES);
 
+  const {
+    data: reusableVideoData,
+    error: reusableVideoError,
+    isLoading: reusableVideoLoading,
+  } = useQuery({
+    queryKey: ["source-video", reusableVideoId],
+    queryFn: () => getSourceVideo(reusableVideoId),
+    enabled: Boolean(reusableVideoId),
+  });
+  const reusableVideo = reusableVideoData?.video ?? null;
+
   const trimmedUrl = url.trim();
   const urlValid = trimmedUrl.length > 0 && isValidYoutubeUrl(trimmedUrl);
   const urlInvalid = urlTouched && trimmedUrl.length > 0 && !urlValid;
@@ -46,6 +71,11 @@ export function CreatorForm({ onClipCreated }: CreatorFormProps) {
     () => (selectedFile ? URL.createObjectURL(selectedFile) : null),
     [selectedFile],
   );
+  const reusableUploadPreviewUrl =
+    reusableVideo?.source.type === "upload"
+      ? sourceVideoUploadUrl(reusableVideo.id)
+      : null;
+  const nativePreviewUrl = reusableUploadPreviewUrl ?? filePreviewUrl;
 
   useEffect(() => {
     return () => {
@@ -63,15 +93,21 @@ export function CreatorForm({ onClipCreated }: CreatorFormProps) {
       : null;
 
   const native = useNativeVideoPlayer(
-    sourceMode === "upload" && selectedFile && !fileValidationError
-      ? filePreviewUrl
+    sourceMode === "upload" &&
+      nativePreviewUrl &&
+      (!selectedFile || !fileValidationError)
+      ? nativePreviewUrl
       : null,
   );
 
   const ready =
     sourceMode === "youtube"
       ? youtube.ready
-      : Boolean(selectedFile && !fileValidationError && native.ready);
+      : Boolean(
+          (selectedFile || reusableUploadPreviewUrl) &&
+            !fileValidationError &&
+            native.ready,
+        );
   const duration = sourceMode === "youtube" ? youtube.duration : native.duration;
   const seekTo = sourceMode === "youtube" ? youtube.seekTo : native.seekTo;
   const trim = useTrimRange({ duration, onSeek: seekTo });
@@ -82,11 +118,20 @@ export function CreatorForm({ onClipCreated }: CreatorFormProps) {
     title.trim().length > 0 &&
     clipDuration > 0 &&
     clipDuration <= MAX_CLIP_LENGTH_SECONDS &&
-    ((sourceMode === "youtube" && urlValid && videoId) ||
-      (sourceMode === "upload" && uploadKey && !fileValidationError));
+    (reusableVideo
+      ? true
+      : (sourceMode === "youtube" && urlValid && videoId) ||
+        (sourceMode === "upload" && uploadKey && !fileValidationError));
 
   const mutation = useMutation({
-    mutationFn: createClip,
+    mutationFn: (request: CreateClipRequest) => {
+      if (reusableVideoId && reusableVideo) {
+        const { source: _source, sourceTitle: _sourceTitle, ...clipRequest } =
+          request;
+        return createClipFromSourceVideo(reusableVideoId, clipRequest);
+      }
+      return createClip(request);
+    },
     onSuccess: () => {
       onClipCreated();
       setTitle("");
@@ -117,7 +162,19 @@ export function CreatorForm({ onClipCreated }: CreatorFormProps) {
   };
 
   useEffect(() => {
-    if (searchParams.get("source") === "upload") {
+    if (!reusableVideo) return;
+    setSourceMode(reusableVideo.source.type);
+    setSelectedFile(null);
+    setUploadKey(null);
+    if (reusableVideo.source.type === "youtube") {
+      setUrl(reusableVideo.source.url);
+    } else {
+      setUrl("");
+    }
+  }, [reusableVideo]);
+
+  useEffect(() => {
+    if (!reusableVideoId && searchParams.get("source") === "upload") {
       handleSourceModeChange("upload");
     }
   }, [searchParams]);
@@ -186,6 +243,7 @@ export function CreatorForm({ onClipCreated }: CreatorFormProps) {
     if (sourceMode === "youtube" && videoId) {
       mutation.mutate({
         title: title.trim(),
+        sourceTitle: reusableVideo?.title || youtube.title || undefined,
         source: { type: "youtube", url: trimmedUrl },
         trimStart: trim.range.start,
         trimEnd: trim.range.end,
@@ -198,10 +256,15 @@ export function CreatorForm({ onClipCreated }: CreatorFormProps) {
       return;
     }
 
-    if (sourceMode === "upload" && uploadKey) {
+    const reusableUploadKey =
+      reusableVideo?.source.type === "upload"
+        ? reusableVideo.source.key
+        : null;
+    if (sourceMode === "upload" && (uploadKey || reusableUploadKey)) {
       mutation.mutate({
         title: title.trim(),
-        source: { type: "upload", key: uploadKey },
+        sourceTitle: reusableVideo?.title || selectedFile?.name,
+        source: { type: "upload", key: uploadKey || reusableUploadKey! },
         trimStart: trim.range.start,
         trimEnd: trim.range.end,
         filters:
@@ -217,10 +280,41 @@ export function CreatorForm({ onClipCreated }: CreatorFormProps) {
     <form className="creator-form card" onSubmit={handleSubmit}>
       <div className="card-header">
         <h2>New clip</h2>
-        <p>Paste a YouTube URL or upload a video, mark the moment, and create.</p>
+        <p>
+          {reusableVideo
+            ? `Create another clip from ${reusableVideo.title}.`
+            : "Paste a YouTube URL or upload a video, mark the moment, and create."}
+        </p>
       </div>
 
-      <div className="source-picker" role="tablist" aria-label="Source type">
+      {reusableVideoLoading && (
+        <div className="reuse-source-banner">Loading video…</div>
+      )}
+
+      {reusableVideoError && (
+        <div className="form-error" role="alert">
+          {reusableVideoError.message}
+        </div>
+      )}
+
+      {reusableVideo && (
+        <div className="reuse-source-banner">
+          <div>
+            <strong>{reusableVideo.title}</strong>
+            <span>
+              {reusableVideo.source.type === "youtube"
+                ? "YouTube video"
+                : "Uploaded video"}
+            </span>
+          </div>
+          <Link to="/" className="btn-ghost">
+            Choose another
+          </Link>
+        </div>
+      )}
+
+      {!reusableVideoId && (
+        <div className="source-picker" role="tablist" aria-label="Source type">
         <button
           type="button"
           role="tab"
@@ -239,9 +333,10 @@ export function CreatorForm({ onClipCreated }: CreatorFormProps) {
         >
           Upload file
         </button>
-      </div>
+        </div>
+      )}
 
-      {sourceMode === "youtube" ? (
+      {!reusableVideoId && (sourceMode === "youtube" ? (
         <label className="field">
           <span>YouTube URL</span>
           <input
@@ -281,7 +376,7 @@ export function CreatorForm({ onClipCreated }: CreatorFormProps) {
             <span className="field-hint">{uploadProgress}</span>
           )}
         </label>
-      )}
+      ))}
 
       {sourceMode === "youtube" && videoId && (
         <div className="player-section">
@@ -314,7 +409,9 @@ export function CreatorForm({ onClipCreated }: CreatorFormProps) {
         </div>
       )}
 
-      {sourceMode === "upload" && selectedFile && !fileValidationError && (
+      {sourceMode === "upload" &&
+        (selectedFile || reusableUploadPreviewUrl) &&
+        !fileValidationError && (
         <div className="player-section">
           <div className="player-frame">
             <video
@@ -325,7 +422,11 @@ export function CreatorForm({ onClipCreated }: CreatorFormProps) {
               preload="metadata"
             />
             {!ready && (
-              <div className="player-loading">Loading preview…</div>
+              <div className="player-loading">
+                {native.error
+                  ? "Original uploaded video is unavailable"
+                  : "Loading preview…"}
+              </div>
             )}
           </div>
           <TrimSlider duration={duration} ready={ready} trim={trim} />
