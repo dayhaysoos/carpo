@@ -825,6 +825,12 @@ async function handleInternalArtifactUpload(
     httpMetadata: { contentType },
   });
 
+  const clipStillExists = await getClipById(env.DB, clipId);
+  if (!clipStillExists) {
+    await env.CLIPS_BUCKET.delete(objectKey);
+    return json({ error: "Clip was deleted during artifact upload" }, 410);
+  }
+
   return new Response(null, { status: 204 });
 }
 

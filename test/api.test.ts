@@ -6,6 +6,7 @@ import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { JOB_SECRET_HEADER, HELPER_TOKEN_HEADER } from "../src/auth";
 import { drainArtifactDeletions } from "../src/artifact-deletions";
+import { handleRequest } from "../src/routes";
 import { getClipById, outputKeysForClip } from "../src/db";
 import { ENCODER_POOL_INSTANCE } from "../src/encoder-pool";
 import { dispatchEncodingJob, failClipAmbiguous } from "../src/jobs";
@@ -2708,6 +2709,94 @@ describe("source video library", () => {
     expect(await env.CLIPS_BUCKET.get(keys.thumbnailKey)).not.toBeNull();
 
     await env.DB.prepare("DROP TRIGGER prevent_test_video_delete").run();
+  });
+
+  it("removes an artifact upload that finishes after its video is deleted", async () => {
+    const clipId = crypto.randomUUID();
+    const videoId = crypto.randomUUID();
+    const secret = crypto.randomUUID();
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO source_videos (id, source_type, source_ref, title)
+         VALUES (?, 'youtube', ?, 'Late artifact delete race')`,
+      ).bind(videoId, "https://www.youtube.com/watch?v=lateDeleteRace01"),
+      env.DB.prepare(
+        `INSERT INTO clips (
+           id, title, source_type, source_ref, trim_start, trim_end,
+           filters_json, status, callback_secret, video_id
+         ) VALUES (?, 'late artifact', 'youtube', ?, 1, 4, '[]', 'queued', ?, ?)`,
+      ).bind(
+        clipId,
+        "https://www.youtube.com/watch?v=lateDeleteRace01",
+        secret,
+        videoId,
+      ),
+    ]);
+    const keys = outputKeysForClip(clipId);
+    let releasePut: (() => void) | undefined;
+    let signalPutStarted: (() => void) | undefined;
+    const putStarted = new Promise<void>((resolve) => {
+      signalPutStarted = resolve;
+    });
+    const putReleased = new Promise<void>((resolve) => {
+      releasePut = resolve;
+    });
+
+    const controlledBucket = new Proxy(env.CLIPS_BUCKET, {
+      get(target, property) {
+        if (property === "put") {
+          return async (...args: Parameters<R2Bucket["put"]>) => {
+            signalPutStarted?.();
+            await putReleased;
+            return target.put(...args);
+          };
+        }
+        const value = Reflect.get(target, property, target) as unknown;
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const controlledEnv = new Proxy(env, {
+      get(target, property) {
+        return property === "CLIPS_BUCKET"
+          ? controlledBucket
+          : Reflect.get(target, property, target);
+      },
+    });
+
+    const uploadContext = createExecutionContext();
+    const uploadPromise = handleRequest(
+      new Request(
+        `http://example.com/api/internal/jobs/${clipId}/artifacts/mp4`,
+        {
+          method: "PUT",
+          headers: {
+            "Content-Type": "video/mp4",
+            [JOB_SECRET_HEADER]: secret,
+          },
+          body: new Uint8Array([9, 8, 7, 6]),
+        },
+      ),
+      controlledEnv,
+      uploadContext,
+    );
+
+    await Promise.race([
+      putStarted,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("controlled artifact put did not start")), 1000),
+      ),
+    ]);
+    const deleted = await workerFetch(
+      `http://example.com/api/videos/${videoId}`,
+      { method: "DELETE" },
+    );
+    expect(deleted.status).toBe(204);
+
+    releasePut?.();
+    const uploadResponse = await uploadPromise;
+    await waitOnExecutionContext(uploadContext);
+    expect(uploadResponse.status).toBe(410);
+    expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).toBeNull();
   });
 });
 
