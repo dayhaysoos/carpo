@@ -177,6 +177,50 @@ function testImageToolchainSmoke() {
     "-c",
     "yt-dlp -v 2>&1 || true",
   ]).trim();
+  const poTokenProbe = JSON.parse(
+    run("docker", [
+      "run",
+      "--rm",
+      imageName,
+      "python3",
+      "-c",
+      [
+        "import json",
+        "import os",
+        "from pathlib import Path",
+        "from encoder import BGUTIL_PROVIDER_HOME, ytdlp_po_token_args",
+        "print(json.dumps({'args': ytdlp_po_token_args(), 'providerHome': BGUTIL_PROVIDER_HOME, 'providerHomeExists': Path(BGUTIL_PROVIDER_HOME).is_dir(), 'providerVersion': os.environ.get('BGUTIL_PROVIDER_VERSION')}))",
+      ].join("; "),
+    ]),
+  ) as {
+    args: string[];
+    providerHome: string;
+    providerHomeExists: boolean;
+    providerVersion: string;
+  };
+  const providerPluginVersion = run("docker", [
+    "run",
+    "--rm",
+    imageName,
+    "python3",
+    "-c",
+    "from yt_dlp_plugins.extractor.getpot_bgutil import __version__; print(__version__)",
+  ]).trim();
+  const providerScriptVersion = run("docker", [
+    "run",
+    "--rm",
+    imageName,
+    "sh",
+    "-c",
+    [
+      'provider_cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/bgutil-ytdlp-pot-provider";',
+      "deno run --allow-env --allow-net",
+      '--allow-ffi="$BGUTIL_PROVIDER_HOME/node_modules"',
+      '--allow-write="$provider_cache_dir"',
+      '--allow-read="$provider_cache_dir,$BGUTIL_PROVIDER_HOME/node_modules"',
+      '"$BGUTIL_PROVIDER_HOME/src/generate_once.ts" --version',
+    ].join(" "),
+  ]).trim();
 
   if (!/^\d{4}\.\d{2}\.\d{2}$/.test(ytdlpVersion)) {
     throw new Error(`Unexpected yt-dlp --version output: ${ytdlpVersion}`);
@@ -195,6 +239,31 @@ function testImageToolchainSmoke() {
       `yt-dlp -v did not report yt-dlp-ejs:\n${verboseProbe}`,
     );
   }
+  if (providerPluginVersion !== poTokenProbe.providerVersion) {
+    throw new Error(
+      `BgUtils plugin version ${providerPluginVersion} did not match image version ${poTokenProbe.providerVersion}`,
+    );
+  }
+  if (providerScriptVersion !== poTokenProbe.providerVersion) {
+    throw new Error(
+      `BgUtils script version ${providerScriptVersion} did not match image version ${poTokenProbe.providerVersion}`,
+    );
+  }
+  if (!poTokenProbe.providerHomeExists) {
+    throw new Error("BgUtils provider home is missing from the encoder image");
+  }
+  if (
+    poTokenProbe.args.length !== 4 ||
+    poTokenProbe.args[0] !== "--extractor-args" ||
+    poTokenProbe.args[1] !== "youtube:player_client=mweb" ||
+    poTokenProbe.args[2] !== "--extractor-args" ||
+    poTokenProbe.args[3] !==
+      `youtubepot-bgutilscript:server_home=${poTokenProbe.providerHome}`
+  ) {
+    throw new Error(
+      `Unexpected PO-token yt-dlp args: ${JSON.stringify(poTokenProbe.args)}`,
+    );
+  }
 
   console.log("Encoder image toolchain smoke test passed");
   console.log(`  yt-dlp: ${ytdlpVersion}`);
@@ -205,6 +274,9 @@ function testImageToolchainSmoke() {
       .find((line) => line.toLowerCase().includes("js runtimes")) ??
     "(runtime line not found)";
   console.log(`  runtime: ${runtimeLine.trim()}`);
+  console.log(
+    `  PO tokens: BgUtils ${providerPluginVersion} script provider with mweb client`,
+  );
 }
 
 function waitForHealth(port: number, attempts = 30) {
@@ -689,6 +761,18 @@ function assertForceKeyframesFallbackInvocation(logs: string) {
   }
 }
 
+function assertPoTokenInvocation(logs: string) {
+  if (
+    !logs.includes("--extractor-args") ||
+    !logs.includes("youtube:player_client=mweb") ||
+    !logs.includes("youtubepot-bgutilscript:server_home=")
+  ) {
+    throw new Error(
+      "Encoder logs did not show the mweb BgUtils PO-token configuration",
+    );
+  }
+}
+
 function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
   const blockedFixture = path.join(fixturesDir, "fake-ytdlp-403.sh");
   const blockedStdoutFixture = path.join(fixturesDir, "fake-ytdlp-403-stdout.sh");
@@ -781,6 +865,7 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
     ) {
       throw new Error("Encoder logs did not show aggressive yt-dlp retry flags");
     }
+    assertPoTokenInvocation(blocked.logs);
     console.log("Encoder YouTube 403 fail-fast contract test passed");
     console.log(`  Elapsed: ${blocked.elapsedMs}ms`);
     console.log(`  Message: ${blocked.result.errorMessage}`);
@@ -1133,6 +1218,7 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
     if (!sections.logs.includes("--concurrent-fragments 8")) {
       throw new Error("Encoder logs did not show --concurrent-fragments 8");
     }
+    assertPoTokenInvocation(sections.logs);
     if (
       !sections.logs.includes("-S") ||
       !sections.logs.includes("res:1080") ||

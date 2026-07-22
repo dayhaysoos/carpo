@@ -46,6 +46,14 @@ YOUTUBE_POST_100_GRACE_TIMEOUT_SECONDS = int(
 YOUTUBE_DOWNLOAD_MAX_SECONDS = int(
     os.environ.get("YOUTUBE_DOWNLOAD_MAX_SECONDS", "600"),
 )
+YOUTUBE_PO_TOKEN_MODE = os.environ.get(
+    "YOUTUBE_PO_TOKEN_MODE",
+    "off",
+).strip().lower()
+BGUTIL_PROVIDER_HOME = os.environ.get(
+    "BGUTIL_PROVIDER_HOME",
+    "",
+).strip()
 YOUTUBE_STDERR_MAX_LINES = 200
 YOUTUBE_SECTION_PADDING_SECONDS = 3
 YOUTUBE_SECTION_START_DRIFT_TOLERANCE_SECONDS = 0.25
@@ -989,6 +997,26 @@ def youtube_section_bounds(
     return section_start, section_end
 
 
+def ytdlp_po_token_args() -> list[str]:
+    """Return explicit yt-dlp client/provider args for YouTube attestation."""
+    if YOUTUBE_PO_TOKEN_MODE in ("", "off"):
+        return []
+    if YOUTUBE_PO_TOKEN_MODE != "bgutil":
+        raise RuntimeError(
+            f"Unsupported YOUTUBE_PO_TOKEN_MODE: {YOUTUBE_PO_TOKEN_MODE}",
+        )
+    if not BGUTIL_PROVIDER_HOME:
+        raise RuntimeError(
+            "BGUTIL_PROVIDER_HOME is required when PO-token mode is enabled",
+        )
+    return [
+        "--extractor-args",
+        "youtube:player_client=mweb",
+        "--extractor-args",
+        f"youtubepot-bgutilscript:server_home={BGUTIL_PROVIDER_HOME}",
+    ]
+
+
 def _ytdlp_download_command(
     url: str,
     output_template: str,
@@ -1003,6 +1031,7 @@ def _ytdlp_download_command(
     format_sort, format_selector = ytdlp_format_for_quality(quality)
     command = [
         "yt-dlp",
+        *ytdlp_po_token_args(),
         "--no-playlist",
         "--retries",
         "1",
