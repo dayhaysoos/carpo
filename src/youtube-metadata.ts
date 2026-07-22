@@ -8,6 +8,7 @@ import type { SourceVideoRecord } from "./types";
 const YOUTUBE_OEMBED_URL = "https://www.youtube.com/oembed";
 const DEFAULT_FETCH_TIMEOUT_MS = 2_000;
 const RETRY_BACKOFF_MS = 6 * 60 * 60 * 1_000;
+const MAX_CONCURRENT_LOOKUPS = 5;
 
 export async function resolveUnresolvedYoutubeTitles(
   db: D1Database,
@@ -27,8 +28,10 @@ export async function resolveUnresolvedYoutubeTitles(
     (video) => !wasCheckedRecently(video.youtube_title_checked_at, now),
   );
 
-  await Promise.all(
-    due.map(async (video) => {
+  await forEachWithConcurrency(
+    due,
+    MAX_CONCURRENT_LOOKUPS,
+    async (video) => {
       await bestEffortMarkChecked(db, video.id);
       const title = await fetchYoutubeTitle(video.source_ref, timeoutMs);
       if (!title) return;
@@ -39,13 +42,32 @@ export async function resolveUnresolvedYoutubeTitles(
       } catch (error) {
         console.error("Failed to cache YouTube title", error);
       }
-    }),
+    },
   );
 
   return videos.map((video) => {
     const title = titlesById.get(video.id);
     return title ? { ...video, title } : video;
   });
+}
+
+async function forEachWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  task: (item: T) => Promise<void>,
+): Promise<void> {
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    async () => {
+      while (nextIndex < items.length) {
+        const item = items[nextIndex];
+        nextIndex += 1;
+        await task(item);
+      }
+    },
+  );
+  await Promise.all(workers);
 }
 
 async function bestEffortMarkChecked(

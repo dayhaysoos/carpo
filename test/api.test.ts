@@ -2441,6 +2441,61 @@ describe("source video library", () => {
     }
   });
 
+  it("limits concurrent YouTube title lookups", async () => {
+    const targetUrls = Array.from(
+      { length: 7 },
+      (_, index) => `https://www.youtube.com/watch?v=titleConcurrency0${index}`,
+    );
+    await env.DB.batch(
+      targetUrls.map((url) =>
+        env.DB.prepare(
+          `INSERT INTO source_videos (id, source_type, source_ref, title)
+           VALUES (?, 'youtube', ?, 'Unverified clip name')`,
+        ).bind(crypto.randomUUID(), url),
+      ),
+    );
+
+    const originalFetch = globalThis.fetch;
+    let activeRequests = 0;
+    let maxActiveRequests = 0;
+    const requestedTargets = new Set<string>();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(
+      async (input, init) => {
+        const url = new URL(
+          typeof input === "string"
+            ? input
+            : input instanceof URL
+              ? input.href
+              : input.url,
+        );
+        if (
+          url.origin === "https://www.youtube.com" &&
+          url.pathname === "/oembed"
+        ) {
+          const sourceUrl = url.searchParams.get("url") ?? "";
+          if (targetUrls.includes(sourceUrl)) requestedTargets.add(sourceUrl);
+          activeRequests += 1;
+          maxActiveRequests = Math.max(maxActiveRequests, activeRequests);
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          activeRequests -= 1;
+          return Response.json({ title: `Title for ${sourceUrl}` });
+        }
+        return originalFetch(input, init);
+      },
+    );
+
+    try {
+      const response = await workerFetch(
+        "http://example.com/api/videos?limit=100",
+      );
+      expect(response.status).toBe(200);
+      expect(requestedTargets.size).toBe(targetUrls.length);
+      expect(maxActiveRequests).toBeLessThanOrEqual(5);
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   it("retains failed artifact cleanup work for a later retry", async () => {
     const key = `clips/${crypto.randomUUID()}/clip.mp4`;
     await env.DB.prepare(
