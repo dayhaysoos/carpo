@@ -1,6 +1,7 @@
 import { ClipFailureMessage } from "./ClipFailureMessage";
 import { statusLabel } from "../status";
 import type { ClipResponse } from "../types";
+import { ModalDialog } from "./ModalDialog";
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, {
@@ -19,14 +20,7 @@ export function ClipModal({ clip, onClose }: ClipModalProps) {
   if (!clip.outputs.mp4) return null;
 
   return (
-    <div className="modal-backdrop" onClick={onClose} role="presentation">
-      <div
-        className="modal-panel"
-        onClick={(event) => event.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="clip-modal-title"
-      >
+    <ModalDialog labelledBy="clip-modal-title" onDismiss={onClose}>
         <div className="modal-header">
           <h2 id="clip-modal-title">{clip.title}</h2>
           <button type="button" className="btn-ghost" onClick={onClose}>
@@ -52,8 +46,7 @@ export function ClipModal({ clip, onClose }: ClipModalProps) {
             </a>
           )}
         </div>
-      </div>
-    </div>
+    </ModalDialog>
   );
 }
 

@@ -12,6 +12,7 @@ import {
   ClipLibraryCard,
   ClipModal,
 } from "../components/ClipLibraryCard";
+import { ModalDialog } from "../components/ModalDialog";
 import {
   CLIPS_QUERY_KEY,
   SOURCE_VIDEOS_QUERY_KEY,
@@ -20,7 +21,7 @@ import {
 import { isTerminalStatus } from "../status";
 import type { ClipResponse } from "../types";
 
-export function VideoProjectPage() {
+export function VideoPage() {
   const { videoId = "" } = useParams();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -95,21 +96,21 @@ export function VideoProjectPage() {
         {error && !data && (
           <div className="form-error">
             {error.message === "Video not found"
-              ? "This video project no longer exists."
+              ? "This video no longer exists."
               : error.message}
           </div>
         )}
 
         {data && (
           <>
-            <div className="video-project-header">
+            <div className="video-header">
               {data.video.thumbnail ? (
                 <img src={data.video.thumbnail} alt="" />
               ) : (
-                <div className="video-project-header-placeholder">No preview</div>
+                <div className="video-header-placeholder">No preview</div>
               )}
-              <div className="video-project-header-copy">
-                <p className="video-project-source">
+              <div className="video-header-copy">
+                <p className="video-source">
                   {data.video.source.type === "youtube" ? "YouTube video" : "Uploaded video"}
                 </p>
                 <h2>{data.video.title}</h2>
@@ -117,7 +118,7 @@ export function VideoProjectPage() {
                   {data.video.clipCount} clip{data.video.clipCount === 1 ? "" : "s"}
                 </p>
               </div>
-              <div className="video-project-actions">
+              <div className="video-actions">
                 <Link
                   to={`/?video=${encodeURIComponent(videoId)}`}
                   className="btn-primary video-create-clip"
@@ -152,7 +153,7 @@ export function VideoProjectPage() {
               <p className="form-error">{archiveMutation.error.message}</p>
             )}
 
-            <div className="project-clips-heading">
+            <div className="video-clips-heading">
               <h3>Clips</h3>
             </div>
 
@@ -195,13 +196,14 @@ export function VideoProjectPage() {
       )}
 
       {pendingDelete && (
-        <div className="modal-backdrop" role="presentation">
-          <div
-            className="modal-panel confirm-panel"
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="delete-clip-title"
-          >
+        <ModalDialog
+          labelledBy="delete-clip-title"
+          role="alertdialog"
+          className="confirm-panel"
+          onDismiss={
+            deleteMutation.isPending ? undefined : () => setPendingDelete(null)
+          }
+        >
             <h2 id="delete-clip-title">Delete clip?</h2>
             <p>
               <strong>{pendingDelete.title}</strong> will be removed permanently,
@@ -228,18 +230,20 @@ export function VideoProjectPage() {
             {deleteMutation.error && (
               <p className="job-error">{deleteMutation.error.message}</p>
             )}
-          </div>
-        </div>
+        </ModalDialog>
       )}
 
       {pendingVideoDelete && data && (
-        <div className="modal-backdrop" role="presentation">
-          <div
-            className="modal-panel confirm-panel"
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="delete-video-title"
-          >
+        <ModalDialog
+          labelledBy="delete-video-title"
+          role="alertdialog"
+          className="confirm-panel"
+          onDismiss={
+            deleteVideoMutation.isPending
+              ? undefined
+              : () => setPendingVideoDelete(false)
+          }
+        >
             <h2 id="delete-video-title">Delete video?</h2>
             <p>
               <strong>{data.video.title}</strong>, its retained original, and all
@@ -268,8 +272,7 @@ export function VideoProjectPage() {
             {deleteVideoMutation.error && (
               <p className="job-error">{deleteVideoMutation.error.message}</p>
             )}
-          </div>
-        </div>
+        </ModalDialog>
       )}
     </main>
   );

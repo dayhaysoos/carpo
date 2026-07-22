@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
 import { listSourceVideos } from "../api";
 import { sourceVideosQueryKey } from "../queries";
@@ -16,21 +16,21 @@ function sourceLabel(video: SourceVideoResponse): string {
   return video.source.type === "youtube" ? "YouTube" : "Upload";
 }
 
-function VideoProjectCard({ video }: { video: SourceVideoResponse }) {
+function VideoCard({ video }: { video: SourceVideoResponse }) {
   const clipLabel = `${video.clipCount} clip${video.clipCount === 1 ? "" : "s"}`;
 
   return (
-    <article className="video-project">
+    <article className="video">
       <Link
         to={`/library/videos/${video.id}`}
-        className="video-project-link"
+        className="video-link"
         aria-label={`Open ${video.title}, ${clipLabel}`}
       >
-        <div className="video-project-thumb-wrap">
+        <div className="video-thumb-wrap">
           {video.thumbnail ? (
-            <img src={video.thumbnail} alt="" className="video-project-thumb" />
+            <img src={video.thumbnail} alt="" className="video-thumb" />
           ) : (
-            <div className="video-project-thumb placeholder">No preview yet</div>
+            <div className="video-thumb placeholder">No preview yet</div>
           )}
           {video.activeClipCount > 0 && (
             <span className="status-badge status-encoding">
@@ -38,7 +38,7 @@ function VideoProjectCard({ video }: { video: SourceVideoResponse }) {
             </span>
           )}
         </div>
-        <div className="video-project-body">
+        <div className="video-body">
           <div>
             <h3>{video.title}</h3>
             <p>
@@ -47,7 +47,7 @@ function VideoProjectCard({ video }: { video: SourceVideoResponse }) {
               Updated {formatDate(video.updatedAt)}
             </p>
           </div>
-          <div className="video-project-count">
+          <div className="video-count">
             <strong>{video.clipCount}</strong>
             <span>{video.clipCount === 1 ? "clip" : "clips"}</span>
           </div>
@@ -60,14 +60,31 @@ function VideoProjectCard({ video }: { video: SourceVideoResponse }) {
 export function LibraryPage() {
   const [searchParams] = useSearchParams();
   const archived = searchParams.get("view") === "archived";
-  const { data, error, isLoading } = useQuery({
+  const {
+    data,
+    error,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+    isLoading,
+  } = useInfiniteQuery({
     queryKey: sourceVideosQueryKey(archived),
-    queryFn: () => listSourceVideos(50, 0, archived),
+    initialPageParam: 0,
+    queryFn: ({ pageParam }) => listSourceVideos(24, pageParam, archived),
+    getNextPageParam: (lastPage, pages) => {
+      const loaded = pages.reduce(
+        (count, page) => count + page.videos.length,
+        0,
+      );
+      return loaded < lastPage.total ? loaded : undefined;
+    },
     refetchInterval: (query) => {
-      const videos = query.state.data?.videos ?? [];
+      const videos = query.state.data?.pages.flatMap((page) => page.videos) ?? [];
       return videos.some((video) => video.activeClipCount > 0) ? 1000 : false;
     },
   });
+  const videos = data?.pages.flatMap((page) => page.videos) ?? [];
+  const total = data?.pages[0]?.total ?? 0;
 
   return (
     <main className="library-main">
@@ -81,9 +98,9 @@ export function LibraryPage() {
                 : "Your source videos and the clips created from each one."}
             </p>
           </div>
-          {data && data.total > 0 && (
+          {total > 0 && (
             <span className="library-total">
-              {data.total} video{data.total === 1 ? "" : "s"}
+              {total} video{total === 1 ? "" : "s"}
             </span>
           )}
         </div>
@@ -111,7 +128,7 @@ export function LibraryPage() {
 
         {error && !data && <div className="form-error">{error.message}</div>}
 
-        {data?.videos.length === 0 && (
+        {data && videos.length === 0 && (
           <div className="empty-state">
             <p>{archived ? "No archived videos." : "No videos yet."}</p>
             {!archived && (
@@ -122,12 +139,26 @@ export function LibraryPage() {
           </div>
         )}
 
-        {data && data.videos.length > 0 && (
-          <div className="video-project-list">
-            {data.videos.map((video) => (
-              <VideoProjectCard key={video.id} video={video} />
-            ))}
-          </div>
+        {videos.length > 0 && (
+          <>
+            <div className="video-list">
+              {videos.map((video) => (
+                <VideoCard key={video.id} video={video} />
+              ))}
+            </div>
+            {hasNextPage && (
+              <div className="library-load-more">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => void fetchNextPage()}
+                  disabled={isFetchingNextPage}
+                >
+                  {isFetchingNextPage ? "Loading…" : "Load more videos"}
+                </button>
+              </div>
+            )}
+          </>
         )}
       </section>
     </main>

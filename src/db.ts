@@ -17,6 +17,7 @@ import {
 
 export interface InsertClipOptions {
   helperState?: HelperState;
+  videoId?: string;
 }
 
 export async function insertClip(
@@ -30,7 +31,7 @@ export async function insertClip(
   const filtersJson = JSON.stringify(request.filters ?? []);
   const callbackSecret = generateCallbackSecret();
   const helperState = options?.helperState ?? null;
-  const videoId = await ensureSourceVideo(db, request);
+  const videoId = options?.videoId ?? await ensureSourceVideo(db, request);
 
   await db
     .prepare(

@@ -1,7 +1,7 @@
 import { NavLink, Route, Routes } from "react-router-dom";
 import { CreatorPage } from "./pages/CreatorPage";
 import { LibraryPage } from "./pages/LibraryPage";
-import { VideoProjectPage } from "./pages/VideoProjectPage";
+import { VideoPage } from "./pages/VideoPage";
 
 export function App() {
   return (
@@ -38,7 +38,7 @@ export function App() {
       <Routes>
         <Route path="/" element={<CreatorPage />} />
         <Route path="/library" element={<LibraryPage />} />
-        <Route path="/library/videos/:videoId" element={<VideoProjectPage />} />
+        <Route path="/library/videos/:videoId" element={<VideoPage />} />
       </Routes>
     </div>
   );

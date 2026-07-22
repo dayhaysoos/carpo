@@ -304,6 +304,7 @@ async function handleCreateClipForVideo(
     env,
     ctx,
     new URL(request.url).origin,
+    videoId,
   );
 }
 
@@ -312,6 +313,7 @@ async function createClipJob(
   env: Env,
   ctx: ExecutionContext,
   origin: string,
+  videoId?: string,
 ): Promise<Response> {
   const clipId = crypto.randomUUID();
   const useHelper =
@@ -320,7 +322,10 @@ async function createClipJob(
     env.DB,
     clipId,
     clipRequest,
-    useHelper ? { helperState: "pending" } : undefined,
+    {
+      helperState: useHelper ? "pending" : undefined,
+      videoId,
+    },
   );
 
   if (useHelper) {
@@ -467,15 +472,21 @@ async function handleDeleteSourceVideo(
     return json({ error: "Video not found" }, 404);
   }
   const clips = await listClipsByVideoId(env.DB, videoId);
+  let deleted: boolean;
+  try {
+    deleted = await deleteSourceVideoRecords(env.DB, videoId);
+  } catch (error) {
+    console.error("Failed to delete video records", error);
+    return json({ error: "Unable to delete video" }, 500);
+  }
+  if (!deleted) {
+    return json({ error: "Video not found" }, 404);
+  }
   await Promise.all(
     clips.map((clip) => deleteClipArtifacts(env.CLIPS_BUCKET, clip.id, clip)),
   );
   if (video.source_type === "upload") {
     await env.CLIPS_BUCKET.delete(video.source_ref);
-  }
-  const deleted = await deleteSourceVideoRecords(env.DB, videoId);
-  if (!deleted) {
-    return json({ error: "Video not found" }, 404);
   }
   return new Response(null, { status: 204 });
 }

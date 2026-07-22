@@ -2426,7 +2426,47 @@ describe("source video library", () => {
     );
   });
 
-  it("groups alternate YouTube URL forms into one video project", async () => {
+  it("keeps reused legacy YouTube URLs attached to their existing video", async () => {
+    const legacyVideoId = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO source_videos (id, source_type, source_ref, title)
+       VALUES (?, 'youtube', ?, ?)`,
+    )
+      .bind(
+        legacyVideoId,
+        "https://youtu.be/legacyGrouping01?t=30",
+        "Legacy YouTube video",
+      )
+      .run();
+
+    const response = await workerFetch(
+      `http://example.com/api/videos/${legacyVideoId}/clips`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: "legacy source clip",
+          trimStart: 1,
+          trimEnd: 4,
+          filters: [],
+        }),
+      },
+    );
+
+    expect(response.status).toBe(201);
+    const clip = (await response.json()) as { videoId: string };
+    expect(clip.videoId).toBe(legacyVideoId);
+
+    const detailResponse = await workerFetch(
+      `http://example.com/api/videos/${legacyVideoId}`,
+    );
+    const detail = (await detailResponse.json()) as {
+      video: { clipCount: number };
+    };
+    expect(detail.video.clipCount).toBe(1);
+  });
+
+  it("groups alternate YouTube URL forms into one video", async () => {
     const createForUrl = async (url: string, title: string) => {
       const response = await workerFetch("http://example.com/api/clips", {
         method: "POST",
@@ -2465,13 +2505,13 @@ describe("source video library", () => {
         thumbnail: string | null;
       }>;
     };
-    const project = list.videos.find((video) => video.id === first.videoId);
+    const video = list.videos.find((item) => item.id === first.videoId);
 
-    expect(project).toMatchObject({
+    expect(video).toMatchObject({
       title: "Grouping test source",
       clipCount: 2,
     });
-    expect(project?.thumbnail).toBe(
+    expect(video?.thumbnail).toBe(
       "https://i.ytimg.com/vi/groupingTest01/hqdefault.jpg",
     );
 
@@ -2586,6 +2626,54 @@ describe("source video library", () => {
     );
     expect(firstAfter.status).toBe(404);
     expect(secondAfter.status).toBe(404);
+  });
+
+  it("preserves video files when deleting its database records fails", async () => {
+    const uploadKey = await uploadTestVideo();
+    const createResponse = await workerFetch("http://example.com/api/clips", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "protected delete clip",
+        sourceTitle: "Protected delete source.mp4",
+        source: { type: "upload", key: uploadKey },
+        trimStart: 1,
+        trimEnd: 4,
+        filters: [],
+      }),
+    });
+    const created = (await createResponse.json()) as {
+      id: string;
+      videoId: string;
+    };
+    const keys = outputKeysForClip(created.id);
+    await env.CLIPS_BUCKET.put(keys.mp4Key, new Uint8Array([1, 2, 3]), {
+      httpMetadata: { contentType: "video/mp4" },
+    });
+    await env.CLIPS_BUCKET.put(keys.thumbnailKey, new Uint8Array([4, 5, 6]), {
+      httpMetadata: { contentType: "image/jpeg" },
+    });
+
+    await env.DB.prepare(
+      `CREATE TRIGGER prevent_test_video_delete
+       BEFORE DELETE ON source_videos
+       WHEN OLD.id = '${created.videoId}'
+       BEGIN
+         SELECT RAISE(ABORT, 'delete blocked for test');
+       END`,
+    ).run();
+
+    const deleteResponse = await workerFetch(
+      `http://example.com/api/videos/${created.videoId}`,
+      { method: "DELETE" },
+    );
+    expect(deleteResponse.status).toBe(500);
+
+    expect(await env.CLIPS_BUCKET.get(uploadKey)).not.toBeNull();
+    expect(await env.CLIPS_BUCKET.get(keys.mp4Key)).not.toBeNull();
+    expect(await env.CLIPS_BUCKET.get(keys.thumbnailKey)).not.toBeNull();
+
+    await env.DB.prepare("DROP TRIGGER prevent_test_video_delete").run();
   });
 });
 
