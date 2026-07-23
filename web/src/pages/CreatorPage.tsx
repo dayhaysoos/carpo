@@ -1,4 +1,5 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { getSourceVideo } from "../api";
 import { CreatorForm } from "../components/CreatorForm";
 import { StatusPanel } from "../components/StatusPanel";
 import { VideoAgentChat } from "../components/VideoAgentChat";
@@ -17,6 +18,11 @@ export function CreatorPage() {
   const clipWindowSequence = useRef(0);
   const [clipWindowRequest, setClipWindowRequest] =
     useState<ClipWindowRequest | null>(null);
+  const { data: sourceVideoData } = useQuery({
+    queryKey: ["source-video", videoId],
+    queryFn: () => getSourceVideo(videoId),
+    enabled: Boolean(videoId),
+  });
 
   const handleClipCreated = () => {
     void queryClient.invalidateQueries({ queryKey: CLIPS_QUERY_KEY });
@@ -41,6 +47,7 @@ export function CreatorPage() {
       {videoId ? (
         <VideoAgentChat
           videoId={videoId}
+          source={sourceVideoData?.video.source}
           onClipCreated={handleClipCreated}
           onTimestampSelect={handleTimestampSelect}
         />

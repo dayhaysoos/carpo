@@ -1,11 +1,12 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useEffect } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { VideoAgentChat } from "./VideoAgentChat";
 
 const chat = vi.hoisted(() => ({
   addToolApprovalResponse: vi.fn(),
+  messages: [] as Array<Record<string, unknown>>,
 }));
 
 vi.mock("agents/react", () => ({
@@ -17,26 +18,7 @@ vi.mock("agents/react", () => ({
 
 vi.mock("@cloudflare/think/react", () => ({
   useAgentChat: () => ({
-    messages: [
-      {
-        id: "assistant-1",
-        role: "assistant",
-        parts: [
-          {
-            type: "tool-createClip",
-            toolCallId: "tool-1",
-            state: "approval-requested",
-            input: {
-              title: "Manual range",
-              startSeconds: 60,
-              endSeconds: 64,
-              quality: "1080p",
-            },
-            approval: { id: "approval-1" },
-          },
-        ],
-      },
-    ],
+    messages: chat.messages,
     sendMessage: vi.fn(),
     addToolApprovalResponse: chat.addToolApprovalResponse,
     status: "ready",
@@ -44,18 +26,201 @@ vi.mock("@cloudflare/think/react", () => ({
   }),
 }));
 
+function proposal(
+  approvalId: string,
+  title: string,
+  startSeconds: number,
+  endSeconds: number,
+) {
+  return {
+    type: "tool-createClip",
+    toolCallId: `tool-${approvalId}`,
+    state: "approval-requested",
+    input: {
+      title,
+      startSeconds,
+      endSeconds,
+      quality: "1080p",
+    },
+    approval: { id: approvalId },
+  };
+}
+
 describe("VideoAgentChat", () => {
+  beforeEach(() => {
+    chat.messages = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [proposal("approval-1", "Manual range", 60, 64)],
+      },
+    ];
+  });
+
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
   });
 
-  it("sends the user's explicit preview decision to Think", async () => {
+  it("groups proposed clips into one chronological review flow", async () => {
     const user = userEvent.setup();
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
       configurable: true,
       value: vi.fn(),
     });
+    chat.messages = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          proposal("approval-late", "Late clip", 60, 64),
+          proposal("approval-first", "Opening clip", 3, 6),
+          proposal("approval-middle", "Middle clip", 30, 33),
+        ],
+      },
+    ];
+
+    render(
+      <VideoAgentChat
+        videoId="video-1"
+        onClipCreated={vi.fn()}
+        onTimestampSelect={vi.fn()}
+        source={{
+          type: "youtube",
+          url: "https://www.youtube.com/watch?v=434cG4g5KLE",
+        }}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Review clips" })).toBeTruthy();
+    expect(screen.getByText("1 of 3")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Opening clip" })).toBeTruthy();
+    expect(screen.getByText("0:03.000–0:06.000")).toBeTruthy();
+    expect(
+      screen.getByTitle("Preview Opening clip").getAttribute("src"),
+    ).toContain("start=3&end=6");
+    expect(chat.addToolApprovalResponse).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Next clip" }));
+    expect(screen.getByText("2 of 3")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Middle clip" })).toBeTruthy();
+    expect(chat.addToolApprovalResponse).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Close clip review" }));
+    expect(
+      screen.queryByRole("heading", { name: "Review clips" }),
+    ).toBeNull();
+    expect(screen.getByText("3 clips ready to review")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Review clips" })).toBeTruthy();
+  });
+
+  it("keeps clip decisions reversible until the completed review is submitted", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    chat.messages = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          proposal("approval-second", "Second clip", 10, 13),
+          proposal("approval-first", "First clip", 0, 3),
+        ],
+      },
+    ];
+
+    render(
+      <VideoAgentChat
+        videoId="video-1"
+        onClipCreated={vi.fn()}
+        onTimestampSelect={vi.fn()}
+        source={{
+          type: "youtube",
+          url: "https://www.youtube.com/watch?v=434cG4g5KLE",
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Approve and next" }));
+    expect(screen.getByRole("heading", { name: "Second clip" })).toBeTruthy();
+    expect(chat.addToolApprovalResponse).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Reject clip" }));
+    expect(chat.addToolApprovalResponse).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "Create 1 approved clip" }),
+    ).toBeTruthy();
+
+    await user.click(
+      screen.getByRole("button", { name: "Create 1 approved clip" }),
+    );
+    expect(chat.addToolApprovalResponse.mock.calls).toEqual([
+      [{ id: "approval-first", approved: true }],
+      [{ id: "approval-second", approved: false }],
+    ]);
+    expect(
+      screen.queryByRole("heading", { name: "Review clips" }),
+    ).toBeNull();
+  });
+
+  it("approves an entire proposal batch without reviewing every clip", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    chat.messages = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          proposal("approval-second", "Second clip", 10, 13),
+          proposal("approval-first", "First clip", 0, 3),
+        ],
+      },
+    ];
+
+    render(
+      <VideoAgentChat
+        videoId="video-1"
+        onClipCreated={vi.fn()}
+        onTimestampSelect={vi.fn()}
+        source={{
+          type: "youtube",
+          url: "https://www.youtube.com/watch?v=434cG4g5KLE",
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Approve all" }));
+
+    expect(chat.addToolApprovalResponse.mock.calls).toEqual([
+      [{ id: "approval-first", approved: true }],
+      [{ id: "approval-second", approved: true }],
+    ]);
+    expect(
+      screen.queryByRole("heading", { name: "Review clips" }),
+    ).toBeNull();
+  });
+
+  it("rejects an entire proposal batch without creating anything", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    chat.messages = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          proposal("approval-second", "Second clip", 10, 13),
+          proposal("approval-first", "First clip", 0, 3),
+        ],
+      },
+    ];
 
     render(
       <VideoAgentChat
@@ -65,18 +230,21 @@ describe("VideoAgentChat", () => {
       />,
     );
 
-    expect(screen.getByText("1:00.000–1:04.000")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "Create clip" }));
+    await user.click(screen.getByRole("button", { name: "Reject all" }));
 
-    expect(chat.addToolApprovalResponse).toHaveBeenCalledWith({
-      id: "approval-1",
-      approved: true,
-    });
+    expect(chat.addToolApprovalResponse.mock.calls).toEqual([
+      [{ id: "approval-first", approved: false }],
+      [{ id: "approval-second", approved: false }],
+    ]);
+    expect(
+      screen.queryByRole("heading", { name: "Review clips" }),
+    ).toBeNull();
   });
 
   it("automatically applies typed timestamps and keeps them clickable", async () => {
     const user = userEvent.setup();
     const onTimestampSelect = vi.fn();
+    chat.messages = [];
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
       configurable: true,
       value: vi.fn(),

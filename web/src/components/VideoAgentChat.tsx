@@ -3,16 +3,21 @@ import { getToolName, isToolUIPart } from "ai";
 import type { UIMessage } from "ai";
 import { useAgent } from "agents/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ClipSource } from "../types";
 import {
   extractTimestampEntities,
   type TimestampEntity,
   type TimestampWindow,
 } from "../timestamp-windows";
-import { ClipApprovalCard } from "./ClipApprovalCard";
-import type { ManualClipInput } from "./ClipApprovalCard";
+import {
+  ClipReviewModal,
+  type ManualClipInput,
+  type PendingClipApproval,
+} from "./ClipReviewModal";
 
 interface VideoAgentChatProps {
   videoId: string;
+  source?: ClipSource;
   onClipCreated: () => void;
   onTimestampSelect: (window: TimestampWindow) => void;
 }
@@ -43,6 +48,7 @@ function messageText(parts: Array<{ type: string; text?: string }>): string {
 
 export function VideoAgentChat({
   videoId,
+  source,
   onClipCreated,
   onTimestampSelect,
 }: VideoAgentChatProps) {
@@ -53,6 +59,15 @@ export function VideoAgentChat({
   const completedClipIds = useRef(new Set<string>());
   const lastAutoAppliedTimestamp = useRef<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [activeReviewIndex, setActiveReviewIndex] = useState(0);
+  const [reviewDecisions, setReviewDecisions] = useState<
+    Record<string, boolean>
+  >({});
+  const [submittedReviewBatch, setSubmittedReviewBatch] = useState<
+    string | null
+  >(null);
+  const openedReviewBatch = useRef<string | null>(null);
 
   const agent = useAgent({
     agent: "VideoClipAgent",
@@ -69,6 +84,37 @@ export function VideoAgentChat({
     error,
   } = useAgentChat({ agent });
   const chatMessages = messages as UIMessage[];
+  const pendingApprovals = useMemo(() => {
+    const approvals: PendingClipApproval[] = [];
+    for (const message of chatMessages) {
+      for (const part of message.parts) {
+        if (!isToolUIPart(part) || getToolName(part) !== "createClip") continue;
+        if (part.state !== "approval-requested") continue;
+        const approval = "approval" in part
+          ? (part.approval as { id?: unknown })
+          : undefined;
+        if (
+          typeof approval?.id !== "string" ||
+          !isManualClipInput(part.input)
+        ) {
+          continue;
+        }
+        approvals.push({
+          approvalId: approval.id,
+          toolCallId: part.toolCallId,
+          input: part.input,
+        });
+      }
+    }
+    return approvals.sort(
+      (left, right) =>
+        left.input.startSeconds - right.input.startSeconds ||
+        left.input.endSeconds - right.input.endSeconds,
+    );
+  }, [chatMessages]);
+  const reviewBatchKey = pendingApprovals
+    .map((approval) => approval.approvalId)
+    .join(":");
   const timestampEntities = useMemo(
     () => extractTimestampEntities(input, clipWindowSeconds),
     [clipWindowSeconds, input],
@@ -76,6 +122,47 @@ export function VideoAgentChat({
   const composerMirrorRef = useRef<HTMLDivElement>(null);
 
   const working = status === "submitted" || status === "streaming";
+
+  useEffect(() => {
+    if (
+      working ||
+      pendingApprovals.length === 0 ||
+      openedReviewBatch.current === reviewBatchKey
+    ) {
+      return;
+    }
+    openedReviewBatch.current = reviewBatchKey;
+    setActiveReviewIndex(0);
+    setReviewDecisions({});
+    setSubmittedReviewBatch(null);
+    setReviewOpen(true);
+  }, [pendingApprovals.length, reviewBatchKey, working]);
+
+  useEffect(() => {
+    setActiveReviewIndex((current) =>
+      Math.min(current, Math.max(0, pendingApprovals.length - 1)),
+    );
+  }, [pendingApprovals.length]);
+
+  const submitReview = (decisions: Readonly<Record<string, boolean>>) => {
+    for (const approval of pendingApprovals) {
+      if (!Object.hasOwn(decisions, approval.approvalId)) continue;
+      addToolApprovalResponse({
+        id: approval.approvalId,
+        approved: decisions[approval.approvalId],
+      });
+    }
+    setSubmittedReviewBatch(reviewBatchKey);
+    setReviewOpen(false);
+  };
+
+  const submitAll = (approved: boolean) => {
+    const decisions = Object.fromEntries(
+      pendingApprovals.map((approval) => [approval.approvalId, approved]),
+    );
+    setReviewDecisions(decisions);
+    submitReview(decisions);
+  };
 
   useEffect(() => {
     const entity = timestampEntities.at(-1);
@@ -128,7 +215,7 @@ export function VideoAgentChat({
       <div className="card-header agent-chat-header">
         <div>
           <h2>Clip with Think</h2>
-          <p>Describe one timestamp range. You approve it before creation.</p>
+          <p>Describe clips by timestamp. You approve them before creation.</p>
         </div>
         <span className={`agent-connection ${connected ? "connected" : ""}`}>
           {connected ? "Ready" : "Connecting"}
@@ -161,25 +248,7 @@ export function VideoAgentChat({
                 }
 
                 if (part.state === "approval-requested") {
-                  const approval = "approval" in part
-                    ? (part.approval as { id?: unknown })
-                    : undefined;
-                  if (
-                    typeof approval?.id !== "string" ||
-                    !isManualClipInput(part.input)
-                  ) {
-                    return null;
-                  }
-                  return (
-                    <ClipApprovalCard
-                      key={part.toolCallId}
-                      approvalId={approval.id}
-                      input={part.input}
-                      onDecision={(approvalId, approved) =>
-                        addToolApprovalResponse({ id: approvalId, approved })
-                      }
-                    />
-                  );
+                  return null;
                 }
 
                 if (part.state === "output-available") {
@@ -214,6 +283,25 @@ export function VideoAgentChat({
             </div>
           );
         })}
+        {pendingApprovals.length > 0 &&
+        submittedReviewBatch !== reviewBatchKey ? (
+          <div className="agent-review-ready">
+            <div>
+              <strong>
+                {pendingApprovals.length} clip
+                {pendingApprovals.length === 1 ? "" : "s"} ready to review
+              </strong>
+              <span>Nothing will be created until you finish reviewing.</span>
+            </div>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => setReviewOpen(true)}
+            >
+              Review clips
+            </button>
+          </div>
+        ) : null}
         {working ? <div className="agent-thinking">Think is working…</div> : null}
         <div ref={endRef} />
       </div>
@@ -283,6 +371,27 @@ export function VideoAgentChat({
           </button>
         </div>
       </form>
+
+      {reviewOpen && pendingApprovals.length > 0 ? (
+        <ClipReviewModal
+          videoId={videoId}
+          source={source}
+          approvals={pendingApprovals}
+          activeIndex={activeReviewIndex}
+          decisions={reviewDecisions}
+          onActiveIndexChange={setActiveReviewIndex}
+          onDecision={(approvalId, approved) =>
+            setReviewDecisions((current) => ({
+              ...current,
+              [approvalId]: approved,
+            }))
+          }
+          onSubmit={() => submitReview(reviewDecisions)}
+          onApproveAll={() => submitAll(true)}
+          onRejectAll={() => submitAll(false)}
+          onDismiss={() => setReviewOpen(false)}
+        />
+      ) : null}
     </section>
   );
 }
