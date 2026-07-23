@@ -176,7 +176,7 @@ function UploadClipPreview({
     <video
       ref={videoRef}
       className="clip-review-player"
-      src={`${sourceVideoUploadUrl(videoId)}#t=${input.startSeconds},${input.endSeconds}`}
+      src={sourceVideoUploadUrl(videoId)}
       title={`Preview ${input.title}`}
       controls
       preload="metadata"
@@ -323,9 +323,7 @@ export function ClipReviewModal({
   existingClips = [],
 }: ClipReviewModalProps) {
   const [sourceDuration, setSourceDuration] = useState(0);
-  const [transitionDirection, setTransitionDirection] = useState<
-    "forward" | "backward" | null
-  >(null);
+  const [hasNavigated, setHasNavigated] = useState(false);
   const approval = approvals[activeIndex];
   if (!approval) return null;
 
@@ -345,12 +343,12 @@ export function ClipReviewModal({
   const decide = (approved: boolean) => {
     onDecision(approval.approvalId, approved);
     if (activeIndex < approvals.length - 1) {
-      setTransitionDirection("forward");
+      setHasNavigated(true);
       onActiveIndexChange(activeIndex + 1);
     }
   };
   const moveTo = (index: number) => {
-    setTransitionDirection(index > activeIndex ? "forward" : "backward");
+    setHasNavigated(true);
     onActiveIndexChange(index);
   };
 
@@ -363,7 +361,15 @@ export function ClipReviewModal({
       <header className="modal-header clip-review-header">
         <div>
           <h2 id="clip-review-title">Review clips</h2>
-          <p aria-live="polite">
+          <p
+            key={`progress-${approval.approvalId}`}
+            className={
+              hasNavigated
+                ? "clip-review-progress clip-review-progress-advance"
+                : "clip-review-progress"
+            }
+            aria-live="polite"
+          >
             <strong>{activeIndex + 1} of {approvals.length}</strong>
           </p>
         </div>
@@ -377,14 +383,7 @@ export function ClipReviewModal({
         </button>
       </header>
 
-      <div
-        className={`clip-review-step ${
-          transitionDirection
-            ? `clip-review-step-${transitionDirection}`
-            : ""
-        }`.trim()}
-        onAnimationEnd={() => setTransitionDirection(null)}
-      >
+      <div className="clip-review-step">
         <div className="clip-review-preview">
           <ClipSourcePreview
             videoId={videoId}
@@ -394,7 +393,14 @@ export function ClipReviewModal({
           />
         </div>
 
-        <div className="clip-review-details">
+        <div
+          key={`details-${approval.approvalId}`}
+          className={
+            hasNavigated
+              ? "clip-review-details clip-review-details-advance"
+              : "clip-review-details"
+          }
+        >
           <ClipRangeEditor
             approvalId={approval.approvalId}
             originalInput={approval.input}

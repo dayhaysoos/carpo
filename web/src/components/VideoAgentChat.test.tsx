@@ -176,9 +176,9 @@ describe("VideoAgentChat", () => {
     await user.click(screen.getByRole("button", { name: "Next clip" }));
     expect(screen.getByText("2 of 3")).toBeTruthy();
     expect(screen.getByLabelText("Preview Middle clip")).toBeTruthy();
-    expect(
-      document.querySelector(".clip-review-step-forward"),
-    ).toBeTruthy();
+    expect(document.querySelector(".clip-review-step-forward")).toBeNull();
+    expect(document.querySelector(".clip-review-details-advance")).toBeTruthy();
+    expect(document.querySelector(".clip-review-progress-advance")).toBeTruthy();
     await waitFor(() => expect(player.seekTo).toHaveBeenCalledWith(30));
     expect(chat.addToolApprovalResponse).not.toHaveBeenCalled();
 
@@ -188,6 +188,49 @@ describe("VideoAgentChat", () => {
     ).toBeNull();
     expect(screen.getByText("3 clips ready to review")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Review clips" })).toBeTruthy();
+  });
+
+  it("keeps an uploaded preview mounted while advancing clips", async () => {
+    const user = userEvent.setup();
+    chat.messages = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          proposal("approval-first", "First clip", 0, 3),
+          proposal("approval-second", "Second clip", 10, 13),
+        ],
+      },
+    ];
+
+    render(
+      <VideoAgentChat
+        videoId="video-1"
+        onClipCreated={vi.fn()}
+        onTimestampSelect={vi.fn()}
+        source={{
+          type: "upload",
+          key: "uploads/source.mp4",
+        }}
+      />,
+    );
+
+    const firstPreview = screen.getByTitle(
+      "Preview First clip",
+    ) as HTMLVideoElement;
+    expect(firstPreview.getAttribute("src")).toBe(
+      "/api/videos/video-1/source",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Next clip" }));
+
+    const secondPreview = screen.getByTitle(
+      "Preview Second clip",
+    ) as HTMLVideoElement;
+    expect(secondPreview).toBe(firstPreview);
+    expect(secondPreview.getAttribute("src")).toBe(
+      "/api/videos/video-1/source",
+    );
   });
 
   it("keeps clip decisions reversible until the completed review is submitted", async () => {
@@ -221,7 +264,9 @@ describe("VideoAgentChat", () => {
 
     await user.click(screen.getByRole("button", { name: "Approve and next" }));
     expect(screen.getByLabelText("Preview Second clip")).toBeTruthy();
-    expect(document.querySelector(".clip-review-step-forward")).toBeTruthy();
+    expect(document.querySelector(".clip-review-step-forward")).toBeNull();
+    expect(document.querySelector(".clip-review-details-advance")).toBeTruthy();
+    expect(document.querySelector(".clip-review-progress-advance")).toBeTruthy();
     expect(chat.addToolApprovalResponse).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: "Reject clip" }));
@@ -387,9 +432,11 @@ describe("VideoAgentChat", () => {
       />,
     );
 
-    expect(
-      screen.getByTitle("Preview Uploaded clip").getAttribute("src"),
-    ).toBe("/api/videos/video-1/source#t=12.25,15.5");
+    const preview = screen.getByTitle(
+      "Preview Uploaded clip",
+    ) as HTMLVideoElement;
+    expect(preview.getAttribute("src")).toBe("/api/videos/video-1/source");
+    expect(preview.currentTime).toBe(12.25);
   });
 
   it("automatically applies typed timestamps and keeps them clickable", async () => {

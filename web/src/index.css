@@ -2103,34 +2103,43 @@ input {
   }
 }
 
-@keyframes clip-review-step-forward {
+@keyframes clip-review-details-advance {
   from {
-    opacity: 0.25;
-    transform: translateX(14px);
+    transform: translateY(4px);
   }
   to {
-    opacity: 1;
-    transform: translateX(0);
+    transform: translateY(0);
   }
 }
 
-@keyframes clip-review-step-backward {
+@keyframes clip-review-progress-advance {
   from {
-    opacity: 0.25;
-    transform: translateX(-14px);
+    transform: translateY(3px);
   }
   to {
-    opacity: 1;
-    transform: translateX(0);
+    transform: translateY(0);
   }
 }
 
-.clip-review-step-forward {
-  animation: clip-review-step-forward 190ms cubic-bezier(0.22, 1, 0.36, 1);
+.clip-review-details-advance {
+  animation: clip-review-details-advance 180ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.clip-review-step-backward {
-  animation: clip-review-step-backward 190ms cubic-bezier(0.22, 1, 0.36, 1);
+.clip-review-progress-advance {
+  animation: clip-review-progress-advance 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.clip-review-decision .btn-primary,
+.clip-review-decision .btn-ghost {
+  transition:
+    background 150ms ease,
+    opacity 150ms ease,
+    transform 80ms ease-out;
+}
+
+.clip-review-decision .btn-primary:active:not(:disabled),
+.clip-review-decision .btn-ghost:active:not(:disabled) {
+  transform: scale(0.985);
 }
 
 @media (max-width: 720px) {
@@ -2198,9 +2207,19 @@ input {
 
 @media (prefers-reduced-motion: reduce) {
   .clip-review-modal,
-  .clip-review-step-forward,
-  .clip-review-step-backward {
+  .clip-review-details-advance,
+  .clip-review-progress-advance {
     animation: none;
+  }
+
+  .clip-review-decision .btn-primary,
+  .clip-review-decision .btn-ghost {
+    transition: none;
+  }
+
+  .clip-review-decision .btn-primary:active:not(:disabled),
+  .clip-review-decision .btn-ghost:active:not(:disabled) {
+    transform: none;
   }
 }
 
