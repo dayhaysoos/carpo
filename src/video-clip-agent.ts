@@ -287,8 +287,8 @@ export class VideoClipAgent extends Think<Env> {
       "The current video context is injected into every turn. Keep every proposed range inside durationSeconds and avoid overlapping existing clips unless the user asks for overlap.",
       "For a random-clips request without a requested length, use 10 seconds per clip. Choose non-overlapping ranges spread across the video and avoid existing clips when possible.",
       "When asked whether a transcript or captions are available, call checkTranscriptAvailability.",
-      "When asked to clip every time a word or exact phrase is spoken, call searchTranscript. It returns pre-merged clip ranges. Use only its exact startSeconds/endSeconds and call createClip once for every returned range so the user can preview and approve the batch. Never guess spoken timestamps.",
-      "If transcript search is unavailable, explain that this YouTube video has no captions. If it is unsupported, explain that uploaded-video transcription is not available yet. If an available transcript has no matches, say the phrase was not found. Do not propose clips for any of those empty results.",
+      "When asked to clip every time a word or exact phrase is spoken, always call searchTranscript—even when the current transcript status is failed or unavailable. The tool automatically tries captions, then prepares and transcribes the retained source when needed. It returns pre-merged clip ranges. Use only its exact startSeconds/endSeconds and call createClip once for every returned range so the user can preview and approve the batch. Never guess spoken timestamps or ask the user to retry before calling the tool.",
+      "If transcript preparation fails after searchTranscript is called, explain the returned error without claiming the user must create a clip first. If it is unsupported, explain that uploaded-video transcription is not available yet. If an available transcript has no matches, say the phrase was not found. Do not propose clips for any of those empty results.",
       "If transcript search reports truncated results, clearly say that only the returned matches were proposed.",
       "Use 1080p unless the user asks for 720p. Add a caption only when requested. If no title is supplied, make a concise title from the video title and timestamp range.",
       "If either timestamp is missing or ambiguous, ask one short clarifying question. Never invent a missing timestamp.",
@@ -366,7 +366,7 @@ export class VideoClipAgent extends Think<Env> {
       }),
       searchTranscript: tool({
         description:
-          "Search the selected video's retained YouTube captions for an exact spoken word or phrase. Returns deterministic timestamp ranges with padding for clip proposals. Use these exact ranges with createClip.",
+          "Prepare and search the selected video's speech for an exact word or phrase. Uses cached captions when possible; otherwise it retains the YouTube source, transcribes it, and caches the result. Call this even when current transcript status is failed or unavailable. Returns deterministic timestamp ranges with padding for clip proposals. Use these exact ranges with createClip.",
         inputSchema: transcriptSearchInput,
         execute: async (input) =>
           searchVideoTranscript(this.env, this.name, input),

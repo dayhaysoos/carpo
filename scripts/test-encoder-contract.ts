@@ -587,6 +587,73 @@ print("YouTube transcript parsing test passed")
   run("python3", ["-c", script]);
 }
 
+function testAudioChunkWindows() {
+  const script = `
+import sys
+
+sys.path.insert(0, ${JSON.stringify(path.join(root, "container"))})
+from encoder import audio_chunk_windows
+
+assert audio_chunk_windows(601) == [
+    {
+        "name": "audio-000.mp3",
+        "startSeconds": 0.0,
+        "durationSeconds": 300.0,
+        "keepStartSeconds": 0.0,
+        "keepEndSeconds": 299.0,
+    },
+    {
+        "name": "audio-001.mp3",
+        "startSeconds": 298.0,
+        "durationSeconds": 300.0,
+        "keepStartSeconds": 1.0,
+        "keepEndSeconds": 299.0,
+    },
+    {
+        "name": "audio-002.mp3",
+        "startSeconds": 596.0,
+        "durationSeconds": 5.0,
+        "keepStartSeconds": 1.0,
+        "keepEndSeconds": 5.0,
+    },
+]
+
+print("Audio chunk window contract test passed")
+`;
+
+  run("python3", ["-c", script]);
+}
+
+function testAudioChunkExtraction(sourcePath: string) {
+  const script = `
+import sys
+from pathlib import Path
+
+sys.path.insert(0, "/app")
+from encoder import extract_audio_chunks
+
+chunks = extract_audio_chunks(Path("/tmp/source.mp4"), "audio-contract")
+assert len(chunks) == 1
+assert chunks[0]["name"] == "audio-000.mp3"
+output = Path("/outputs/audio-contract/audio-000.mp3")
+assert output.exists()
+assert output.stat().st_size > 0
+print("Audio chunk extraction contract test passed")
+`;
+
+  run("docker", [
+    "run",
+    "--rm",
+    "-v",
+    `${sourcePath}:/tmp/source.mp4:ro`,
+    imageName,
+    "python3",
+    "-c",
+    script,
+  ]);
+  console.log("Encoder audio chunk extraction contract test passed");
+}
+
 function testSectionEncodeBounds() {
   const script = `
 import sys
@@ -3389,10 +3456,12 @@ function main() {
   testRetainedSourceDownloadCommand();
   testYoutubeMetadataParsing();
   testYoutubeTranscriptParsing();
+  testAudioChunkWindows();
   testSectionEncodeBounds();
   testStreamCopyGate();
   buildImage();
   testImageToolchainSmoke();
+  testAudioChunkExtraction(barsPath);
   testProcessGroupKill();
   runStageSourceContract(frameCounterPath);
   runSequentialTwoJobContract(frameCounterPath);

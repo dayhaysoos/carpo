@@ -26,6 +26,19 @@ export interface YoutubeTranscript {
 
 export class TranscriptUnavailableError extends Error {}
 
+async function encoderErrorDetail(response: Response): Promise<string> {
+  const raw = await response.text();
+  try {
+    const parsed = JSON.parse(raw) as { errorMessage?: unknown };
+    if (typeof parsed.errorMessage === "string") {
+      return parsed.errorMessage;
+    }
+  } catch {
+    // Plain-text encoder failures are already suitable error details.
+  }
+  return raw;
+}
+
 /** Idempotent warm-up via the container's /__carpo/start endpoint. */
 export async function prewarmEncoder(
   env: Env,
@@ -88,16 +101,7 @@ export async function fetchYoutubeTranscript(
     },
   );
   if (!response.ok) {
-    const rawDetail = await response.text();
-    let detail = rawDetail;
-    try {
-      const parsed = JSON.parse(rawDetail) as { errorMessage?: unknown };
-      if (typeof parsed.errorMessage === "string") {
-        detail = parsed.errorMessage;
-      }
-    } catch {
-      // Plain-text encoder failures are already suitable error details.
-    }
+    const detail = await encoderErrorDetail(response);
     if (response.status === 404) {
       throw new TranscriptUnavailableError(
         detail || "This YouTube video has no usable transcript.",
@@ -105,6 +109,29 @@ export async function fetchYoutubeTranscript(
     }
     throw new Error(
       detail || `Transcript fetch failed (${response.status})`,
+    );
+  }
+  return response.json() as Promise<YoutubeTranscript>;
+}
+
+export async function transcribeSourceVideo(
+  env: Env,
+  videoId: string,
+): Promise<YoutubeTranscript> {
+  await prewarmEncoder(env);
+  const container = env.ENCODER_CONTAINER.getByName(ENCODER_POOL_INSTANCE);
+  const response = await container.fetch(
+    "http://encoder/__carpo/source-transcript",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ videoId }),
+    },
+  );
+  if (!response.ok) {
+    const detail = await encoderErrorDetail(response);
+    throw new Error(
+      detail || `Retained-source transcription failed (${response.status})`,
     );
   }
   return response.json() as Promise<YoutubeTranscript>;

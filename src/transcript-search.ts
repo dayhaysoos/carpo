@@ -1,6 +1,6 @@
 import {
   fetchYoutubeTranscript,
-  TranscriptUnavailableError,
+  transcribeSourceVideo,
   type TranscriptCue,
   type YoutubeTranscript,
 } from "./encoder-pool";
@@ -112,8 +112,38 @@ async function loadYoutubeTranscript(
     return { transcript: cached, cached: true };
   }
 
+  await updateSourceVideoTranscriptContext(env.DB, videoId, {
+    status: "checking",
+  });
+
+  let fetched: YoutubeTranscript;
   try {
-    const fetched = await fetchYoutubeTranscript(env, sourceUrl);
+    fetched = await fetchYoutubeTranscript(env, sourceUrl);
+  } catch (captionError) {
+    try {
+      fetched = await transcribeSourceVideo(env, videoId);
+    } catch (transcriptionError) {
+      const captionMessage =
+        captionError instanceof Error
+          ? captionError.message
+          : "YouTube caption fetch failed";
+      const transcriptionMessage =
+        transcriptionError instanceof Error
+          ? transcriptionError.message
+          : "Retained-source transcription failed";
+      const message =
+        `Caption retrieval failed (${captionMessage}); ` +
+        `retained-source transcription failed (${transcriptionMessage})`;
+      await updateSourceVideoTranscriptContext(env.DB, videoId, {
+        status: "failed",
+        error: message,
+        retryAt: nextTranscriptRetryAt(),
+      });
+      throw new Error(message);
+    }
+  }
+
+  try {
     if (
       typeof fetched.language !== "string" ||
       typeof fetched.automatic !== "boolean" ||
@@ -146,12 +176,6 @@ async function loadYoutubeTranscript(
     }
     return { transcript, cached: false };
   } catch (error) {
-    if (error instanceof TranscriptUnavailableError) {
-      await updateSourceVideoTranscriptContext(env.DB, videoId, {
-        status: "unavailable",
-      });
-      throw error;
-    }
     const message =
       error instanceof Error ? error.message : "Transcript fetch failed";
     await updateSourceVideoTranscriptContext(env.DB, videoId, {
@@ -319,19 +343,11 @@ export async function searchVideoTranscript(
     return emptyTranscriptSearchResult("unsupported", query);
   }
 
-  let loaded: { transcript: StoredTranscript; cached: boolean };
-  try {
-    loaded = await loadYoutubeTranscript(
-      env,
-      videoId,
-      video.source_ref,
-    );
-  } catch (error) {
-    if (error instanceof TranscriptUnavailableError) {
-      return emptyTranscriptSearchResult("unavailable", query);
-    }
-    throw error;
-  }
+  const loaded = await loadYoutubeTranscript(
+    env,
+    videoId,
+    video.source_ref,
+  );
 
   const matches = findTranscriptMatches(loaded.transcript, query, {
     beforeSeconds,

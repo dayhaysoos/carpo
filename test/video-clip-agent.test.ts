@@ -115,6 +115,11 @@ describe("VideoClipAgent context", () => {
     ).toContain(
       "call createclip once for every returned range",
     );
+    expect(
+      VideoClipAgent.prototype.getSystemPrompt.call(agent).toLowerCase(),
+    ).toContain(
+      "even when the current transcript status is failed or unavailable",
+    );
   });
 
   it("automatically retries a failed transcript check after its cooldown", async () => {

@@ -1,4 +1,9 @@
 import { Container } from "@cloudflare/containers";
+import {
+  assembleWordTranscript,
+  type AudioChunkWindow,
+  type WhisperChunkOutput,
+} from "./audio-transcription";
 import type { Env } from "./env";
 import {
   classifyEncoderRunResponse,
@@ -14,7 +19,11 @@ import {
   markSourceVideoRetainedSourceImporting,
   markSourceVideoRetainedSourceReady,
 } from "./db";
-import type { EncoderJobSpec, GifEncoderJobSpec } from "./types";
+import type {
+  EncoderJobSpec,
+  GifEncoderJobSpec,
+  SourceVideoRecord,
+} from "./types";
 import { UPLOAD_KEY_PREFIX } from "./uploads";
 import {
   isYoutubeRetainedSourceKey,
@@ -53,6 +62,18 @@ function stagedSourcePath(jobId: string): string {
 
 function jobOutputUrl(jobId: string, name: string): string {
   return `http://encoder/outputs/${sanitizeJobId(jobId)}/${name}`;
+}
+
+function arrayBufferToBase64(value: ArrayBuffer): string {
+  const bytes = new Uint8Array(value);
+  const parts: string[] = [];
+  const sliceSize = 32_768;
+  for (let offset = 0; offset < bytes.length; offset += sliceSize) {
+    parts.push(
+      String.fromCharCode(...bytes.subarray(offset, offset + sliceSize)),
+    );
+  }
+  return btoa(parts.join(""));
 }
 
 export class EncoderContainer extends Container<Env> {
@@ -140,6 +161,27 @@ export class EncoderContainer extends Container<Env> {
       } catch {
         return Response.json(
           { error: "Invalid video metadata payload" },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (
+      url.pathname === "/__carpo/source-transcript" &&
+      request.method === "POST"
+    ) {
+      try {
+        const body = (await request.json()) as { videoId?: unknown };
+        if (typeof body.videoId !== "string") {
+          return Response.json(
+            { errorMessage: "Video ID is required" },
+            { status: 400 },
+          );
+        }
+        return await this.handleSourceTranscript(body.videoId);
+      } catch {
+        return Response.json(
+          { errorMessage: "Invalid source transcript payload" },
           { status: 400 },
         );
       }
@@ -333,36 +375,18 @@ export class EncoderContainer extends Container<Env> {
         }
 
         if (
-          sourceVideo.retained_source_status === "ready" &&
-          sourceVideo.retained_source_key
+          await this.stageReadyYoutubeSource(sourceVideo, jobId)
         ) {
-          const staged = await this.stageBucketSource(
-            sourceVideo.retained_source_key,
-            jobId,
-          );
-          if (staged.ok) {
-            logPhase("stage-retained-source");
-            job = {
-              ...job,
-              source: { type: "file", path: stagedSourcePath(jobId) },
-            } as RunJobSpec;
-          } else {
-            await markSourceVideoRetainedSourceFailed(
-              this.env.DB,
-              sourceVideo.id,
-              staged.error,
-            );
-          }
+          logPhase("stage-retained-source");
+          job = {
+            ...job,
+            source: { type: "file", path: stagedSourcePath(jobId) },
+          } as RunJobSpec;
         }
 
         if (job.source?.type === "youtube") {
-          const key = youtubeRetainedSourceKey(sourceVideo.id);
-          const marked = await markSourceVideoRetainedSourceImporting(
-            this.env.DB,
-            sourceVideo.id,
-            key,
-          );
-          if (!marked) {
+          const key = await this.beginYoutubeSourceRetention(sourceVideo.id);
+          if (!key) {
             await failClip(this.env, clipId, "Unable to retain video source");
             return Response.json(
               {
@@ -417,19 +441,11 @@ export class EncoderContainer extends Container<Env> {
         if (result.status === "staged" || result.status === "complete") {
           try {
             if (retainedSourceAttempt) {
-              await this.uploadDeferredSource(
+              await this.persistDownloadedYoutubeSource(
+                retainedSourceAttempt.videoId,
                 retainedSourceAttempt.key,
                 jobId,
               );
-              const retained = await markSourceVideoRetainedSourceReady(
-                this.env.DB,
-                retainedSourceAttempt.videoId,
-                retainedSourceAttempt.key,
-              );
-              if (!retained) {
-                await this.env.CLIPS_BUCKET.delete(retainedSourceAttempt.key);
-                throw new Error("Video was deleted during source import");
-              }
               retainedSourceReady = true;
               logPhase("retain-source");
             }
@@ -578,6 +594,258 @@ export class EncoderContainer extends Container<Env> {
       stopKeepalive();
       await this.cleanupJobFiles(jobId);
     }
+  }
+
+  private async handleSourceTranscript(videoId: string): Promise<Response> {
+    const jobId = crypto.randomUUID();
+    await this.incrementQueueDepth();
+    try {
+      return await this.enqueueJob(async () => {
+        const stopKeepalive = this.startJobKeepalive();
+        try {
+          await this.ctx.storage.put("jobStartedAt", Date.now());
+          const video = await getSourceVideoById(this.env.DB, videoId);
+          if (!video) {
+            return Response.json(
+              { errorMessage: "Video not found" },
+              { status: 404 },
+            );
+          }
+
+          const staged = await this.stageVideoForTranscription(video, jobId);
+          if (!staged.ok) {
+            return Response.json(
+              { errorMessage: staged.error },
+              { status: 502 },
+            );
+          }
+
+          const extractionResponse = await super.fetch(
+            new Request(
+              `http://encoder/audio-chunks?job=${encodeURIComponent(jobId)}`,
+              { method: "POST" },
+            ),
+          );
+          if (!extractionResponse.ok) {
+            return Response.json(
+              {
+                errorMessage: await this.readEncoderError(
+                  extractionResponse,
+                  "Audio extraction failed",
+                ),
+              },
+              { status: 502 },
+            );
+          }
+
+          const extraction = (await extractionResponse.json()) as {
+            chunks?: AudioChunkWindow[];
+          };
+          if (!Array.isArray(extraction.chunks) || extraction.chunks.length === 0) {
+            return Response.json(
+              { errorMessage: "Audio extraction returned no chunks" },
+              { status: 502 },
+            );
+          }
+
+          const transcript = await this.transcribeAudioChunks(
+            jobId,
+            extraction.chunks,
+          );
+          return Response.json(transcript);
+        } catch (error) {
+          return Response.json(
+            {
+              errorMessage:
+                error instanceof Error
+                  ? error.message
+                  : "Retained-source transcription failed",
+            },
+            { status: 502 },
+          );
+        } finally {
+          stopKeepalive();
+          await this.ctx.storage.delete("jobStartedAt");
+          await this.cleanupJobFiles(jobId);
+        }
+      });
+    } finally {
+      await this.decrementQueueDepth();
+    }
+  }
+
+  private async stageVideoForTranscription(
+    video: SourceVideoRecord,
+    jobId: string,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (video.source_type === "upload") {
+      return this.stageBucketSource(video.source_ref, jobId);
+    }
+
+    if (await this.stageReadyYoutubeSource(video, jobId)) {
+      return { ok: true };
+    }
+
+    const retainedKey = await this.beginYoutubeSourceRetention(video.id);
+    if (!retainedKey) {
+      return { ok: false, error: "Unable to prepare video source" };
+    }
+
+    try {
+      const downloadResponse = await super.fetch(
+        new Request(
+          `http://encoder/retain-youtube-source?job=${encodeURIComponent(jobId)}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              url: video.source_ref,
+              quality: "1080p",
+            }),
+          },
+        ),
+      );
+      if (!downloadResponse.ok) {
+        throw new Error(
+          await this.readEncoderError(
+            downloadResponse,
+            "YouTube source download failed",
+          ),
+        );
+      }
+
+      await this.persistDownloadedYoutubeSource(
+        video.id,
+        retainedKey,
+        jobId,
+      );
+
+      const staged = await this.stageBucketSource(retainedKey, jobId);
+      if (!staged.ok) {
+        throw new Error(staged.error);
+      }
+      return staged;
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "YouTube source preparation failed";
+      await markSourceVideoRetainedSourceFailed(
+        this.env.DB,
+        video.id,
+        message,
+      );
+      return { ok: false, error: message };
+    }
+  }
+
+  private async stageReadyYoutubeSource(
+    video: SourceVideoRecord,
+    jobId: string,
+  ): Promise<boolean> {
+    if (
+      video.retained_source_status !== "ready" ||
+      !video.retained_source_key
+    ) {
+      return false;
+    }
+    const staged = await this.stageBucketSource(
+      video.retained_source_key,
+      jobId,
+    );
+    if (staged.ok) return true;
+    await markSourceVideoRetainedSourceFailed(
+      this.env.DB,
+      video.id,
+      staged.error,
+    );
+    return false;
+  }
+
+  private async beginYoutubeSourceRetention(
+    videoId: string,
+  ): Promise<string | null> {
+    const key = youtubeRetainedSourceKey(videoId);
+    const marked = await markSourceVideoRetainedSourceImporting(
+      this.env.DB,
+      videoId,
+      key,
+    );
+    return marked ? key : null;
+  }
+
+  private async persistDownloadedYoutubeSource(
+    videoId: string,
+    key: string,
+    jobId: string,
+  ): Promise<void> {
+    await this.uploadDeferredSource(key, jobId);
+    const retained = await markSourceVideoRetainedSourceReady(
+      this.env.DB,
+      videoId,
+      key,
+    );
+    if (!retained) {
+      await this.env.CLIPS_BUCKET.delete(key);
+      throw new Error("Video was deleted during source import");
+    }
+  }
+
+  private async transcribeAudioChunks(
+    jobId: string,
+    chunks: AudioChunkWindow[],
+  ) {
+    const parts: Array<{
+      chunk: AudioChunkWindow;
+      output: WhisperChunkOutput;
+    }> = [];
+
+    for (const chunk of chunks) {
+      if (!/^audio-\d{3}\.mp3$/.test(chunk.name)) {
+        throw new Error("Audio extraction returned an invalid chunk name");
+      }
+      const audioResponse = await super.fetch(
+        new Request(jobOutputUrl(jobId, chunk.name)),
+      );
+      if (!audioResponse.ok) {
+        throw new Error(`Failed to read audio chunk (${audioResponse.status})`);
+      }
+      const audio = arrayBufferToBase64(await audioResponse.arrayBuffer());
+      const output = (await this.env.AI.run(
+        "@cf/openai/whisper-large-v3-turbo",
+        {
+          audio,
+          task: "transcribe",
+          vad_filter: true,
+          condition_on_previous_text: false,
+        },
+      )) as WhisperChunkOutput;
+      parts.push({ chunk, output });
+    }
+
+    return assembleWordTranscript(parts);
+  }
+
+  private async readEncoderError(
+    response: Response,
+    fallback: string,
+  ): Promise<string> {
+    const raw = await response.text();
+    try {
+      const parsed = JSON.parse(raw) as {
+        errorMessage?: unknown;
+        error?: unknown;
+      };
+      if (typeof parsed.errorMessage === "string") {
+        return parsed.errorMessage;
+      }
+      if (typeof parsed.error === "string") {
+        return parsed.error;
+      }
+    } catch {
+      // Preserve useful plain-text encoder errors.
+    }
+    return raw || fallback;
   }
 
   private async handleGifRun(job: RunJobSpec): Promise<Response> {

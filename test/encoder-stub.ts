@@ -289,6 +289,54 @@ export class EncoderStub extends DurableObject<Env> {
       );
     }
 
+    if (url.pathname === "/__carpo/source-transcript") {
+      const body = (await request.json()) as { videoId?: string };
+      const video = body.videoId
+        ? await getSourceVideoById(this.env.DB, body.videoId)
+        : null;
+      if (!video) {
+        return Response.json(
+          { errorMessage: "Video source not found" },
+          { status: 404 },
+        );
+      }
+      if (
+        video.source_type === "youtube" &&
+        video.retained_source_status !== "ready"
+      ) {
+        const key = youtubeRetainedSourceKey(video.id);
+        await markSourceVideoRetainedSourceImporting(
+          this.env.DB,
+          video.id,
+          key,
+        );
+        await this.env.CLIPS_BUCKET.put(key, FAKE_MP4, {
+          httpMetadata: { contentType: "video/mp4" },
+        });
+        await markSourceVideoRetainedSourceReady(
+          this.env.DB,
+          video.id,
+          key,
+        );
+      }
+      return Response.json({
+        language: "en",
+        automatic: true,
+        cues: [
+          {
+            startSeconds: 4,
+            endSeconds: 4.4,
+            text: "cuss",
+          },
+          {
+            startSeconds: 12,
+            endSeconds: 12.4,
+            text: "cuss",
+          },
+        ],
+      });
+    }
+
     if (url.pathname === "/__carpo/stored-video-metadata") {
       return Response.json({ durationSeconds: 42 });
     }

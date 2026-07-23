@@ -2618,37 +2618,65 @@ describe("source video library", () => {
     });
   });
 
-  it("returns an empty unavailable result when YouTube has no captions", async () => {
+  it("prepares and searches a retained-source transcript when captions are unavailable", async () => {
     const videoId = crypto.randomUUID();
     await env.DB.prepare(
-      `INSERT INTO source_videos (id, source_type, source_ref, title)
-       VALUES (?, 'youtube', ?, ?)`,
+      `INSERT INTO source_videos (
+         id,
+         source_type,
+         source_ref,
+         title,
+         transcript_status,
+         transcript_check_error
+       ) VALUES (?, 'youtube', ?, ?, 'failed', ?)`,
     )
       .bind(
         videoId,
         "https://www.youtube.com/watch?v=transcript-none",
         "No transcript video",
+        "YouTube caption check lost its TLS connection",
       )
       .run();
 
-    const response = await workerFetch(
-      `http://example.com/api/videos/${videoId}/transcript/search`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: "code" }),
-      },
-    );
+    const search = () =>
+      workerFetch(
+        `http://example.com/api/videos/${videoId}/transcript/search`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query: "cuss",
+            beforeSeconds: 1,
+            afterSeconds: 2,
+          }),
+        },
+      );
 
+    const response = await search();
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
-      transcriptStatus: "unavailable",
-      query: "code",
-      language: null,
-      automatic: null,
+      transcriptStatus: "available",
+      query: "cuss",
+      language: "en",
+      automatic: true,
       cached: false,
-      matches: [],
-      totalMatches: 0,
+      matches: [
+        {
+          startSeconds: 3,
+          endSeconds: 6.4,
+          spokenStartSeconds: 4,
+          spokenEndSeconds: 4.4,
+          text: "cuss",
+        },
+        {
+          startSeconds: 11,
+          endSeconds: 14.4,
+          spokenStartSeconds: 12,
+          spokenEndSeconds: 12.4,
+          text: "cuss",
+        },
+      ],
+      totalMatches: 2,
       truncated: false,
     });
 
@@ -2657,9 +2685,18 @@ describe("source video library", () => {
     );
     expect(await detailResponse.json()).toMatchObject({
       video: {
-        transcriptStatus: "unavailable",
+        transcriptStatus: "available",
         transcriptCheckError: null,
+        retainedSourceReady: true,
       },
+    });
+
+    const cachedResponse = await search();
+    expect(cachedResponse.status).toBe(200);
+    expect(await cachedResponse.json()).toMatchObject({
+      transcriptStatus: "available",
+      cached: true,
+      totalMatches: 2,
     });
   });
 

@@ -92,6 +92,8 @@ YOUTUBE_FORCE_KEYFRAMES_FFMPEG_PRESET = "veryfast"
 ENCODE_DURATION_TOLERANCE_SECONDS = 0.5
 # Probe rounding slack only; anything meaningfully shorter must re-encode.
 STREAM_COPY_SHORT_SOURCE_EPSILON_SECONDS = 0.05
+AUDIO_CHUNK_SECONDS = 300.0
+AUDIO_CHUNK_OVERLAP_SECONDS = 2.0
 
 
 def resolve_quality(value: Any) -> str:
@@ -141,6 +143,41 @@ def staged_source_path(job_id: str) -> Path:
 
 def job_output_dir(job_id: str) -> Path:
     return OUTPUTS_BASE_DIR / sanitize_job_id(job_id)
+
+
+def audio_chunk_windows(duration_seconds: float) -> list[dict[str, float | str]]:
+    if duration_seconds <= 0:
+        raise ValueError("Audio duration must be positive")
+
+    step_seconds = AUDIO_CHUNK_SECONDS - AUDIO_CHUNK_OVERLAP_SECONDS
+    overlap_side_seconds = AUDIO_CHUNK_OVERLAP_SECONDS / 2
+    windows: list[dict[str, float | str]] = []
+    start_seconds = 0.0
+    index = 0
+    while start_seconds < duration_seconds:
+        chunk_duration = min(
+            AUDIO_CHUNK_SECONDS,
+            duration_seconds - start_seconds,
+        )
+        is_last = start_seconds + chunk_duration >= duration_seconds
+        windows.append(
+            {
+                "name": f"audio-{index:03d}.mp3",
+                "startSeconds": start_seconds,
+                "durationSeconds": chunk_duration,
+                "keepStartSeconds": (
+                    0.0 if index == 0 else overlap_side_seconds
+                ),
+                "keepEndSeconds": (
+                    chunk_duration
+                    if is_last
+                    else chunk_duration - overlap_side_seconds
+                ),
+            },
+        )
+        start_seconds += step_seconds
+        index += 1
+    return windows
 
 
 def parse_job_id_from_query(path: str) -> str | None:
@@ -720,6 +757,50 @@ def probe_media_duration(path: Path) -> float | None:
     """Return container duration from ffprobe when present."""
     value = probe_media_stream_value(path, "format=duration")
     return float(value) if isinstance(value, (float, int)) else None
+
+
+def extract_audio_chunks(
+    source_path: Path,
+    job_id: str,
+) -> list[dict[str, float | str]]:
+    duration = probe_media_duration(source_path)
+    if duration is None or duration <= 0:
+        raise RuntimeError("Unable to determine source duration for transcription")
+
+    output_dir = job_output_dir(job_id)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for stale in output_dir.glob("audio-*.mp3"):
+        stale.unlink(missing_ok=True)
+
+    windows = audio_chunk_windows(duration)
+    for window in windows:
+        output_path = output_dir / str(window["name"])
+        run_command(
+            [
+                "ffmpeg",
+                "-y",
+                "-ss",
+                str(window["startSeconds"]),
+                "-i",
+                str(source_path),
+                "-t",
+                str(window["durationSeconds"]),
+                "-vn",
+                "-ac",
+                "1",
+                "-ar",
+                "16000",
+                "-c:a",
+                "libmp3lame",
+                "-b:a",
+                "48k",
+                str(output_path),
+            ],
+            timeout_seconds=ENCODE_TIMEOUT_SECONDS,
+        )
+        if not output_path.exists() or output_path.stat().st_size == 0:
+            raise RuntimeError("Audio extraction produced an empty chunk")
+    return windows
 
 
 def probe_media_height(path: Path) -> int | None:
@@ -2069,6 +2150,8 @@ class EncoderHandler(BaseHTTPRequestHandler):
                     "clip.gif": "image/gif",
                     "source.mp4": "video/mp4",
                 }
+                if re.fullmatch(r"audio-\d{3}\.mp3", name):
+                    content_types[name] = "audio/mpeg"
                 if name in content_types:
                     try:
                         safe_id = sanitize_job_id(job_id)
@@ -2163,6 +2246,59 @@ class EncoderHandler(BaseHTTPRequestHandler):
                         "status": "failed",
                         "errorMessage": str(exc)
                         or "Transcript fetch failed",
+                    },
+                )
+            return
+
+        if self.path.startswith("/retain-youtube-source"):
+            try:
+                job_id = parse_job_id_from_query(self.path)
+                if not job_id:
+                    raise ValueError("job query parameter required")
+                body = self._read_json()
+                url = body.get("url")
+                if not isinstance(url, str) or not url.strip():
+                    raise ValueError("YouTube URL is required")
+                prepare_job_workspace(job_id)
+                output_dir = job_output_dir(job_id)
+                output_dir.mkdir(parents=True, exist_ok=True)
+                source_path = download_youtube_full(
+                    url.strip(),
+                    output_dir,
+                    quality=resolve_quality(body.get("quality")),
+                )
+                expected_path = output_dir / "source.mp4"
+                if source_path != expected_path:
+                    shutil.move(source_path, expected_path)
+                self._send_json(200, {"status": "ready"})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(
+                    502,
+                    {
+                        "status": "failed",
+                        "errorMessage": str(exc)
+                        or "YouTube source download failed",
+                    },
+                )
+            return
+
+        if self.path.startswith("/audio-chunks"):
+            try:
+                job_id = parse_job_id_from_query(self.path)
+                if not job_id:
+                    raise ValueError("job query parameter required")
+                chunks = extract_audio_chunks(
+                    staged_source_path(job_id),
+                    job_id,
+                )
+                self._send_json(200, {"chunks": chunks})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(
+                    502,
+                    {
+                        "status": "failed",
+                        "errorMessage": str(exc)
+                        or "Audio extraction failed",
                     },
                 )
             return
