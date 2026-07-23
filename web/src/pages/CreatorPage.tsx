@@ -51,7 +51,6 @@ export function CreatorPage() {
       {videoId ? (
         <VideoAgentChat
           videoId={videoId}
-          sourceTitle={sourceVideoData?.video.title}
           source={sourceVideoData?.video.source}
           onClipCreated={handleClipCreated}
           onTimestampSelect={handleTimestampSelect}

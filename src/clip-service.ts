@@ -1,4 +1,5 @@
 import {
+  getClipById,
   getSourceVideoById,
   insertClip,
   markClipHelperPending,
@@ -10,8 +11,8 @@ import {
 } from "./helper";
 import { dispatchEncodingJob } from "./jobs";
 import { recordToResponse } from "./serialize";
-import { normalizeClipSource } from "./source-videos";
-import type { ClipResponse, CreateClipRequest } from "./types";
+import { normalizeClipSource, sourceReference } from "./source-videos";
+import type { ClipRecord, ClipResponse, CreateClipRequest } from "./types";
 import { validateCreateClipRequest } from "./validation";
 
 export interface ClipCreationFailure {
@@ -34,6 +35,7 @@ interface CreateClipForVideoOptions {
   env: Env;
   origin: string;
   waitUntil: (promise: Promise<unknown>) => void;
+  idempotencyKey?: string;
 }
 
 interface EnqueueClipOptions {
@@ -42,6 +44,7 @@ interface EnqueueClipOptions {
   origin: string;
   waitUntil: (promise: Promise<unknown>) => void;
   videoId?: string;
+  clipId?: string;
 }
 
 export async function enqueueClip({
@@ -50,8 +53,8 @@ export async function enqueueClip({
   origin,
   waitUntil,
   videoId,
+  clipId = crypto.randomUUID(),
 }: EnqueueClipOptions): Promise<ClipResponse> {
-  const clipId = crypto.randomUUID();
   const record = await insertClip(env.DB, clipId, clipRequest, {
     videoId,
   });
@@ -89,6 +92,7 @@ export async function createClipForVideo({
   env,
   origin,
   waitUntil,
+  idempotencyKey,
 }: CreateClipForVideoOptions): Promise<ClipCreationResult> {
   const video = await getSourceVideoById(env.DB, videoId);
   if (!video) {
@@ -137,15 +141,102 @@ export async function createClipForVideo({
     ...validation.value,
     source: normalizeClipSource(validation.value.source),
   };
+  if (idempotencyKey && idempotencyKey.length > 200) {
+    return {
+      ok: false,
+      status: 400,
+      error: "Invalid idempotency key",
+    };
+  }
+  const clipId = idempotencyKey
+    ? await idempotentClipId(videoId, idempotencyKey)
+    : undefined;
+  if (clipId) {
+    const existing = await getClipById(env.DB, clipId);
+    if (existing) {
+      return idempotentClipResult(existing, clipRequest, videoId, env);
+    }
+  }
 
+  try {
+    return {
+      ok: true,
+      clip: await enqueueClip({
+        clipRequest,
+        env,
+        origin,
+        waitUntil,
+        videoId,
+        clipId,
+      }),
+    };
+  } catch (error) {
+    if (clipId && isClipIdConflict(error)) {
+      const existing = await getClipById(env.DB, clipId);
+      if (existing) {
+        return idempotentClipResult(existing, clipRequest, videoId, env);
+      }
+    }
+    throw error;
+  }
+}
+
+function idempotentClipResult(
+  existing: ClipRecord,
+  request: CreateClipRequest,
+  videoId: string,
+  env: Env,
+): ClipCreationResult {
+  const matches =
+    existing.video_id === videoId &&
+    existing.title === request.title &&
+    existing.source_type === request.source.type &&
+    existing.source_ref === sourceReference(request.source) &&
+    existing.trim_start === request.trimStart &&
+    existing.trim_end === request.trimEnd &&
+    existing.quality === (request.quality ?? "1080p") &&
+    existing.filters_json === JSON.stringify(request.filters ?? []);
+  if (!matches) {
+    return {
+      ok: false,
+      status: 409,
+      error: "Idempotency key was already used for a different clip request",
+    };
+  }
   return {
     ok: true,
-    clip: await enqueueClip({
-      clipRequest,
-      env,
-      origin,
-      waitUntil,
-      videoId,
-    }),
+    clip: recordToResponse(existing, env.R2_PUBLIC_PREFIX),
   };
+}
+
+function isClipIdConflict(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message.includes("UNIQUE constraint failed: clips.id")
+  );
+}
+
+async function idempotentClipId(
+  videoId: string,
+  idempotencyKey: string,
+): Promise<string> {
+  const digest = new Uint8Array(
+    await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(`${videoId}\0${idempotencyKey}`),
+    ),
+  );
+  const bytes = digest.slice(0, 16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20),
+  ].join("-");
 }

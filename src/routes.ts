@@ -264,6 +264,7 @@ async function handleCreateClipForVideo(
     env,
     origin: new URL(request.url).origin,
     waitUntil: (promise) => ctx.waitUntil(promise),
+    idempotencyKey: request.headers.get("Idempotency-Key")?.trim() || undefined,
   });
   return result.ok
     ? json(result.clip, 201)

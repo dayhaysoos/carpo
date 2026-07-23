@@ -1,7 +1,6 @@
-import { Think, action } from "@cloudflare/think";
+import { Think } from "@cloudflare/think";
 import { tool } from "ai";
 import { z } from "zod";
-import { createClipForVideo } from "./clip-service";
 import { getSourceVideoById } from "./db";
 import type { Env } from "./env";
 import { MAX_CAPTION_LENGTH, MAX_CLIP_LENGTH_SECONDS } from "./types";
@@ -44,7 +43,7 @@ export class VideoClipAgent extends Think<Env> {
       "You are Carpo's clip assistant. This conversation is scoped to exactly one existing video.",
       "Only help with manual timestamp clipping in this version. Do not claim you can transcribe, search speech, understand scenes, or inspect the video's contents.",
       "Convert timestamps such as 1:20, 01:20.500, or 'one minute twenty seconds' into numeric seconds.",
-      "When the user gives a start and end time, call createClip with the exact range. The action will show a preview and require the user to approve it before anything is created.",
+      "When the user gives a start and end time, call createClip with the exact range. The interface will show a preview and let the user adjust the range before anything is created.",
       "Use 1080p unless the user asks for 720p. Add a caption only when requested. If no title is supplied, make a concise title from the video title and timestamp range.",
       "If either timestamp is missing or ambiguous, ask one short clarifying question. Never invent a missing timestamp.",
       "After createClip succeeds, say that the clip was queued. If the user rejects it, acknowledge that nothing was created.",
@@ -76,49 +75,10 @@ export class VideoClipAgent extends Think<Env> {
           };
         },
       }),
-    };
-  }
-
-  override getActions() {
-    return {
-      createClip: action({
+      createClip: tool({
         description:
-          "Preview and, only after explicit user approval, create one clip from the current video.",
+          "Propose one clip from the current video for the user to preview, adjust, and explicitly approve.",
         inputSchema: manualClipInput,
-        approval: true,
-        approvalSummary: "Create this clip",
-        approvalRisk: "low",
-        execute: async (input) => {
-          const result = await createClipForVideo({
-            videoId: this.name,
-            input: {
-              title: input.title,
-              trimStart: input.startSeconds,
-              trimEnd: input.endSeconds,
-              quality: input.quality,
-              filters: input.caption
-                ? [{ type: "caption" as const, text: input.caption }]
-                : [],
-            },
-            env: this.env,
-            origin: this.env.WORKER_BASE_URL || "http://localhost:8787",
-            waitUntil: (promise) => this.ctx.waitUntil(promise),
-          });
-          if (!result.ok) {
-            const details = result.details
-              ?.map((detail) => detail.message)
-              .join("; ");
-            throw new Error(details || result.error);
-          }
-          return {
-            clipId: result.clip.id,
-            title: result.clip.title,
-            startSeconds: result.clip.trimStart,
-            endSeconds: result.clip.trimEnd,
-            quality: result.clip.quality,
-            status: result.clip.status,
-          };
-        },
       }),
     };
   }

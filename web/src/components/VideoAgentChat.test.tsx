@@ -1,4 +1,10 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,7 +12,11 @@ import { VideoAgentChat } from "./VideoAgentChat";
 
 const chat = vi.hoisted(() => ({
   addToolApprovalResponse: vi.fn(),
+  addToolOutput: vi.fn(),
   messages: [] as Array<Record<string, unknown>>,
+}));
+const api = vi.hoisted(() => ({
+  createClipFromSourceVideo: vi.fn(),
 }));
 const player = vi.hoisted(() => ({
   pauseVideo: vi.fn(),
@@ -25,16 +35,26 @@ vi.mock("@cloudflare/think/react", () => ({
     messages: chat.messages,
     sendMessage: vi.fn(),
     addToolApprovalResponse: chat.addToolApprovalResponse,
+    addToolOutput: chat.addToolOutput,
     status: "ready",
     error: undefined,
   }),
 }));
+
+vi.mock("../api", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../api")>();
+  return {
+    ...original,
+    createClipFromSourceVideo: api.createClipFromSourceVideo,
+  };
+});
 
 vi.mock("../hooks/useYoutubePlayer", () => ({
   useYoutubePlayer: () => ({
     containerId: "youtube-review-player",
     ready: true,
     currentTime: 0,
+    duration: 1451,
     seekTo: player.seekTo,
     pauseVideo: player.pauseVideo,
   }),
@@ -60,8 +80,35 @@ function proposal(
   };
 }
 
+function clientProposal(
+  toolCallId: string,
+  title: string,
+  startSeconds: number,
+  endSeconds: number,
+) {
+  return {
+    type: "tool-createClip",
+    toolCallId,
+    state: "input-available",
+    input: {
+      title,
+      startSeconds,
+      endSeconds,
+      quality: "1080p",
+    },
+  };
+}
+
 describe("VideoAgentChat", () => {
   beforeEach(() => {
+    api.createClipFromSourceVideo.mockResolvedValue({
+      id: "created-clip",
+      title: "Manual range",
+      trimStart: 60,
+      trimEnd: 64,
+      quality: "1080p",
+      status: "queued",
+    });
     chat.messages = [
       {
         id: "assistant-1",
@@ -97,7 +144,6 @@ describe("VideoAgentChat", () => {
     render(
       <VideoAgentChat
         videoId="video-1"
-        sourceTitle="Stop Reading Every Line of Code"
         onClipCreated={vi.fn()}
         onTimestampSelect={vi.fn()}
         source={{
@@ -109,24 +155,21 @@ describe("VideoAgentChat", () => {
 
     expect(screen.getByRole("heading", { name: "Review clips" })).toBeTruthy();
     expect(screen.getByText("1 of 3")).toBeTruthy();
-    expect(
-      screen.getByText("From Stop Reading Every Line of Code"),
-    ).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Opening clip" })).toBeTruthy();
-    expect(screen.getByText("0:03.000–0:06.000")).toBeTruthy();
+    expect(screen.queryByText("From Stop Reading Every Line of Code")).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Opening clip" })).toBeNull();
+    expect(screen.queryByText("0:03.000–0:06.000")).toBeNull();
+    expect(screen.getByText("3 seconds")).toBeTruthy();
+    expect(screen.getByText("1080p")).toBeTruthy();
     expect(screen.getByLabelText("Preview Opening clip")).toBeTruthy();
-    expect(
-      screen
-        .getByRole("heading", { name: "Opening clip" })
-        .closest(".clip-review-details")
-        ?.getAttribute("aria-live"),
-    ).toBe("polite");
     await waitFor(() => expect(player.seekTo).toHaveBeenCalledWith(3));
     expect(chat.addToolApprovalResponse).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: "Next clip" }));
     expect(screen.getByText("2 of 3")).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "Middle clip" })).toBeTruthy();
+    expect(screen.getByLabelText("Preview Middle clip")).toBeTruthy();
+    expect(
+      document.querySelector(".clip-review-step-forward"),
+    ).toBeTruthy();
     await waitFor(() => expect(player.seekTo).toHaveBeenCalledWith(30));
     expect(chat.addToolApprovalResponse).not.toHaveBeenCalled();
 
@@ -168,7 +211,8 @@ describe("VideoAgentChat", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Approve and next" }));
-    expect(screen.getByRole("heading", { name: "Second clip" })).toBeTruthy();
+    expect(screen.getByLabelText("Preview Second clip")).toBeTruthy();
+    expect(document.querySelector(".clip-review-step-forward")).toBeTruthy();
     expect(chat.addToolApprovalResponse).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: "Reject clip" }));
@@ -180,10 +224,26 @@ describe("VideoAgentChat", () => {
     await user.click(
       screen.getByRole("button", { name: "Create 1 approved clip" }),
     );
-    expect(chat.addToolApprovalResponse.mock.calls).toEqual([
-      [{ id: "approval-first", approved: true }],
-      [{ id: "approval-second", approved: false }],
-    ]);
+    await waitFor(() =>
+      expect(api.createClipFromSourceVideo).toHaveBeenCalledWith(
+        "video-1",
+        {
+          title: "First clip",
+          trimStart: 0,
+          trimEnd: 3,
+          quality: "1080p",
+          filters: [],
+        },
+        "tool-approval-first",
+      ),
+    );
+    expect(chat.addToolApprovalResponse).toHaveBeenCalledWith({
+      id: "approval-second",
+      approved: false,
+    });
+    expect(chat.addToolOutput).toHaveBeenCalledWith(
+      expect.objectContaining({ toolCallId: "tool-approval-first" }),
+    );
     expect(
       screen.queryByRole("heading", { name: "Review clips" }),
     ).toBeNull();
@@ -220,10 +280,12 @@ describe("VideoAgentChat", () => {
 
     await user.click(screen.getByRole("button", { name: "Approve all" }));
 
-    expect(chat.addToolApprovalResponse.mock.calls).toEqual([
-      [{ id: "approval-first", approved: true }],
-      [{ id: "approval-second", approved: true }],
-    ]);
+    await waitFor(() =>
+      expect(api.createClipFromSourceVideo).toHaveBeenCalledTimes(2),
+    );
+    expect(chat.addToolOutput.mock.calls.map(([result]) => result.toolCallId))
+      .toEqual(["tool-approval-first", "tool-approval-second"]);
+    expect(chat.addToolApprovalResponse).not.toHaveBeenCalled();
     expect(
       screen.queryByRole("heading", { name: "Review clips" }),
     ).toBeNull();
@@ -291,7 +353,7 @@ describe("VideoAgentChat", () => {
     );
 
     await waitFor(() => expect(player.seekTo).toHaveBeenCalledWith(10.75));
-    expect(screen.getByText("0:10.750–0:13.100")).toBeTruthy();
+    expect(screen.getByText("2.35 seconds")).toBeTruthy();
   });
 
   it("previews uploaded sources at the proposed range", () => {
@@ -349,26 +411,119 @@ describe("VideoAgentChat", () => {
       endSeconds: 633,
     });
 
-    await user.click(screen.getByRole("button", { name: "Use 30 second clips" }));
-    expect(onTimestampSelect).toHaveBeenLastCalledWith({
-      label: "10:23 → 10:53",
-      startSeconds: 623,
-      endSeconds: 653,
-    });
-
     const timestamp = screen.getByRole("button", {
-      name: "Set editor to 10:23 through 10:53",
+      name: "Set editor to 10:23 through 10:33",
     });
 
     expect(timestamp.closest(".agent-composer-input")).toBeTruthy();
+    expect(screen.queryByText("Clip length")).toBeNull();
     expect(screen.queryByText("Move editor")).toBeNull();
     onTimestampSelect.mockClear();
     await user.click(timestamp);
 
     expect(onTimestampSelect).toHaveBeenCalledWith({
-      label: "10:23 → 10:53",
+      label: "10:23 → 10:33",
       startSeconds: 623,
-      endSeconds: 653,
+      endSeconds: 633,
     });
+  });
+
+  it("creates a client-side proposal with the timestamps edited in review", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    chat.messages = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [clientProposal("tool-editable", "Editable clip", 10, 13)],
+      },
+    ];
+
+    render(
+      <VideoAgentChat
+        videoId="video-1"
+        onClipCreated={vi.fn()}
+        onTimestampSelect={vi.fn()}
+        source={{
+          type: "youtube",
+          url: "https://www.youtube.com/watch?v=434cG4g5KLE",
+        }}
+      />,
+    );
+
+    fireEvent.change(screen.getByRole("slider", { name: "Trim start" }), {
+      target: { value: "11.5" },
+    });
+    fireEvent.change(screen.getByRole("slider", { name: "Trim end" }), {
+      target: { value: "15" },
+    });
+    await user.click(screen.getByRole("button", { name: "Approve clip" }));
+    await user.click(
+      screen.getByRole("button", { name: "Create 1 approved clip" }),
+    );
+
+    await waitFor(() =>
+      expect(api.createClipFromSourceVideo).toHaveBeenCalledWith(
+        "video-1",
+        {
+          title: "Editable clip",
+          trimStart: 11.5,
+          trimEnd: 15,
+          quality: "1080p",
+          filters: [],
+        },
+        "tool-editable",
+      ),
+    );
+    expect(chat.addToolOutput).toHaveBeenCalledWith({
+      toolCallId: "tool-editable",
+      output: {
+        clipId: "created-clip",
+        title: "Manual range",
+        startSeconds: 60,
+        endSeconds: 64,
+        quality: "1080p",
+        status: "queued",
+      },
+    });
+    expect(chat.addToolApprovalResponse).not.toHaveBeenCalled();
+  });
+
+  it("resolves a rejected client proposal without treating it as a failure", async () => {
+    const user = userEvent.setup();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    chat.messages = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [clientProposal("tool-rejected", "Skip this clip", 20, 23)],
+      },
+    ];
+
+    render(
+      <VideoAgentChat
+        videoId="video-1"
+        onClipCreated={vi.fn()}
+        onTimestampSelect={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Reject clip" }));
+    await user.click(screen.getByRole("button", { name: "Finish review" }));
+
+    expect(chat.addToolOutput).toHaveBeenCalledWith({
+      toolCallId: "tool-rejected",
+      output: {
+        status: "rejected",
+        reason: "User rejected this proposed clip.",
+      },
+    });
+    expect(api.createClipFromSourceVideo).not.toHaveBeenCalled();
   });
 });

@@ -1,7 +1,18 @@
-import { useEffect } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import { sourceVideoUploadUrl } from "../api";
 import { useYoutubePlayer } from "../hooks/useYoutubePlayer";
-import type { ClipQuality, ClipSource } from "../types";
+import {
+  MAX_CLIP_LENGTH_SECONDS,
+  MIN_TRIM_GAP_SECONDS,
+  type ClipQuality,
+  type ClipSource,
+} from "../types";
 import { extractYoutubeVideoId, formatTimestamp } from "../youtube";
 import { ModalDialog } from "./ModalDialog";
 
@@ -15,17 +26,22 @@ export interface ManualClipInput {
 
 export interface PendingClipApproval {
   approvalId: string;
+  toolCallId: string;
+  resolution: "approval" | "client";
   input: ManualClipInput;
 }
 
 interface ClipReviewModalProps {
   videoId: string;
-  sourceTitle?: string;
   source?: ClipSource;
   approvals: PendingClipApproval[];
   activeIndex: number;
   decisions: Readonly<Record<string, boolean>>;
+  inputs: Readonly<Record<string, ManualClipInput>>;
+  submitting: boolean;
+  submitError: string | null;
   onActiveIndexChange: (index: number) => void;
+  onInputChange: (approvalId: string, input: ManualClipInput) => void;
   onDecision: (approvalId: string, approved: boolean) => void;
   onSubmit: () => void;
   onApproveAll: () => void;
@@ -41,13 +57,16 @@ function formatDuration(seconds: number): string {
 function YouTubeClipPreview({
   youtubeId,
   input,
+  onDurationChange,
 }: {
   youtubeId: string;
   input: ManualClipInput;
+  onDurationChange: (duration: number) => void;
 }) {
   const {
     containerId,
     ready,
+    duration,
     currentTime,
     seekTo,
     pauseVideo,
@@ -58,8 +77,22 @@ function YouTubeClipPreview({
   }, [input.startSeconds, ready, seekTo]);
 
   useEffect(() => {
-    if (ready && currentTime >= input.endSeconds) pauseVideo();
-  }, [currentTime, input.endSeconds, pauseVideo, ready]);
+    if (ready && currentTime >= input.endSeconds) {
+      pauseVideo();
+      seekTo(input.startSeconds);
+    }
+  }, [
+    currentTime,
+    input.endSeconds,
+    input.startSeconds,
+    pauseVideo,
+    ready,
+    seekTo,
+  ]);
+
+  useEffect(() => {
+    if (duration > 0) onDurationChange(duration);
+  }, [duration, onDurationChange]);
 
   return (
     <div
@@ -75,10 +108,12 @@ function ClipSourcePreview({
   videoId,
   source,
   input,
+  onDurationChange,
 }: {
   videoId: string;
   source?: ClipSource;
   input: ManualClipInput;
+  onDurationChange: (duration: number) => void;
 }) {
   if (!source) {
     return (
@@ -102,40 +137,176 @@ function ClipSourcePreview({
         key={youtubeId}
         youtubeId={youtubeId}
         input={input}
+        onDurationChange={onDurationChange}
       />
     );
   }
 
   return (
+    <UploadClipPreview
+      videoId={videoId}
+      input={input}
+      onDurationChange={onDurationChange}
+    />
+  );
+}
+
+function UploadClipPreview({
+  videoId,
+  input,
+  onDurationChange,
+}: {
+  videoId: string;
+  input: ManualClipInput;
+  onDurationChange: (duration: number) => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (video && Math.abs(video.currentTime - input.startSeconds) > 0.05) {
+      video.currentTime = input.startSeconds;
+    }
+  }, [input.startSeconds]);
+
+  return (
     <video
-      key={`${videoId}-${input.startSeconds}-${input.endSeconds}`}
+      ref={videoRef}
       className="clip-review-player"
       src={`${sourceVideoUploadUrl(videoId)}#t=${input.startSeconds},${input.endSeconds}`}
       title={`Preview ${input.title}`}
       controls
       preload="metadata"
+      onLoadedMetadata={(event) => {
+        const video = event.currentTarget;
+        if (Number.isFinite(video.duration)) onDurationChange(video.duration);
+        video.currentTime = input.startSeconds;
+      }}
+      onTimeUpdate={(event) => {
+        if (event.currentTarget.currentTime >= input.endSeconds) {
+          event.currentTarget.pause();
+          event.currentTarget.currentTime = input.startSeconds;
+        }
+      }}
     />
+  );
+}
+
+function ClipRangeEditor({
+  approvalId,
+  originalInput,
+  input,
+  sourceDuration,
+  onChange,
+}: {
+  approvalId: string;
+  originalInput: ManualClipInput;
+  input: ManualClipInput;
+  sourceDuration: number;
+  onChange: (input: ManualClipInput) => void;
+}) {
+  const window = useMemo(() => {
+    const padding = 30;
+    const min = Math.max(0, originalInput.startSeconds - padding);
+    const unclampedMax = originalInput.endSeconds + padding;
+    const max =
+      sourceDuration > 0
+        ? Math.min(sourceDuration, unclampedMax)
+        : unclampedMax;
+    return { min, max: Math.max(max, originalInput.endSeconds) };
+  }, [
+    approvalId,
+    originalInput.endSeconds,
+    originalInput.startSeconds,
+    sourceDuration,
+  ]);
+  const span = Math.max(MIN_TRIM_GAP_SECONDS, window.max - window.min);
+  const startPercent = ((input.startSeconds - window.min) / span) * 100;
+  const endPercent = ((input.endSeconds - window.min) / span) * 100;
+  const trackStyle = {
+    "--clip-range-start": `${Math.max(0, Math.min(100, startPercent))}%`,
+    "--clip-range-end": `${Math.max(0, Math.min(100, endPercent))}%`,
+  } as CSSProperties;
+
+  const changeStart = (nextValue: number) => {
+    const nextStart = Math.max(
+      window.min,
+      input.endSeconds - MAX_CLIP_LENGTH_SECONDS,
+      Math.min(nextValue, input.endSeconds - MIN_TRIM_GAP_SECONDS),
+    );
+    onChange({ ...input, startSeconds: nextStart });
+  };
+  const changeEnd = (nextValue: number) => {
+    const nextEnd = Math.min(
+      window.max,
+      input.startSeconds + MAX_CLIP_LENGTH_SECONDS,
+      Math.max(nextValue, input.startSeconds + MIN_TRIM_GAP_SECONDS),
+    );
+    onChange({ ...input, endSeconds: nextEnd });
+  };
+
+  return (
+    <div className="clip-range-editor">
+      <div className="clip-range-values">
+        <span>
+          Start <strong>{formatTimestamp(input.startSeconds)}</strong>
+        </span>
+        <span>
+          End <strong>{formatTimestamp(input.endSeconds)}</strong>
+        </span>
+      </div>
+      <div className="clip-range-track" style={trackStyle}>
+        <input
+          type="range"
+          aria-label="Trim start"
+          aria-valuetext={formatTimestamp(input.startSeconds)}
+          min={window.min}
+          max={window.max}
+          step={0.1}
+          value={input.startSeconds}
+          onChange={(event) => changeStart(event.currentTarget.valueAsNumber)}
+        />
+        <input
+          type="range"
+          aria-label="Trim end"
+          aria-valuetext={formatTimestamp(input.endSeconds)}
+          min={window.min}
+          max={window.max}
+          step={0.1}
+          value={input.endSeconds}
+          onChange={(event) => changeEnd(event.currentTarget.valueAsNumber)}
+        />
+      </div>
+      <p>Fine-tune this clip before approving it.</p>
+    </div>
   );
 }
 
 export function ClipReviewModal({
   videoId,
-  sourceTitle,
   source,
   approvals,
   activeIndex,
   decisions,
+  inputs,
+  submitting,
+  submitError,
   onActiveIndexChange,
+  onInputChange,
   onDecision,
   onSubmit,
   onApproveAll,
   onRejectAll,
   onDismiss,
 }: ClipReviewModalProps) {
+  const [sourceDuration, setSourceDuration] = useState(0);
+  const [transitionDirection, setTransitionDirection] = useState<
+    "forward" | "backward" | null
+  >(null);
   const approval = approvals[activeIndex];
   if (!approval) return null;
 
-  const input = approval.input;
+  const input = inputs[approval.approvalId] ?? approval.input;
   const duration = Math.max(0, input.endSeconds - input.startSeconds);
   const reviewedCount = approvals.filter((item) =>
     Object.hasOwn(decisions, item.approvalId),
@@ -151,8 +322,13 @@ export function ClipReviewModal({
   const decide = (approved: boolean) => {
     onDecision(approval.approvalId, approved);
     if (activeIndex < approvals.length - 1) {
+      setTransitionDirection("forward");
       onActiveIndexChange(activeIndex + 1);
     }
+  };
+  const moveTo = (index: number) => {
+    setTransitionDirection(index > activeIndex ? "forward" : "backward");
+    onActiveIndexChange(index);
   };
 
   return (
@@ -164,13 +340,8 @@ export function ClipReviewModal({
       <header className="modal-header clip-review-header">
         <div>
           <h2 id="clip-review-title">Review clips</h2>
-          <p>
+          <p aria-live="polite">
             <strong>{activeIndex + 1} of {approvals.length}</strong>
-            <span>
-              {sourceTitle
-                ? `From ${sourceTitle}`
-                : "Preview each proposed range before creating anything."}
-            </span>
           </p>
         </div>
         <button
@@ -183,43 +354,62 @@ export function ClipReviewModal({
         </button>
       </header>
 
-      <div className="clip-review-preview">
-        <ClipSourcePreview videoId={videoId} source={source} input={input} />
-      </div>
-
       <div
-        className="clip-review-details"
-        aria-live="polite"
-        aria-atomic="true"
+        className={`clip-review-step ${
+          transitionDirection
+            ? `clip-review-step-${transitionDirection}`
+            : ""
+        }`.trim()}
+        onAnimationEnd={() => setTransitionDirection(null)}
       >
-        <div>
-          <h3>{input.title}</h3>
-          <div className="clip-review-time">
-            {formatTimestamp(input.startSeconds)}–
-            {formatTimestamp(input.endSeconds)}
-          </div>
+        <div className="clip-review-preview">
+          <ClipSourcePreview
+            videoId={videoId}
+            source={source}
+            input={input}
+            onDurationChange={setSourceDuration}
+          />
         </div>
-        <div className="clip-review-meta">
-          <span>{formatDuration(duration)}</span>
-          <span>{input.quality ?? "1080p"}</span>
-          {currentDecision !== null ? (
-            <span className={currentDecision ? "approved" : "rejected"}>
-              {currentDecision ? "Approved" : "Rejected"}
-            </span>
+
+        <div className="clip-review-details">
+          <ClipRangeEditor
+            approvalId={approval.approvalId}
+            originalInput={approval.input}
+            input={input}
+            sourceDuration={sourceDuration}
+            onChange={(nextInput) =>
+              onInputChange(approval.approvalId, nextInput)
+            }
+          />
+          <div className="clip-review-meta">
+            <span>{formatDuration(duration)}</span>
+            <span>{input.quality ?? "1080p"}</span>
+            {currentDecision !== null ? (
+              <span className={currentDecision ? "approved" : "rejected"}>
+                {currentDecision ? "Approved" : "Rejected"}
+              </span>
+            ) : null}
+          </div>
+          {input.caption ? (
+            <p className="clip-review-caption">
+              <span>Caption</span>
+              {input.caption}
+            </p>
           ) : null}
         </div>
-        {input.caption ? (
-          <p className="clip-review-caption">
-            <span>Caption</span>
-            {input.caption}
-          </p>
-        ) : null}
       </div>
+
+      {submitError ? (
+        <div className="clip-review-error" role="alert">
+          {submitError}
+        </div>
+      ) : null}
 
       <div className="clip-review-decision">
         <button
           type="button"
           className="btn-ghost"
+          disabled={submitting}
           onClick={() => decide(false)}
         >
           {activeIndex < approvals.length - 1 ? "Reject and next" : "Reject clip"}
@@ -227,6 +417,7 @@ export function ClipReviewModal({
         <button
           type="button"
           className="btn-primary"
+          disabled={submitting}
           onClick={() => decide(true)}
         >
           {activeIndex < approvals.length - 1
@@ -240,31 +431,48 @@ export function ClipReviewModal({
           <button
             type="button"
             className="btn-ghost"
-            disabled={activeIndex === 0}
-            onClick={() => onActiveIndexChange(activeIndex - 1)}
+            disabled={submitting || activeIndex === 0}
+            onClick={() => moveTo(activeIndex - 1)}
           >
             Previous clip
           </button>
           <button
             type="button"
             className="btn-ghost"
-            disabled={activeIndex === approvals.length - 1}
-            onClick={() => onActiveIndexChange(activeIndex + 1)}
+            disabled={submitting || activeIndex === approvals.length - 1}
+            onClick={() => moveTo(activeIndex + 1)}
           >
             Next clip
           </button>
         </div>
         <div className="clip-review-bulk-actions">
           <span>{reviewedCount} of {approvals.length} reviewed</span>
-          <button type="button" className="btn-ghost" onClick={onRejectAll}>
+          <button
+            type="button"
+            className="btn-ghost"
+            disabled={submitting}
+            onClick={onRejectAll}
+          >
             Reject all
           </button>
-          <button type="button" className="btn-ghost" onClick={onApproveAll}>
+          <button
+            type="button"
+            className="btn-ghost"
+            disabled={submitting}
+            onClick={onApproveAll}
+          >
             Approve all
           </button>
           {allReviewed ? (
-            <button type="button" className="btn-primary" onClick={onSubmit}>
-              {approvedCount === 0
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={submitting}
+              onClick={onSubmit}
+            >
+              {submitting
+                ? "Creating…"
+                : approvedCount === 0
                 ? "Finish review"
                 : `Create ${approvedCount} approved clip${approvedCount === 1 ? "" : "s"}`}
             </button>

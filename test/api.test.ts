@@ -2660,6 +2660,68 @@ describe("source video library", () => {
     );
   });
 
+  it("does not duplicate a clip when a video clip request is retried", async () => {
+    const first = await createYoutubeClip("idempotent source clip");
+    const beforeResponse = await workerFetch(
+      `http://example.com/api/videos/${first.videoId}`,
+    );
+    const before = (await beforeResponse.json()) as {
+      video: { clipCount: number };
+    };
+    const request = {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": "think-tool-call-123",
+      },
+      body: JSON.stringify({
+        title: "idempotent Think clip",
+        trimStart: 20,
+        trimEnd: 24,
+        filters: [],
+        quality: "1080p",
+      }),
+    };
+
+    const firstResponse = await workerFetch(
+      `http://example.com/api/videos/${first.videoId}/clips`,
+      request,
+    );
+    const retryResponse = await workerFetch(
+      `http://example.com/api/videos/${first.videoId}/clips`,
+      request,
+    );
+    expect(firstResponse.status).toBe(201);
+    expect(retryResponse.status).toBe(201);
+
+    const created = (await firstResponse.json()) as { id: string };
+    const retried = (await retryResponse.json()) as { id: string };
+    expect(retried.id).toBe(created.id);
+
+    const changedResponse = await workerFetch(
+      `http://example.com/api/videos/${first.videoId}/clips`,
+      {
+        ...request,
+        body: JSON.stringify({
+          title: "idempotent Think clip",
+          trimStart: 21,
+          trimEnd: 25,
+          filters: [],
+          quality: "1080p",
+        }),
+      },
+    );
+    expect(changedResponse.status).toBe(409);
+
+    const detailResponse = await workerFetch(
+      `http://example.com/api/videos/${first.videoId}`,
+    );
+    const detail = (await detailResponse.json()) as {
+      video: { clipCount: number };
+    };
+    expect(detail.video.clipCount).toBe(before.video.clipCount + 1);
+  });
+
   it("imports a YouTube source once and reuses it for later clips", async () => {
     const savedHelperToken = env.HELPER_TOKEN;
     env.HELPER_TOKEN = undefined;

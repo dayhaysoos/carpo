@@ -130,12 +130,16 @@ export async function listSourceVideos(
 export async function createClipFromSourceVideo(
   videoId: string,
   request: CreateClipFromVideoRequest,
+  idempotencyKey?: string,
 ): Promise<ClipResponse> {
   const response = await fetch(
     `/api/videos/${encodeURIComponent(videoId)}/clips`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}),
+      },
       body: JSON.stringify(request),
     },
   );
