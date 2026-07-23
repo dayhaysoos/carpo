@@ -81,6 +81,9 @@ export function sourceVideoRecordToResponse(
       : youtubeId
         ? `https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg`
         : null,
+    durationSeconds: record.duration_seconds,
+    transcriptStatus: record.transcript_status,
+    transcriptCheckedAt: record.transcript_checked_at,
     archivedAt: record.archived_at,
     createdAt: record.created_at,
     updatedAt: record.updated_at,

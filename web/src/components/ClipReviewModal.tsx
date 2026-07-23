@@ -14,7 +14,9 @@ import {
   type ClipSource,
 } from "../types";
 import { extractYoutubeVideoId, formatTimestamp } from "../youtube";
+import { rangesOverlap, type ExistingClipRange } from "../timeline";
 import { ModalDialog } from "./ModalDialog";
+import { ExistingClipRail } from "./TrimSlider";
 
 export interface ManualClipInput {
   title: string;
@@ -47,6 +49,7 @@ interface ClipReviewModalProps {
   onApproveAll: () => void;
   onRejectAll: () => void;
   onDismiss: () => void;
+  existingClips?: ExistingClipRange[];
 }
 
 function formatDuration(seconds: number): string {
@@ -197,12 +200,14 @@ function ClipRangeEditor({
   originalInput,
   input,
   sourceDuration,
+  existingClips,
   onChange,
 }: {
   approvalId: string;
   originalInput: ManualClipInput;
   input: ManualClipInput;
   sourceDuration: number;
+  existingClips: ExistingClipRange[];
   onChange: (input: ManualClipInput) => void;
 }) {
   const window = useMemo(() => {
@@ -227,6 +232,12 @@ function ClipRangeEditor({
     "--clip-range-start": `${Math.max(0, Math.min(100, startPercent))}%`,
     "--clip-range-end": `${Math.max(0, Math.min(100, endPercent))}%`,
   } as CSSProperties;
+  const overlappingClips = existingClips.filter((clip) =>
+    rangesOverlap(
+      { start: input.startSeconds, end: input.endSeconds },
+      { start: clip.startSeconds, end: clip.endSeconds },
+    ),
+  );
 
   const changeStart = (nextValue: number) => {
     const nextStart = Math.max(
@@ -277,7 +288,18 @@ function ClipRangeEditor({
           onChange={(event) => changeEnd(event.currentTarget.valueAsNumber)}
         />
       </div>
-      <p>Fine-tune this clip before approving it.</p>
+      <ExistingClipRail
+        clips={existingClips}
+        selection={{ start: input.startSeconds, end: input.endSeconds }}
+        window={{ start: window.min, end: window.max }}
+      />
+      <p className={overlappingClips.length > 0 ? "overlap" : undefined}>
+        {overlappingClips.length > 0
+          ? `Overlaps ${overlappingClips.length} existing ${
+              overlappingClips.length === 1 ? "clip" : "clips"
+            }`
+          : "Fine-tune this clip before approving it."}
+      </p>
     </div>
   );
 }
@@ -298,6 +320,7 @@ export function ClipReviewModal({
   onApproveAll,
   onRejectAll,
   onDismiss,
+  existingClips = [],
 }: ClipReviewModalProps) {
   const [sourceDuration, setSourceDuration] = useState(0);
   const [transitionDirection, setTransitionDirection] = useState<
@@ -377,6 +400,7 @@ export function ClipReviewModal({
             originalInput={approval.input}
             input={input}
             sourceDuration={sourceDuration}
+            existingClips={existingClips}
             onChange={(nextInput) =>
               onInputChange(approval.approvalId, nextInput)
             }

@@ -8,12 +8,14 @@ import {
   MAX_CLIP_LENGTH_SECONDS,
   MIN_TRIM_GAP_SECONDS,
 } from "../types";
+import { rangesOverlap, type ExistingClipRange } from "../timeline";
 import { formatTimestamp } from "../youtube";
 
 interface TrimSliderProps {
   duration: number;
   ready: boolean;
   trim: ReturnType<typeof useTrimRange>;
+  existingClips?: ExistingClipRange[];
 }
 
 const PRECISION_WINDOWS = [60, 30, 15, 5] as const;
@@ -38,6 +40,58 @@ function makePrecisionWindow(
     start = Math.max(0, end - span);
   }
   return { start, end };
+}
+
+export function ExistingClipRail({
+  clips,
+  selection,
+  window,
+}: {
+  clips: ExistingClipRange[];
+  selection: { start: number; end: number };
+  window: TrimTimelineWindow;
+}) {
+  const visible = clips
+    .map((clip) => ({
+      clip,
+      start: Math.max(window.start, clip.startSeconds),
+      end: Math.min(window.end, clip.endSeconds),
+    }))
+    .filter((item) => item.end > item.start);
+  if (visible.length === 0) return null;
+
+  return (
+    <div className="trim-existing-rail" role="list" aria-label="Existing clips">
+      {visible.map(({ clip, start, end }) => {
+        const overlapStart = Math.max(start, selection.start);
+        const overlapEnd = Math.min(end, selection.end);
+        const overlap = overlapEnd > overlapStart;
+        return (
+          <span
+            key={clip.id}
+            className="trim-existing-range"
+            role="listitem"
+            aria-label={`Existing clip ${clip.title} from ${formatTimestamp(clip.startSeconds)} to ${formatTimestamp(clip.endSeconds)}`}
+            style={{
+              left: `${percentageInWindow(start, window)}%`,
+              width: `${percentageInWindow(end, window) - percentageInWindow(start, window)}%`,
+            }}
+          >
+            {overlap ? (
+              <span
+                className="trim-existing-overlap"
+                aria-hidden="true"
+                style={{
+                  left: `${((overlapStart - start) / (end - start)) * 100}%`,
+                  width: `${((overlapEnd - overlapStart) / (end - start)) * 100}%`,
+                }}
+              />
+            ) : null}
+          </span>
+        );
+      })}
+    </div>
+  );
 }
 
 function TrimHandleControl({
@@ -123,7 +177,12 @@ function TrimHandleControl({
   );
 }
 
-export function TrimSlider({ duration, ready, trim }: TrimSliderProps) {
+export function TrimSlider({
+  duration,
+  ready,
+  trim,
+  existingClips = [],
+}: TrimSliderProps) {
   const disabled = !ready || duration <= 0;
   const [overviewTrack, setOverviewTrack] = useState<HTMLDivElement | null>(null);
   const [precisionTrack, setPrecisionTrack] = useState<HTMLDivElement | null>(null);
@@ -189,6 +248,12 @@ export function TrimSlider({ duration, ready, trim }: TrimSliderProps) {
   };
 
   const overviewWindow = { start: 0, end: duration };
+  const overlappingClips = existingClips.filter((clip) =>
+    rangesOverlap(
+      { start: trim.range.start, end: trim.range.end },
+      { start: clip.startSeconds, end: clip.endSeconds },
+    ),
+  );
 
   return (
     <div className="trim-section">
@@ -199,6 +264,12 @@ export function TrimSlider({ duration, ready, trim }: TrimSliderProps) {
           {trim.overMax ? ` (max ${MAX_CLIP_LENGTH_SECONDS}s)` : ""}
         </span>
       </div>
+      {overlappingClips.length > 0 ? (
+        <p className="trim-overlap-status" role="status">
+          Overlaps {overlappingClips.length} existing{" "}
+          {overlappingClips.length === 1 ? "clip" : "clips"}
+        </p>
+      ) : null}
 
       <div className="trim-overview" aria-label="Full video timeline">
         <div className={`trim-track-wrap ${disabled ? "disabled" : ""}`}>
@@ -241,6 +312,11 @@ export function TrimSlider({ duration, ready, trim }: TrimSliderProps) {
               onPointerComplete={(_handle, value) => setPrecisionAnchor(value)}
             />
           </div>
+          <ExistingClipRail
+            clips={existingClips}
+            selection={{ start: trim.range.start, end: trim.range.end }}
+            window={overviewWindow}
+          />
         </div>
         <div className="trim-scale" aria-hidden="true">
           <span>{formatTimestamp(0)}</span>
@@ -316,6 +392,11 @@ export function TrimSlider({ duration, ready, trim }: TrimSliderProps) {
                 />
               )}
             </div>
+            <ExistingClipRail
+              clips={existingClips}
+              selection={{ start: trim.range.start, end: trim.range.end }}
+              window={precisionWindow}
+            />
             <div className="trim-scale" aria-hidden="true">
               <span>{formatTimestamp(precisionWindow.start)}</span>
               <span>{formatTimestamp(precisionWindow.end)}</span>

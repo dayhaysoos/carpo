@@ -167,6 +167,22 @@ export async function setSourceVideoArchived(
   return response.json() as Promise<SourceVideoResponse>;
 }
 
+export async function updateSourceVideoDuration(
+  videoId: string,
+  durationSeconds: number,
+): Promise<SourceVideoResponse> {
+  const response = await fetch(`/api/videos/${encodeURIComponent(videoId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ durationSeconds }),
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiError;
+    throw new Error(body.error || `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<SourceVideoResponse>;
+}
+
 export async function deleteSourceVideo(videoId: string): Promise<void> {
   const response = await fetch(`/api/videos/${encodeURIComponent(videoId)}`, {
     method: "DELETE",

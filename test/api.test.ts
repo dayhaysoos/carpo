@@ -2297,6 +2297,79 @@ describe("GET /api/clips", () => {
 });
 
 describe("source video library", () => {
+  it("persists player duration as reusable video context", async () => {
+    const created = await createYoutubeClip("duration context clip");
+
+    const updateResponse = await workerFetch(
+      `http://example.com/api/videos/${created.videoId}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ durationSeconds: 1451 }),
+      },
+    );
+    expect(updateResponse.status).toBe(200);
+    expect(await updateResponse.json()).toMatchObject({
+      id: created.videoId,
+      durationSeconds: 1451,
+      transcriptStatus: "unknown",
+    });
+
+    const detailResponse = await workerFetch(
+      `http://example.com/api/videos/${created.videoId}`,
+    );
+    expect(detailResponse.status).toBe(200);
+    expect(await detailResponse.json()).toMatchObject({
+      video: {
+        id: created.videoId,
+        durationSeconds: 1451,
+        transcriptStatus: "unknown",
+      },
+    });
+  });
+
+  it("checks and persists YouTube transcript availability", async () => {
+    const videoId = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO source_videos (id, source_type, source_ref, title)
+       VALUES (?, 'youtube', ?, ?)`,
+    )
+      .bind(
+        videoId,
+        "https://www.youtube.com/watch?v=transcript1",
+        "Transcript context video",
+      )
+      .run();
+
+    const response = await workerFetch(
+      `http://example.com/api/videos/${videoId}/transcript/check`,
+      { method: "POST" },
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      id: videoId,
+      durationSeconds: 321,
+      transcriptStatus: "available",
+      transcriptCheckedAt: expect.any(String),
+    });
+
+    const persisted = await env.DB.prepare(
+      `SELECT duration_seconds, transcript_status, transcript_checked_at
+       FROM source_videos WHERE id = ?`,
+    )
+      .bind(videoId)
+      .first<{
+        duration_seconds: number | null;
+        transcript_status: string;
+        transcript_checked_at: string | null;
+      }>();
+    expect(persisted).toMatchObject({
+      duration_seconds: 321,
+      transcript_status: "available",
+      transcript_checked_at: expect.any(String),
+    });
+  });
+
   it("resolves and caches the YouTube title instead of using a clip title", async () => {
     const videoId = crypto.randomUUID();
     const clipId = crypto.randomUUID();

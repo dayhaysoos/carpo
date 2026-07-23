@@ -88,6 +88,45 @@ export class EncoderContainer extends Container<Env> {
       return new Response(null, { status: 204 });
     }
 
+    if (
+      url.pathname === "/__carpo/video-metadata" &&
+      request.method === "POST"
+    ) {
+      const stopKeepalive = this.startJobKeepalive();
+      try {
+        return await super.fetch(
+          new Request("http://encoder/video-metadata", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: request.body,
+          }),
+        );
+      } finally {
+        stopKeepalive();
+      }
+    }
+
+    if (
+      url.pathname === "/__carpo/stored-video-metadata" &&
+      request.method === "POST"
+    ) {
+      try {
+        const body = (await request.json()) as { key?: unknown };
+        if (typeof body.key !== "string") {
+          return Response.json(
+            { error: "Video source key is required" },
+            { status: 400 },
+          );
+        }
+        return this.handleStoredVideoMetadata(body.key);
+      } catch {
+        return Response.json(
+          { error: "Invalid video metadata payload" },
+          { status: 400 },
+        );
+      }
+    }
+
     if (url.pathname === "/__carpo/dispatch" && request.method === "POST") {
       try {
         const job = (await request.json()) as RunJobSpec;
@@ -501,6 +540,26 @@ export class EncoderContainer extends Container<Env> {
     }
 
     return { ok: true };
+  }
+
+  private async handleStoredVideoMetadata(sourceKey: string): Promise<Response> {
+    const jobId = crypto.randomUUID();
+    const stopKeepalive = this.startJobKeepalive();
+    try {
+      const staged = await this.stageBucketSource(sourceKey, jobId);
+      if (!staged.ok) {
+        return Response.json({ error: staged.error }, { status: 404 });
+      }
+      return await super.fetch(
+        new Request(
+          `http://encoder/staged-video-metadata?job=${encodeURIComponent(jobId)}`,
+          { method: "POST" },
+        ),
+      );
+    } finally {
+      stopKeepalive();
+      await this.cleanupJobFiles(jobId);
+    }
   }
 
   private async handleGifRun(job: RunJobSpec): Promise<Response> {

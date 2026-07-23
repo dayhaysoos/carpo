@@ -177,6 +177,24 @@ export class EncoderStub extends DurableObject<Env> {
       return new Response(null, { status: 204 });
     }
 
+    if (url.pathname === "/__carpo/video-metadata") {
+      const body = (await request.json()) as { url?: string };
+      if (body.url?.includes("transcript1")) {
+        return Response.json({
+          durationSeconds: 321,
+          transcriptAvailable: true,
+        });
+      }
+      return Response.json({
+        durationSeconds: null,
+        transcriptAvailable: false,
+      });
+    }
+
+    if (url.pathname === "/__carpo/stored-video-metadata") {
+      return Response.json({ durationSeconds: 42 });
+    }
+
     if (url.pathname === "/stage-source") {
       const jobId = url.searchParams.get("job");
       if (!jobId || !/^[A-Za-z0-9-]+$/.test(jobId)) {

@@ -6,6 +6,7 @@ import type {
   GifStatus,
   HelperState,
   SourceVideoRecord,
+  TranscriptStatus,
 } from "./types";
 import { DEFAULT_CLIP_QUALITY } from "./types";
 import { generateCallbackSecret } from "./auth";
@@ -305,6 +306,9 @@ const SOURCE_VIDEO_SELECT = `
     source_videos.retained_source_status,
     source_videos.retained_source_error,
     source_videos.retained_source_updated_at,
+    source_videos.duration_seconds,
+    source_videos.transcript_status,
+    source_videos.transcript_checked_at,
     source_videos.created_at,
     COALESCE(MAX(clips.updated_at), source_videos.updated_at) AS updated_at
   FROM source_videos
@@ -357,6 +361,47 @@ export async function setSourceVideoArchived(
        WHERE id = ?`,
     )
     .bind(id)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function updateSourceVideoDuration(
+  db: D1Database,
+  id: string,
+  durationSeconds: number,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE source_videos
+       SET duration_seconds = ?,
+           updated_at = datetime('now')
+       WHERE id = ?`,
+    )
+    .bind(durationSeconds, id)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function updateSourceVideoTranscriptContext(
+  db: D1Database,
+  id: string,
+  status: TranscriptStatus,
+  durationSeconds?: number | null,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE source_videos
+       SET transcript_status = ?,
+           transcript_checked_at = CASE
+             WHEN ? IN ('available', 'unavailable', 'unsupported', 'failed')
+             THEN datetime('now')
+             ELSE transcript_checked_at
+           END,
+           duration_seconds = COALESCE(?, duration_seconds),
+           updated_at = datetime('now')
+       WHERE id = ?`,
+    )
+    .bind(status, status, durationSeconds ?? null, id)
     .run();
   return (result.meta.changes ?? 0) > 0;
 }

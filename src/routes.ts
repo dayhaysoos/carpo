@@ -9,6 +9,7 @@ import {
   listClipsByVideoId,
   listSourceVideos,
   setSourceVideoArchived,
+  updateSourceVideoDuration,
   sweepStaleClips,
   markGifEncoding,
   outputKeysForClip,
@@ -40,6 +41,7 @@ import { normalizeClipSource } from "./source-videos";
 import { drainArtifactDeletions } from "./artifact-deletions";
 import { resolveUnresolvedYoutubeTitles } from "./youtube-metadata";
 import { createClipForVideo, enqueueClip } from "./clip-service";
+import { checkSourceVideoTranscript } from "./video-context";
 
 export async function handleRequest(
   request: Request,
@@ -83,6 +85,13 @@ export async function handleRequest(
       env,
       ctx,
     );
+  }
+
+  const transcriptCheckMatch = url.pathname.match(
+    /^\/api\/videos\/([^/]+)\/transcript\/check$/,
+  );
+  if (request.method === "POST" && transcriptCheckMatch) {
+    return handleTranscriptCheck(transcriptCheckMatch[1], env);
   }
 
   const videoMatch = url.pathname.match(/^\/api\/videos\/([^/]+)$/);
@@ -179,6 +188,34 @@ export async function handleRequest(
   }
 
   return env.ASSETS.fetch(request);
+}
+
+async function handleTranscriptCheck(
+  videoId: string,
+  env: Env,
+): Promise<Response> {
+  const existing = await getSourceVideoById(env.DB, videoId);
+  if (!existing) {
+    return json({ error: "Video not found" }, 404);
+  }
+
+  try {
+    const video = await checkSourceVideoTranscript(env, videoId);
+    if (!video) {
+      return json({ error: "Video not found" }, 404);
+    }
+    return json(sourceVideoRecordToResponse(video, env.R2_PUBLIC_PREFIX));
+  } catch (error) {
+    return json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Transcript availability check failed",
+      },
+      502,
+    );
+  }
 }
 
 async function handleCreateClip(
@@ -398,13 +435,33 @@ async function handleUpdateSourceVideo(
     return json({ error: "Video id is required" }, 400);
   }
 
-  let body: { archived?: unknown };
+  let body: { archived?: unknown; durationSeconds?: unknown };
   try {
-    body = (await request.json()) as { archived?: unknown };
+    body = (await request.json()) as {
+      archived?: unknown;
+      durationSeconds?: unknown;
+    };
   } catch {
     return json({ error: "Invalid JSON body" }, 400);
   }
-  if (typeof body.archived !== "boolean") {
+
+  const hasArchived = body.archived !== undefined;
+  const hasDuration = body.durationSeconds !== undefined;
+  if (!hasArchived && !hasDuration) {
+    return json(
+      {
+        error: "Validation failed",
+        details: [
+          {
+            field: "body",
+            message: "archived or durationSeconds is required",
+          },
+        ],
+      },
+      400,
+    );
+  }
+  if (hasArchived && typeof body.archived !== "boolean") {
     return json(
       {
         error: "Validation failed",
@@ -413,8 +470,42 @@ async function handleUpdateSourceVideo(
       400,
     );
   }
+  if (
+    hasDuration &&
+    (typeof body.durationSeconds !== "number" ||
+      !Number.isFinite(body.durationSeconds) ||
+      body.durationSeconds <= 0)
+  ) {
+    return json(
+      {
+        error: "Validation failed",
+        details: [
+          {
+            field: "durationSeconds",
+            message: "durationSeconds must be a positive finite number",
+          },
+        ],
+      },
+      400,
+    );
+  }
 
-  const updated = await setSourceVideoArchived(env.DB, videoId, body.archived);
+  const updates: boolean[] = [];
+  if (hasArchived) {
+    updates.push(
+      await setSourceVideoArchived(env.DB, videoId, body.archived as boolean),
+    );
+  }
+  if (hasDuration) {
+    updates.push(
+      await updateSourceVideoDuration(
+        env.DB,
+        videoId,
+        body.durationSeconds as number,
+      ),
+    );
+  }
+  const updated = updates.some(Boolean);
   if (!updated) {
     return json({ error: "Video not found" }, 404);
   }

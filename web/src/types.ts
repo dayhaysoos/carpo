@@ -21,6 +21,14 @@ export const GIF_STATUSES = ["none", "encoding", "complete", "failed"] as const;
 
 export type GifStatus = (typeof GIF_STATUSES)[number];
 
+export type TranscriptStatus =
+  | "unknown"
+  | "checking"
+  | "available"
+  | "unavailable"
+  | "unsupported"
+  | "failed";
+
 export interface YoutubeSource {
   type: "youtube";
   url: string;
@@ -91,6 +99,9 @@ export interface SourceVideoResponse {
   activeClipCount: number;
   failedClipCount: number;
   thumbnail: string | null;
+  durationSeconds: number | null;
+  transcriptStatus: TranscriptStatus;
+  transcriptCheckedAt: string | null;
   archivedAt: string | null;
   createdAt: string;
   updatedAt: string;

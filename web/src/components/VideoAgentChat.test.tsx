@@ -146,6 +146,14 @@ describe("VideoAgentChat", () => {
         videoId="video-1"
         onClipCreated={vi.fn()}
         onTimestampSelect={vi.fn()}
+        existingClips={[
+          {
+            id: "existing-opening",
+            title: "Existing opening",
+            startSeconds: 4,
+            endSeconds: 5,
+          },
+        ]}
         source={{
           type: "youtube",
           url: "https://www.youtube.com/watch?v=434cG4g5KLE",
@@ -160,6 +168,7 @@ describe("VideoAgentChat", () => {
     expect(screen.queryByText("0:03.000–0:06.000")).toBeNull();
     expect(screen.getByText("3 seconds")).toBeTruthy();
     expect(screen.getByText("1080p")).toBeTruthy();
+    expect(screen.getByText("Overlaps 1 existing clip")).toBeTruthy();
     expect(screen.getByLabelText("Preview Opening clip")).toBeTruthy();
     await waitFor(() => expect(player.seekTo).toHaveBeenCalledWith(3));
     expect(chat.addToolApprovalResponse).not.toHaveBeenCalled();

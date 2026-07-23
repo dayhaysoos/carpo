@@ -460,6 +460,49 @@ print("Retained YouTube source command test passed")
   run("python3", ["-c", script]);
 }
 
+function testYoutubeMetadataParsing() {
+  const script = `
+import sys
+
+sys.path.insert(0, ${JSON.stringify(path.join(root, "container"))})
+from encoder import parse_youtube_metadata
+
+manual = parse_youtube_metadata({
+    "duration": 321,
+    "subtitles": {"en": [{"ext": "vtt"}]},
+    "automatic_captions": {},
+})
+assert manual == {
+    "durationSeconds": 321.0,
+    "transcriptAvailable": True,
+}
+
+automatic = parse_youtube_metadata({
+    "duration": 12.5,
+    "subtitles": {},
+    "automatic_captions": {
+        "live_chat": [{"ext": "json"}],
+        "en": [{"ext": "vtt"}],
+    },
+})
+assert automatic["transcriptAvailable"] is True
+
+none = parse_youtube_metadata({
+    "duration": None,
+    "subtitles": {},
+    "automatic_captions": {"live_chat": [{"ext": "json"}]},
+})
+assert none == {
+    "durationSeconds": None,
+    "transcriptAvailable": False,
+}
+
+print("YouTube metadata parsing test passed")
+`;
+
+  run("python3", ["-c", script]);
+}
+
 function testSectionEncodeBounds() {
   const script = `
 import sys
@@ -3260,6 +3303,7 @@ function main() {
   testYoutubeErrorClassification();
   testYtdlpStallLineDetection();
   testRetainedSourceDownloadCommand();
+  testYoutubeMetadataParsing();
   testSectionEncodeBounds();
   testStreamCopyGate();
   buildImage();

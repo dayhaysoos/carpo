@@ -14,6 +14,7 @@ import type {
   ClipWindowRequest,
   TimestampWindow,
 } from "../timestamp-windows";
+import { toExistingClipRanges } from "../timeline";
 
 export function CreatorPage() {
   const queryClient = useQueryClient();
@@ -41,6 +42,7 @@ export function CreatorPage() {
       requestId: clipWindowSequence.current,
     });
   };
+  const existingClips = toExistingClipRanges(sourceVideoData?.clips);
 
   return (
     <main className="app-main">
@@ -54,6 +56,7 @@ export function CreatorPage() {
           source={sourceVideoData?.video.source}
           onClipCreated={handleClipCreated}
           onTimestampSelect={handleTimestampSelect}
+          existingClips={existingClips}
         />
       ) : null}
       <StatusPanel />

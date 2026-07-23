@@ -46,6 +46,9 @@ YOUTUBE_POST_100_GRACE_TIMEOUT_SECONDS = int(
 YOUTUBE_DOWNLOAD_MAX_SECONDS = int(
     os.environ.get("YOUTUBE_DOWNLOAD_MAX_SECONDS", "600"),
 )
+YOUTUBE_METADATA_TIMEOUT_SECONDS = int(
+    os.environ.get("YOUTUBE_METADATA_TIMEOUT_SECONDS", "90"),
+)
 YOUTUBE_PO_TOKEN_MODE = os.environ.get(
     "YOUTUBE_PO_TOKEN_MODE",
     "off",
@@ -1017,6 +1020,73 @@ def ytdlp_po_token_args() -> list[str]:
     ]
 
 
+def _has_transcript_tracks(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    return any(
+        language != "live_chat"
+        and isinstance(formats, list)
+        and len(formats) > 0
+        for language, formats in value.items()
+    )
+
+
+def parse_youtube_metadata(info: dict[str, Any]) -> dict[str, Any]:
+    raw_duration = info.get("duration")
+    duration: float | None = None
+    if isinstance(raw_duration, (int, float)) and raw_duration > 0:
+        duration = float(raw_duration)
+
+    transcript_available = _has_transcript_tracks(
+        info.get("subtitles"),
+    ) or _has_transcript_tracks(info.get("automatic_captions"))
+    return {
+        "durationSeconds": duration,
+        "transcriptAvailable": transcript_available,
+    }
+
+
+def inspect_youtube_metadata(url: str) -> dict[str, Any]:
+    command = [
+        "yt-dlp",
+        *ytdlp_po_token_args(),
+        "--no-playlist",
+        "--skip-download",
+        "--dump-single-json",
+        "--no-warnings",
+        "--retries",
+        "1",
+        "--extractor-retries",
+        "1",
+        "--socket-timeout",
+        str(YOUTUBE_SOCKET_TIMEOUT_SECONDS),
+        url,
+    ]
+    log(f"running metadata check: {' '.join(command)}")
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=YOUTUBE_METADATA_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("YouTube metadata check timed out.") from exc
+    if completed.returncode != 0:
+        output = "\n".join(
+            part for part in (completed.stderr, completed.stdout) if part
+        )
+        raise RuntimeError(classify_ytdlp_error(output))
+    try:
+        info = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("YouTube metadata check returned invalid data.") from exc
+    if not isinstance(info, dict):
+        raise RuntimeError("YouTube metadata check returned invalid data.")
+    return parse_youtube_metadata(info)
+
+
 def _ytdlp_download_command(
     url: str,
     output_template: str,
@@ -1800,6 +1870,46 @@ class EncoderHandler(BaseHTTPRequestHandler):
             shutil.copyfileobj(handle, self.wfile)
 
     def do_POST(self) -> None:  # noqa: N802
+        if self.path.startswith("/staged-video-metadata"):
+            try:
+                job_id = parse_job_id_from_query(self.path)
+                duration = probe_media_duration(staged_source_path(job_id))
+                self._send_json(200, {"durationSeconds": duration})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(
+                    502,
+                    {
+                        "status": "failed",
+                        "errorMessage": str(exc) or "Video metadata check failed",
+                    },
+                )
+            return
+
+        if self.path == "/video-metadata":
+            try:
+                body = self._read_json()
+                url = body.get("url")
+                if not isinstance(url, str) or not url.strip():
+                    self._send_json(
+                        400,
+                        {
+                            "status": "failed",
+                            "errorMessage": "YouTube URL is required",
+                        },
+                    )
+                    return
+                self._send_json(200, inspect_youtube_metadata(url.strip()))
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(
+                    502,
+                    {
+                        "status": "failed",
+                        "errorMessage": str(exc)
+                        or "Transcript availability check failed",
+                    },
+                )
+            return
+
         if self.path.startswith("/stage-source"):
             try:
                 job_id = parse_job_id_from_query(self.path)

@@ -1,9 +1,55 @@
 import { Think } from "@cloudflare/think";
 import { tool } from "ai";
 import { z } from "zod";
-import { getSourceVideoById } from "./db";
+import {
+  getSourceVideoById,
+  listClipsByVideoId,
+  updateSourceVideoDuration,
+} from "./db";
+import { inspectStoredVideo } from "./encoder-pool";
 import type { Env } from "./env";
 import { MAX_CAPTION_LENGTH, MAX_CLIP_LENGTH_SECONDS } from "./types";
+import { checkSourceVideoTranscript } from "./video-context";
+
+const MAX_AGENT_OCCUPIED_RANGES = 200;
+
+function occupiedRangeContext(
+  clips: Array<{
+    status: string;
+    trim_start: number;
+    trim_end: number;
+  }>,
+) {
+  const occupiedRanges = clips
+    .filter((clip) => clip.status !== "failed")
+    .map((clip) => ({
+      startSeconds: clip.trim_start,
+      endSeconds: clip.trim_end,
+    }))
+    .sort((left, right) => left.startSeconds - right.startSeconds)
+    .reduce<Array<{ startSeconds: number; endSeconds: number }>>(
+      (merged, range) => {
+        const previous = merged.at(-1);
+        if (previous && range.startSeconds <= previous.endSeconds) {
+          previous.endSeconds = Math.max(
+            previous.endSeconds,
+            range.endSeconds,
+          );
+        } else {
+          merged.push({ ...range });
+        }
+        return merged;
+      },
+      [],
+    );
+
+  return {
+    existingClips: occupiedRanges.slice(0, MAX_AGENT_OCCUPIED_RANGES),
+    existingClipRangeCount: occupiedRanges.length,
+    existingClipRangesTruncated:
+      occupiedRanges.length > MAX_AGENT_OCCUPIED_RANGES,
+  };
+}
 
 const manualClipInput = z
   .object({
@@ -44,6 +90,9 @@ export class VideoClipAgent extends Think<Env> {
       "Only help with manual timestamp clipping in this version. Do not claim you can transcribe, search speech, understand scenes, or inspect the video's contents.",
       "Convert timestamps such as 1:20, 01:20.500, or 'one minute twenty seconds' into numeric seconds.",
       "When the user gives a start and end time, call createClip with the exact range. The interface will show a preview and let the user adjust the range before anything is created.",
+      "Before proposing any clip, call getVideoContext. Keep every proposed range inside durationSeconds and avoid overlapping existing clips unless the user asks for overlap.",
+      "For a random-clips request without a requested length, use 10 seconds per clip. Choose non-overlapping ranges spread across the video and avoid existing clips when possible.",
+      "When asked whether a transcript or captions are available, call checkTranscriptAvailability. This only checks availability; it does not let you search or quote the transcript.",
       "Use 1080p unless the user asks for 720p. Add a caption only when requested. If no title is supplied, make a concise title from the video title and timestamp range.",
       "If either timestamp is missing or ambiguous, ask one short clarifying question. Never invent a missing timestamp.",
       "After createClip succeeds, say that the clip was queued. If the user rejects it, acknowledge that nothing was created.",
@@ -53,7 +102,11 @@ export class VideoClipAgent extends Think<Env> {
 
   override beforeTurn() {
     return {
-      activeTools: ["getVideoContext", "createClip"],
+      activeTools: [
+        "getVideoContext",
+        "checkTranscriptAvailability",
+        "createClip",
+      ],
       temperature: 0,
       maxSteps: 4,
     };
@@ -63,16 +116,103 @@ export class VideoClipAgent extends Think<Env> {
     return {
       getVideoContext: tool({
         description:
-          "Get the title of the video in this conversation.",
+          "Get the selected video's title, duration, source readiness, transcript status, clipping constraints, and existing clip ranges. Call this before generating random, multiple, or boundary-dependent clips.",
         inputSchema: z.object({}),
         execute: async () => {
-          const video = await getSourceVideoById(this.env.DB, this.name);
+          const [initialVideo, clips] = await Promise.all([
+            getSourceVideoById(this.env.DB, this.name),
+            listClipsByVideoId(this.env.DB, this.name),
+          ]);
+          let video = initialVideo;
           if (!video) {
             return { error: "Video not found" };
           }
+          let metadataCheckError: string | null = null;
+          if (
+            video.source_type === "youtube" &&
+            video.duration_seconds === null
+          ) {
+            try {
+              video =
+                (await checkSourceVideoTranscript(this.env, this.name)) ??
+                video;
+            } catch (error) {
+              metadataCheckError =
+                error instanceof Error
+                  ? error.message
+                  : "Video metadata check failed";
+            }
+          } else if (
+            video.source_type === "upload" &&
+            video.duration_seconds === null
+          ) {
+            try {
+              const metadata = await inspectStoredVideo(
+                this.env,
+                video.source_ref,
+              );
+              if (metadata.durationSeconds !== null) {
+                await updateSourceVideoDuration(
+                  this.env.DB,
+                  this.name,
+                  metadata.durationSeconds,
+                );
+                video =
+                  (await getSourceVideoById(this.env.DB, this.name)) ?? video;
+              }
+            } catch (error) {
+              metadataCheckError =
+                error instanceof Error
+                  ? error.message
+                  : "Video metadata check failed";
+            }
+          }
           return {
             title: video.title,
+            durationSeconds: video.duration_seconds,
+            sourceType: video.source_type,
+            retainedSourceReady:
+              video.source_type === "upload" ||
+              video.retained_source_status === "ready",
+            transcriptStatus: video.transcript_status,
+            metadataCheckError,
+            constraints: {
+              maximumClipLengthSeconds: MAX_CLIP_LENGTH_SECONDS,
+              qualities: ["720p", "1080p"],
+            },
+            ...occupiedRangeContext(clips),
           };
+        },
+      }),
+      checkTranscriptAvailability: tool({
+        description:
+          "Check whether the selected YouTube video exposes subtitles or automatic captions. This does not fetch or search transcript text.",
+        inputSchema: z.object({}),
+        execute: async () => {
+          try {
+            const video = await checkSourceVideoTranscript(
+              this.env,
+              this.name,
+            );
+            if (!video) {
+              return { error: "Video not found" };
+            }
+            return {
+              transcriptStatus: video.transcript_status,
+              checkedAt: video.transcript_checked_at,
+              durationSeconds: video.duration_seconds,
+              canSearchTranscript: false,
+            };
+          } catch (error) {
+            return {
+              transcriptStatus: "failed",
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Transcript availability check failed",
+              canSearchTranscript: false,
+            };
+          }
         },
       }),
       createClip: tool({

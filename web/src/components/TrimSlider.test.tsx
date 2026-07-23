@@ -3,15 +3,18 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useTrimRange } from "../hooks/useTrimRange";
 import { TrimSlider } from "./TrimSlider";
+import type { ExistingClipRange } from "../timeline";
 
 function TrimHarness({
   duration = 24 * 60,
   onSeek = vi.fn(),
   showTimestampCommand = false,
+  existingClips = [],
 }: {
   duration?: number;
   onSeek?: (seconds: number) => void;
   showTimestampCommand?: boolean;
+  existingClips?: ExistingClipRange[];
 }) {
   const trim = useTrimRange({ duration, onSeek });
   return (
@@ -32,13 +35,48 @@ function TrimHarness({
           </button>
         </>
       ) : null}
-      <TrimSlider duration={duration} ready trim={trim} />
+      <TrimSlider
+        duration={duration}
+        ready
+        trim={trim}
+        existingClips={existingClips}
+      />
     </>
   );
 }
 
 describe("TrimSlider precision controls", () => {
   afterEach(cleanup);
+
+  it("shows existing clip ranges and identifies overlap without blocking", () => {
+    render(
+      <TrimHarness
+        duration={120}
+        existingClips={[
+          {
+            id: "opening",
+            title: "Existing opening",
+            startSeconds: 2,
+            endSeconds: 6,
+          },
+          {
+            id: "later",
+            title: "Existing later clip",
+            startSeconds: 70,
+            endSeconds: 75,
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("Overlaps 1 existing clip")).toBeTruthy();
+    expect(
+      screen.getAllByLabelText(
+        "Existing clip Existing opening from 0:02.000 to 0:06.000",
+      ),
+    ).toHaveLength(1);
+    expect(document.querySelector(".trim-existing-overlap")).toBeTruthy();
+  });
 
   it("opens a stable precision view when a boundary receives focus", async () => {
     const user = userEvent.setup();

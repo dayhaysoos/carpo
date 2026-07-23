@@ -7,6 +7,7 @@ import {
   getSourceVideo,
   requestUploadUrl,
   sourceVideoUploadUrl,
+  updateSourceVideoDuration,
   uploadFileWithProgress,
 } from "../api";
 import { useNativeVideoPlayer } from "../hooks/useNativeVideoPlayer";
@@ -26,6 +27,7 @@ import {
 } from "../upload";
 import { extractYoutubeVideoId, isValidYoutubeUrl } from "../youtube";
 import type { ClipWindowRequest } from "../timestamp-windows";
+import { toExistingClipRanges } from "../timeline";
 import { TrimSlider } from "./TrimSlider";
 
 type SourceMode = "youtube" | "upload";
@@ -56,6 +58,7 @@ export function CreatorForm({
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
   const [maxUploadBytes, setMaxUploadBytes] = useState(DEFAULT_MAX_UPLOAD_BYTES);
   const appliedClipWindowRequest = useRef<number | null>(null);
+  const durationUpdateKey = useRef<string | null>(null);
 
   const {
     data: reusableVideoData,
@@ -67,6 +70,10 @@ export function CreatorForm({
     enabled: Boolean(reusableVideoId),
   });
   const reusableVideo = reusableVideoData?.video ?? null;
+  const existingClips = useMemo(
+    () => toExistingClipRanges(reusableVideoData?.clips),
+    [reusableVideoData?.clips],
+  );
 
   const trimmedUrl = url.trim();
   const urlValid = trimmedUrl.length > 0 && isValidYoutubeUrl(trimmedUrl);
@@ -117,6 +124,31 @@ export function CreatorForm({
   const duration = sourceMode === "youtube" ? youtube.duration : native.duration;
   const seekTo = sourceMode === "youtube" ? youtube.seekTo : native.seekTo;
   const trim = useTrimRange({ duration, onSeek: seekTo });
+
+  useEffect(() => {
+    if (!reusableVideoId || !ready || duration <= 0) return;
+    if (
+      reusableVideo?.durationSeconds &&
+      Math.abs(reusableVideo.durationSeconds - duration) < 0.01
+    ) {
+      return;
+    }
+    const normalizedDuration = Math.round(duration * 1000) / 1000;
+    const updateKey = `${reusableVideoId}:${normalizedDuration}`;
+    if (durationUpdateKey.current === updateKey) return;
+    durationUpdateKey.current = updateKey;
+    void updateSourceVideoDuration(
+      reusableVideoId,
+      normalizedDuration,
+    ).catch(() => {
+      durationUpdateKey.current = null;
+    });
+  }, [
+    duration,
+    ready,
+    reusableVideo?.durationSeconds,
+    reusableVideoId,
+  ]);
 
   useEffect(() => {
     if (
@@ -405,7 +437,12 @@ export function CreatorForm({
             <div id={youtube.containerId} className="player-embed" />
             {!youtube.ready && <div className="player-loading">Loading player…</div>}
           </div>
-          <TrimSlider duration={duration} ready={ready} trim={trim} />
+          <TrimSlider
+            duration={duration}
+            ready={ready}
+            trim={trim}
+            existingClips={existingClips}
+          />
           <div className="quality-picker" role="group" aria-label="Output quality">
             <span className="quality-label">Quality</span>
             <div className="quality-options">
@@ -450,7 +487,12 @@ export function CreatorForm({
               </div>
             )}
           </div>
-          <TrimSlider duration={duration} ready={ready} trim={trim} />
+          <TrimSlider
+            duration={duration}
+            ready={ready}
+            trim={trim}
+            existingClips={existingClips}
+          />
           <div className="quality-picker" role="group" aria-label="Output quality">
             <span className="quality-label">Quality</span>
             <div className="quality-options">

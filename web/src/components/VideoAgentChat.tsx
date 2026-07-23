@@ -10,6 +10,7 @@ import {
   type TimestampEntity,
   type TimestampWindow,
 } from "../timestamp-windows";
+import type { ExistingClipRange } from "../timeline";
 import {
   ClipReviewModal,
   type ManualClipInput,
@@ -21,6 +22,7 @@ interface VideoAgentChatProps {
   source?: ClipSource;
   onClipCreated: () => void;
   onTimestampSelect: (window: TimestampWindow) => void;
+  existingClips?: ExistingClipRange[];
 }
 
 const DEFAULT_TIMESTAMP_WINDOW_SECONDS = 10;
@@ -51,6 +53,7 @@ export function VideoAgentChat({
   source,
   onClipCreated,
   onTimestampSelect,
+  existingClips = [],
 }: VideoAgentChatProps) {
   const [input, setInput] = useState("");
   const [connected, setConnected] = useState(false);
@@ -478,6 +481,7 @@ export function VideoAgentChat({
           onApproveAll={() => submitAll(true)}
           onRejectAll={() => submitAll(false)}
           onDismiss={() => setReviewOpen(false)}
+          existingClips={existingClips}
         />
       ) : null}
     </section>
