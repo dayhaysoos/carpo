@@ -233,6 +233,37 @@ describe("VideoAgentChat", () => {
     );
   });
 
+  it("previews retained YouTube sources at the proposed timestamp", () => {
+    chat.messages = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [proposal("approval-retained", "Retained clip", 325, 335)],
+      },
+    ];
+
+    render(
+      <VideoAgentChat
+        videoId="video-1"
+        retainedSourceReady
+        onClipCreated={vi.fn()}
+        onTimestampSelect={vi.fn()}
+        source={{
+          type: "youtube",
+          url: "https://www.youtube.com/watch?v=434cG4g5KLE",
+        }}
+      />,
+    );
+
+    const preview = screen.getByTitle(
+      "Preview Retained clip",
+    ) as HTMLVideoElement;
+    expect(preview.tagName).toBe("VIDEO");
+    expect(preview.getAttribute("src")).toBe("/api/videos/video-1/source");
+    expect(preview.currentTime).toBe(325);
+    expect(player.seekTo).not.toHaveBeenCalled();
+  });
+
   it("keeps clip decisions reversible until the completed review is submitted", async () => {
     const user = userEvent.setup();
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {

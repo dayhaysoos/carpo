@@ -2845,6 +2845,20 @@ describe("source video library", () => {
       expect(await env.CLIPS_BUCKET.head(cached!.retained_source_key!)).not.toBeNull();
       expect(await getEncoderJobEvents(first.id)).toContain("retain-source");
 
+      const sourceResponse = await workerFetch(
+        `http://example.com/api/videos/${first.videoId}/source`,
+      );
+      expect(sourceResponse.status).toBe(200);
+      expect(sourceResponse.headers.get("content-type")).toBe("video/mp4");
+
+      const detailResponse = await workerFetch(
+        `http://example.com/api/videos/${first.videoId}`,
+      );
+      const detail = (await detailResponse.json()) as {
+        video: { retainedSourceReady?: boolean };
+      };
+      expect(detail.video.retainedSourceReady).toBe(true);
+
       env.HELPER_TOKEN = savedHelperToken ?? TEST_HELPER_TOKEN;
       const secondResponse = await workerFetch(
         `http://example.com/api/videos/${first.videoId}/clips`,

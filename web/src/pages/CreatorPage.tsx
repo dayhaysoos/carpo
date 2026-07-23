@@ -54,6 +54,9 @@ export function CreatorPage() {
         <VideoAgentChat
           videoId={videoId}
           source={sourceVideoData?.video.source}
+          retainedSourceReady={
+            sourceVideoData?.video.retainedSourceReady ?? false
+          }
           onClipCreated={handleClipCreated}
           onTimestampSelect={handleTimestampSelect}
           existingClips={existingClips}

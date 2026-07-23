@@ -20,6 +20,7 @@ import {
 interface VideoAgentChatProps {
   videoId: string;
   source?: ClipSource;
+  retainedSourceReady?: boolean;
   onClipCreated: () => void;
   onTimestampSelect: (window: TimestampWindow) => void;
   existingClips?: ExistingClipRange[];
@@ -51,6 +52,7 @@ function messageText(parts: Array<{ type: string; text?: string }>): string {
 export function VideoAgentChat({
   videoId,
   source,
+  retainedSourceReady = false,
   onClipCreated,
   onTimestampSelect,
   existingClips = [],
@@ -458,6 +460,7 @@ export function VideoAgentChat({
         <ClipReviewModal
           videoId={videoId}
           source={source}
+          retainedSourceReady={retainedSourceReady}
           approvals={pendingApprovals}
           activeIndex={activeReviewIndex}
           decisions={reviewDecisions}

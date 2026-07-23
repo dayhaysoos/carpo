@@ -82,6 +82,10 @@ export function sourceVideoRecordToResponse(
         ? `https://i.ytimg.com/vi/${youtubeId}/hqdefault.jpg`
         : null,
     durationSeconds: record.duration_seconds,
+    retainedSourceReady:
+      source.type === "upload" ||
+      (record.retained_source_status === "ready" &&
+        Boolean(record.retained_source_key)),
     transcriptStatus: record.transcript_status,
     transcriptCheckedAt: record.transcript_checked_at,
     archivedAt: record.archived_at,

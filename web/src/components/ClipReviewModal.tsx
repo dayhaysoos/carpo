@@ -36,6 +36,7 @@ export interface PendingClipApproval {
 interface ClipReviewModalProps {
   videoId: string;
   source?: ClipSource;
+  retainedSourceReady?: boolean;
   approvals: PendingClipApproval[];
   activeIndex: number;
   decisions: Readonly<Record<string, boolean>>;
@@ -110,11 +111,13 @@ function YouTubeClipPreview({
 function ClipSourcePreview({
   videoId,
   source,
+  retainedSourceReady,
   input,
   onDurationChange,
 }: {
   videoId: string;
   source?: ClipSource;
+  retainedSourceReady: boolean;
   input: ManualClipInput;
   onDurationChange: (duration: number) => void;
 }) {
@@ -126,7 +129,7 @@ function ClipSourcePreview({
     );
   }
 
-  if (source.type === "youtube") {
+  if (!retainedSourceReady && source.type === "youtube") {
     const youtubeId = extractYoutubeVideoId(source.url);
     if (!youtubeId) {
       return (
@@ -307,6 +310,7 @@ function ClipRangeEditor({
 export function ClipReviewModal({
   videoId,
   source,
+  retainedSourceReady = false,
   approvals,
   activeIndex,
   decisions,
@@ -388,6 +392,7 @@ export function ClipReviewModal({
           <ClipSourcePreview
             videoId={videoId}
             source={source}
+            retainedSourceReady={retainedSourceReady}
             input={input}
             onDurationChange={setSourceDuration}
           />

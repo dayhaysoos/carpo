@@ -100,6 +100,7 @@ export interface SourceVideoResponse {
   failedClipCount: number;
   thumbnail: string | null;
   durationSeconds: number | null;
+  retainedSourceReady: boolean;
   transcriptStatus: TranscriptStatus;
   transcriptCheckedAt: string | null;
   archivedAt: string | null;

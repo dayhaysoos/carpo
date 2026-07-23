@@ -337,13 +337,19 @@ async function handleSourceVideoSource(
   if (!video) {
     return json({ error: "Video not found" }, 404);
   }
-  if (video.source_type !== "upload") {
-    return json({ error: "Video source is not an upload" }, 400);
+  const sourceKey =
+    video.source_type === "upload"
+      ? video.source_ref
+      : video.retained_source_status === "ready"
+        ? video.retained_source_key
+        : null;
+  if (!sourceKey) {
+    return json({ error: "Retained video source is not ready" }, 409);
   }
 
   const rangeHeader = request.headers.get("range");
   const object = await env.CLIPS_BUCKET.get(
-    video.source_ref,
+    sourceKey,
     rangeHeader ? { range: request.headers } : undefined,
   );
   if (!object) {
