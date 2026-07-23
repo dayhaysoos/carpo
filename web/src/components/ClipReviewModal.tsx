@@ -1,4 +1,6 @@
+import { useEffect } from "react";
 import { sourceVideoUploadUrl } from "../api";
+import { useYoutubePlayer } from "../hooks/useYoutubePlayer";
 import type { ClipQuality, ClipSource } from "../types";
 import { extractYoutubeVideoId, formatTimestamp } from "../youtube";
 import { ModalDialog } from "./ModalDialog";
@@ -13,12 +15,12 @@ export interface ManualClipInput {
 
 export interface PendingClipApproval {
   approvalId: string;
-  toolCallId: string;
   input: ManualClipInput;
 }
 
 interface ClipReviewModalProps {
   videoId: string;
+  sourceTitle?: string;
   source?: ClipSource;
   approvals: PendingClipApproval[];
   activeIndex: number;
@@ -34,6 +36,39 @@ interface ClipReviewModalProps {
 function formatDuration(seconds: number): string {
   const rounded = Math.round(seconds * 1000) / 1000;
   return `${rounded.toLocaleString()} ${rounded === 1 ? "second" : "seconds"}`;
+}
+
+function YouTubeClipPreview({
+  youtubeId,
+  input,
+}: {
+  youtubeId: string;
+  input: ManualClipInput;
+}) {
+  const {
+    containerId,
+    ready,
+    currentTime,
+    seekTo,
+    pauseVideo,
+  } = useYoutubePlayer(youtubeId);
+
+  useEffect(() => {
+    if (ready) seekTo(input.startSeconds);
+  }, [input.startSeconds, ready, seekTo]);
+
+  useEffect(() => {
+    if (ready && currentTime >= input.endSeconds) pauseVideo();
+  }, [currentTime, input.endSeconds, pauseVideo, ready]);
+
+  return (
+    <div
+      className="clip-review-player"
+      aria-label={`Preview ${input.title}`}
+    >
+      <div id={containerId} className="clip-review-youtube-host" />
+    </div>
+  );
 }
 
 function ClipSourcePreview({
@@ -62,19 +97,11 @@ function ClipSourcePreview({
         </div>
       );
     }
-    const start = Math.max(0, Math.floor(input.startSeconds));
-    const end = Math.max(start + 1, Math.ceil(input.endSeconds));
-    const src =
-      `https://www.youtube.com/embed/${youtubeId}` +
-      `?start=${start}&end=${end}&rel=0&playsinline=1`;
     return (
-      <iframe
-        key={`${youtubeId}-${start}-${end}`}
-        className="clip-review-player"
-        src={src}
-        title={`Preview ${input.title}`}
-        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-        allowFullScreen
+      <YouTubeClipPreview
+        key={youtubeId}
+        youtubeId={youtubeId}
+        input={input}
       />
     );
   }
@@ -93,6 +120,7 @@ function ClipSourcePreview({
 
 export function ClipReviewModal({
   videoId,
+  sourceTitle,
   source,
   approvals,
   activeIndex,
@@ -138,7 +166,11 @@ export function ClipReviewModal({
           <h2 id="clip-review-title">Review clips</h2>
           <p>
             <strong>{activeIndex + 1} of {approvals.length}</strong>
-            <span>Preview each proposed range before creating anything.</span>
+            <span>
+              {sourceTitle
+                ? `From ${sourceTitle}`
+                : "Preview each proposed range before creating anything."}
+            </span>
           </p>
         </div>
         <button
@@ -155,7 +187,11 @@ export function ClipReviewModal({
         <ClipSourcePreview videoId={videoId} source={source} input={input} />
       </div>
 
-      <div className="clip-review-details">
+      <div
+        className="clip-review-details"
+        aria-live="polite"
+        aria-atomic="true"
+      >
         <div>
           <h3>{input.title}</h3>
           <div className="clip-review-time">

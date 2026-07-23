@@ -3,7 +3,11 @@ import { getSourceVideo } from "../api";
 import { CreatorForm } from "../components/CreatorForm";
 import { StatusPanel } from "../components/StatusPanel";
 import { VideoAgentChat } from "../components/VideoAgentChat";
-import { CLIPS_QUERY_KEY, SOURCE_VIDEOS_QUERY_KEY } from "../queries";
+import {
+  CLIPS_QUERY_KEY,
+  sourceVideoQueryKey,
+  SOURCE_VIDEOS_QUERY_KEY,
+} from "../queries";
 import { useSearchParams } from "react-router-dom";
 import { useRef, useState } from "react";
 import type {
@@ -19,7 +23,7 @@ export function CreatorPage() {
   const [clipWindowRequest, setClipWindowRequest] =
     useState<ClipWindowRequest | null>(null);
   const { data: sourceVideoData } = useQuery({
-    queryKey: ["source-video", videoId],
+    queryKey: sourceVideoQueryKey(videoId),
     queryFn: () => getSourceVideo(videoId),
     enabled: Boolean(videoId),
   });
@@ -47,6 +51,7 @@ export function CreatorPage() {
       {videoId ? (
         <VideoAgentChat
           videoId={videoId}
+          sourceTitle={sourceVideoData?.video.title}
           source={sourceVideoData?.video.source}
           onClipCreated={handleClipCreated}
           onTimestampSelect={handleTimestampSelect}

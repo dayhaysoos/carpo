@@ -17,6 +17,7 @@ import {
 
 interface VideoAgentChatProps {
   videoId: string;
+  sourceTitle?: string;
   source?: ClipSource;
   onClipCreated: () => void;
   onTimestampSelect: (window: TimestampWindow) => void;
@@ -48,6 +49,7 @@ function messageText(parts: Array<{ type: string; text?: string }>): string {
 
 export function VideoAgentChat({
   videoId,
+  sourceTitle,
   source,
   onClipCreated,
   onTimestampSelect,
@@ -101,7 +103,6 @@ export function VideoAgentChat({
         }
         approvals.push({
           approvalId: approval.id,
-          toolCallId: part.toolCallId,
           input: part.input,
         });
       }
@@ -375,6 +376,7 @@ export function VideoAgentChat({
       {reviewOpen && pendingApprovals.length > 0 ? (
         <ClipReviewModal
           videoId={videoId}
+          sourceTitle={sourceTitle}
           source={source}
           approvals={pendingApprovals}
           activeIndex={activeReviewIndex}

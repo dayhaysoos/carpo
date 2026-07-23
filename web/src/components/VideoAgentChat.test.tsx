@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,6 +7,10 @@ import { VideoAgentChat } from "./VideoAgentChat";
 const chat = vi.hoisted(() => ({
   addToolApprovalResponse: vi.fn(),
   messages: [] as Array<Record<string, unknown>>,
+}));
+const player = vi.hoisted(() => ({
+  pauseVideo: vi.fn(),
+  seekTo: vi.fn(),
 }));
 
 vi.mock("agents/react", () => ({
@@ -23,6 +27,16 @@ vi.mock("@cloudflare/think/react", () => ({
     addToolApprovalResponse: chat.addToolApprovalResponse,
     status: "ready",
     error: undefined,
+  }),
+}));
+
+vi.mock("../hooks/useYoutubePlayer", () => ({
+  useYoutubePlayer: () => ({
+    containerId: "youtube-review-player",
+    ready: true,
+    currentTime: 0,
+    seekTo: player.seekTo,
+    pauseVideo: player.pauseVideo,
   }),
 }));
 
@@ -83,6 +97,7 @@ describe("VideoAgentChat", () => {
     render(
       <VideoAgentChat
         videoId="video-1"
+        sourceTitle="Stop Reading Every Line of Code"
         onClipCreated={vi.fn()}
         onTimestampSelect={vi.fn()}
         source={{
@@ -94,16 +109,25 @@ describe("VideoAgentChat", () => {
 
     expect(screen.getByRole("heading", { name: "Review clips" })).toBeTruthy();
     expect(screen.getByText("1 of 3")).toBeTruthy();
+    expect(
+      screen.getByText("From Stop Reading Every Line of Code"),
+    ).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Opening clip" })).toBeTruthy();
     expect(screen.getByText("0:03.000–0:06.000")).toBeTruthy();
+    expect(screen.getByLabelText("Preview Opening clip")).toBeTruthy();
     expect(
-      screen.getByTitle("Preview Opening clip").getAttribute("src"),
-    ).toContain("start=3&end=6");
+      screen
+        .getByRole("heading", { name: "Opening clip" })
+        .closest(".clip-review-details")
+        ?.getAttribute("aria-live"),
+    ).toBe("polite");
+    await waitFor(() => expect(player.seekTo).toHaveBeenCalledWith(3));
     expect(chat.addToolApprovalResponse).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: "Next clip" }));
     expect(screen.getByText("2 of 3")).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Middle clip" })).toBeTruthy();
+    await waitFor(() => expect(player.seekTo).toHaveBeenCalledWith(30));
     expect(chat.addToolApprovalResponse).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: "Close clip review" }));
@@ -239,6 +263,62 @@ describe("VideoAgentChat", () => {
     expect(
       screen.queryByRole("heading", { name: "Review clips" }),
     ).toBeNull();
+  });
+
+  it("seeks YouTube previews to fractional proposal timestamps", async () => {
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    chat.messages = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [proposal("approval-precise", "Precise clip", 10.75, 13.1)],
+      },
+    ];
+
+    render(
+      <VideoAgentChat
+        videoId="video-1"
+        onClipCreated={vi.fn()}
+        onTimestampSelect={vi.fn()}
+        source={{
+          type: "youtube",
+          url: "https://www.youtube.com/watch?v=434cG4g5KLE",
+        }}
+      />,
+    );
+
+    await waitFor(() => expect(player.seekTo).toHaveBeenCalledWith(10.75));
+    expect(screen.getByText("0:10.750–0:13.100")).toBeTruthy();
+  });
+
+  it("previews uploaded sources at the proposed range", () => {
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    chat.messages = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [proposal("approval-upload", "Uploaded clip", 12.25, 15.5)],
+      },
+    ];
+
+    render(
+      <VideoAgentChat
+        videoId="video-1"
+        onClipCreated={vi.fn()}
+        onTimestampSelect={vi.fn()}
+        source={{ type: "upload", key: "uploads/source.mp4" }}
+      />,
+    );
+
+    expect(
+      screen.getByTitle("Preview Uploaded clip").getAttribute("src"),
+    ).toBe("/api/videos/video-1/source#t=12.25,15.5");
   });
 
   it("automatically applies typed timestamps and keeps them clickable", async () => {

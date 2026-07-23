@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 declare global {
   interface Window {
@@ -129,10 +129,14 @@ export function useYoutubePlayer(videoId: string | null) {
     };
   }, [videoId]);
 
-  const seekTo = (seconds: number) => {
+  const seekTo = useCallback((seconds: number) => {
     playerRef.current?.seekTo(seconds, true);
     setCurrentTime(seconds);
-  };
+  }, []);
+
+  const pauseVideo = useCallback(() => {
+    playerRef.current?.pauseVideo();
+  }, []);
 
   return {
     containerId: containerIdRef.current,
@@ -141,5 +145,6 @@ export function useYoutubePlayer(videoId: string | null) {
     currentTime,
     title,
     seekTo,
+    pauseVideo,
   };
 }
