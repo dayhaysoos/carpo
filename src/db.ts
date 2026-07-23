@@ -309,6 +309,8 @@ const SOURCE_VIDEO_SELECT = `
     source_videos.duration_seconds,
     source_videos.transcript_status,
     source_videos.transcript_checked_at,
+    source_videos.transcript_check_error,
+    source_videos.transcript_retry_at,
     source_videos.created_at,
     COALESCE(MAX(clips.updated_at), source_videos.updated_at) AS updated_at
   FROM source_videos
@@ -385,8 +387,12 @@ export async function updateSourceVideoDuration(
 export async function updateSourceVideoTranscriptContext(
   db: D1Database,
   id: string,
-  status: TranscriptStatus,
-  durationSeconds?: number | null,
+  update: {
+    status: TranscriptStatus;
+    durationSeconds?: number | null;
+    error?: string | null;
+    retryAt?: string | null;
+  },
 ): Promise<boolean> {
   const result = await db
     .prepare(
@@ -397,11 +403,42 @@ export async function updateSourceVideoTranscriptContext(
              THEN datetime('now')
              ELSE transcript_checked_at
            END,
+           transcript_check_error = ?,
+           transcript_retry_at = ?,
            duration_seconds = COALESCE(?, duration_seconds),
            updated_at = datetime('now')
        WHERE id = ?`,
     )
-    .bind(status, status, durationSeconds ?? null, id)
+    .bind(
+      update.status,
+      update.status,
+      update.error ?? null,
+      update.retryAt ?? null,
+      update.durationSeconds ?? null,
+      id,
+    )
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function claimSourceVideoTranscriptRetry(
+  db: D1Database,
+  id: string,
+  retryAt: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE source_videos
+       SET transcript_retry_at = ?,
+           updated_at = datetime('now')
+       WHERE id = ?
+         AND transcript_status = 'failed'
+         AND (
+           transcript_retry_at IS NULL
+           OR julianday(transcript_retry_at) <= julianday('now')
+         )`,
+    )
+    .bind(retryAt, id)
     .run();
   return (result.meta.changes ?? 0) > 0;
 }

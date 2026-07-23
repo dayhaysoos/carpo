@@ -103,6 +103,8 @@ export interface SourceVideoResponse {
   retainedSourceReady: boolean;
   transcriptStatus: TranscriptStatus;
   transcriptCheckedAt: string | null;
+  transcriptCheckError: string | null;
+  transcriptRetryAt: string | null;
   archivedAt: string | null;
   createdAt: string;
   updatedAt: string;

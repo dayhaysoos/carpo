@@ -77,6 +77,7 @@ export class EncoderStub extends DurableObject<Env> {
   private stagedSources = new Set<string>();
   private jobOutputs = new Set<string>();
   private jobEvents = new Map<string, string[]>();
+  private metadataAttempts = new Map<string, number>();
   private containerStartCount = 0;
   private prewarmStartShouldFail = false;
 
@@ -179,9 +180,36 @@ export class EncoderStub extends DurableObject<Env> {
 
     if (url.pathname === "/__carpo/video-metadata") {
       const body = (await request.json()) as { url?: string };
+      const sourceUrl = body.url ?? "";
+      const attempt = (this.metadataAttempts.get(sourceUrl) ?? 0) + 1;
+      this.metadataAttempts.set(sourceUrl, attempt);
+      if (sourceUrl.includes("transcript-retry") && attempt < 3) {
+        return new Response("temporary metadata failure", { status: 503 });
+      }
+      if (sourceUrl.includes("transcript-always-fail")) {
+        return new Response("persistent metadata failure", { status: 503 });
+      }
+      if (sourceUrl.includes("transcript-terminal") && attempt === 1) {
+        return new Response(
+          "The URL is not a supported YouTube link.",
+          { status: 502 },
+        );
+      }
+      if (sourceUrl.includes("transcript-terminal")) {
+        return Response.json({
+          durationSeconds: 654,
+          transcriptAvailable: true,
+        });
+      }
       if (body.url?.includes("transcript1")) {
         return Response.json({
           durationSeconds: 321,
+          transcriptAvailable: true,
+        });
+      }
+      if (sourceUrl.includes("transcript-retry")) {
+        return Response.json({
+          durationSeconds: 654,
           transcriptAvailable: true,
         });
       }

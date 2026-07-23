@@ -6,14 +6,22 @@ import {
 import { tool } from "ai";
 import { z } from "zod";
 import {
+  claimSourceVideoTranscriptRetry,
   getSourceVideoById,
   listClipsByVideoId,
   updateSourceVideoDuration,
 } from "./db";
 import { inspectStoredVideo } from "./encoder-pool";
 import type { Env } from "./env";
-import { MAX_CAPTION_LENGTH, MAX_CLIP_LENGTH_SECONDS } from "./types";
-import { checkSourceVideoTranscript } from "./video-context";
+import {
+  MAX_CAPTION_LENGTH,
+  MAX_CLIP_LENGTH_SECONDS,
+  type TranscriptStatus,
+} from "./types";
+import {
+  checkSourceVideoTranscript,
+  nextTranscriptRetryAt,
+} from "./video-context";
 
 const MAX_AGENT_OCCUPIED_RANGES = 200;
 
@@ -22,7 +30,10 @@ interface AgentVideoContext {
   durationSeconds: number | null;
   sourceType: "youtube" | "upload";
   retainedSourceReady: boolean;
-  transcriptStatus: string;
+  transcriptStatus: TranscriptStatus;
+  transcriptCheckedAt: string | null;
+  transcriptCheckError: string | null;
+  transcriptRetryAt: string | null;
   metadataCheckError: string | null;
   constraints: {
     maximumClipLengthSeconds: number;
@@ -71,6 +82,19 @@ function occupiedRangeContext(
   };
 }
 
+function transcriptRetryIsDue(video: {
+  transcript_status: TranscriptStatus;
+  transcript_check_error: string | null;
+  transcript_retry_at: string | null;
+}): boolean {
+  if (video.transcript_status !== "failed") return false;
+  if (!video.transcript_retry_at) {
+    return video.transcript_check_error === null;
+  }
+  const retryAt = Date.parse(video.transcript_retry_at);
+  return !Number.isFinite(retryAt) || retryAt <= Date.now();
+}
+
 const manualClipInput = z
   .object({
     title: z.string().trim().min(1).max(200),
@@ -100,6 +124,9 @@ const manualClipInput = z
 export async function loadAgentVideoContext(
   env: Env,
   videoId: string,
+  options?: {
+    schedule?: (promise: Promise<unknown>) => void;
+  },
 ): Promise<AgentVideoContext | { error: string }> {
   const [initialVideo, clips] = await Promise.all([
     getSourceVideoById(env.DB, videoId),
@@ -111,12 +138,43 @@ export async function loadAgentVideoContext(
   }
 
   let metadataCheckError: string | null = null;
-  if (video.source_type === "youtube" && video.duration_seconds === null) {
+  if (
+    video.source_type === "youtube" &&
+    video.duration_seconds === null &&
+    video.transcript_status !== "failed"
+  ) {
     try {
       video = (await checkSourceVideoTranscript(env, videoId)) ?? video;
     } catch (error) {
       metadataCheckError =
         error instanceof Error ? error.message : "Video metadata check failed";
+      video = (await getSourceVideoById(env.DB, videoId)) ?? video;
+    }
+  } else if (
+    video.source_type === "youtube" &&
+    transcriptRetryIsDue(video)
+  ) {
+    const claimed = await claimSourceVideoTranscriptRetry(
+      env.DB,
+      videoId,
+      nextTranscriptRetryAt(),
+    );
+    video = (await getSourceVideoById(env.DB, videoId)) ?? video;
+    if (claimed && options?.schedule) {
+      const retry = checkSourceVideoTranscript(env, videoId)
+        .then(() => undefined)
+        .catch(() => undefined);
+      options.schedule(retry);
+    } else if (claimed) {
+      try {
+        video = (await checkSourceVideoTranscript(env, videoId)) ?? video;
+      } catch (error) {
+        metadataCheckError =
+          error instanceof Error
+            ? error.message
+            : "Video metadata check failed";
+        video = (await getSourceVideoById(env.DB, videoId)) ?? video;
+      }
     }
   } else if (
     video.source_type === "upload" &&
@@ -146,6 +204,9 @@ export async function loadAgentVideoContext(
       video.source_type === "upload" ||
       video.retained_source_status === "ready",
     transcriptStatus: video.transcript_status,
+    transcriptCheckedAt: video.transcript_checked_at,
+    transcriptCheckError: video.transcript_check_error,
+    transcriptRetryAt: video.transcript_retry_at,
     metadataCheckError,
     constraints: {
       maximumClipLengthSeconds: MAX_CLIP_LENGTH_SECONDS,
@@ -179,6 +240,12 @@ export function forceVideoContextOnFirstStep(
 export class VideoClipAgent extends Think<Env> {
   workspaceBash = false;
 
+  private loadVideoContext() {
+    return loadAgentVideoContext(this.env, this.name, {
+      schedule: (promise) => this.ctx.waitUntil(promise),
+    });
+  }
+
   override getModel() {
     return "@cf/moonshotai/kimi-k2.7-code";
   }
@@ -200,7 +267,7 @@ export class VideoClipAgent extends Think<Env> {
   }
 
   override async beforeTurn(ctx: TurnContext) {
-    const videoContext = await loadAgentVideoContext(this.env, this.name);
+    const videoContext = await this.loadVideoContext();
     return {
       system: `${ctx.system}\n\n${agentVideoContextSystemBlock(videoContext)}`,
       activeTools: [
@@ -221,9 +288,9 @@ export class VideoClipAgent extends Think<Env> {
     return {
       getVideoContext: tool({
         description:
-          "Get the selected video's title, duration, source readiness, transcript status, clipping constraints, and existing clip ranges. Call this before generating random, multiple, or boundary-dependent clips.",
+          "Get the selected video's title, duration, source readiness, transcript status, transcript failure and retry details, clipping constraints, and existing clip ranges. Call this before generating random, multiple, or boundary-dependent clips.",
         inputSchema: z.object({}),
-        execute: async () => loadAgentVideoContext(this.env, this.name),
+        execute: async () => this.loadVideoContext(),
       }),
       checkTranscriptAvailability: tool({
         description:
@@ -242,15 +309,23 @@ export class VideoClipAgent extends Think<Env> {
               transcriptStatus: video.transcript_status,
               checkedAt: video.transcript_checked_at,
               durationSeconds: video.duration_seconds,
+              transcriptCheckError: video.transcript_check_error,
+              retryAt: video.transcript_retry_at,
               canSearchTranscript: false,
             };
           } catch (error) {
+            const video = await getSourceVideoById(this.env.DB, this.name);
+            const message =
+              error instanceof Error
+                ? error.message
+                : "Transcript availability check failed";
             return {
-              transcriptStatus: "failed",
-              error:
-                error instanceof Error
-                  ? error.message
-                  : "Transcript availability check failed",
+              transcriptStatus: video?.transcript_status ?? "failed",
+              checkedAt: video?.transcript_checked_at ?? null,
+              durationSeconds: video?.duration_seconds ?? null,
+              transcriptCheckError:
+                video?.transcript_check_error ?? message,
+              retryAt: video?.transcript_retry_at ?? null,
               canSearchTranscript: false,
             };
           }

@@ -149,6 +149,8 @@ export interface SourceVideoRecord {
   duration_seconds: number | null;
   transcript_status: TranscriptStatus;
   transcript_checked_at: string | null;
+  transcript_check_error: string | null;
+  transcript_retry_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -165,6 +167,8 @@ export interface SourceVideoResponse {
   retainedSourceReady: boolean;
   transcriptStatus: TranscriptStatus;
   transcriptCheckedAt: string | null;
+  transcriptCheckError: string | null;
+  transcriptRetryAt: string | null;
   archivedAt: string | null;
   createdAt: string;
   updatedAt: string;

@@ -88,6 +88,8 @@ export function sourceVideoRecordToResponse(
         Boolean(record.retained_source_key)),
     transcriptStatus: record.transcript_status,
     transcriptCheckedAt: record.transcript_checked_at,
+    transcriptCheckError: record.transcript_check_error,
+    transcriptRetryAt: record.transcript_retry_at,
     archivedAt: record.archived_at,
     createdAt: record.created_at,
     updatedAt: record.updated_at,

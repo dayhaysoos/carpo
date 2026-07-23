@@ -2370,6 +2370,112 @@ describe("source video library", () => {
     });
   });
 
+  it("retries transient transcript metadata failures", async () => {
+    const videoId = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO source_videos (id, source_type, source_ref, title)
+       VALUES (?, 'youtube', ?, ?)`,
+    )
+      .bind(
+        videoId,
+        "https://www.youtube.com/watch?v=transcript-retry",
+        "Retry transcript video",
+      )
+      .run();
+
+    const response = await workerFetch(
+      `http://example.com/api/videos/${videoId}/transcript/check`,
+      { method: "POST" },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      id: videoId,
+      durationSeconds: 654,
+      transcriptStatus: "available",
+      transcriptCheckedAt: expect.any(String),
+    });
+  });
+
+  it("persists transcript failure details and a retry schedule", async () => {
+    const videoId = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO source_videos (id, source_type, source_ref, title)
+       VALUES (?, 'youtube', ?, ?)`,
+    )
+      .bind(
+        videoId,
+        "https://www.youtube.com/watch?v=transcript-always-fail",
+        "Failed transcript video",
+      )
+      .run();
+
+    const response = await workerFetch(
+      `http://example.com/api/videos/${videoId}/transcript/check`,
+      { method: "POST" },
+    );
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({
+      error: "persistent metadata failure",
+    });
+
+    const detailResponse = await workerFetch(
+      `http://example.com/api/videos/${videoId}`,
+    );
+    const detail = (await detailResponse.json()) as {
+      video: {
+        transcriptStatus: string;
+        transcriptCheckError?: string | null;
+        transcriptCheckedAt: string | null;
+        transcriptRetryAt?: string | null;
+      };
+    };
+    expect(detail.video).toMatchObject({
+      transcriptStatus: "failed",
+      transcriptCheckError: "persistent metadata failure",
+      transcriptCheckedAt: expect.any(String),
+      transcriptRetryAt: expect.any(String),
+    });
+    expect(
+      Date.parse(detail.video.transcriptRetryAt ?? ""),
+    ).toBeGreaterThan(Date.parse(detail.video.transcriptCheckedAt ?? ""));
+  });
+
+  it("does not retry or schedule permanent transcript failures", async () => {
+    const videoId = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO source_videos (id, source_type, source_ref, title)
+       VALUES (?, 'youtube', ?, ?)`,
+    )
+      .bind(
+        videoId,
+        "https://www.youtube.com/watch?v=transcript-terminal",
+        "Unsupported transcript video",
+      )
+      .run();
+
+    const response = await workerFetch(
+      `http://example.com/api/videos/${videoId}/transcript/check`,
+      { method: "POST" },
+    );
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({
+      error: "The URL is not a supported YouTube link.",
+    });
+
+    const detailResponse = await workerFetch(
+      `http://example.com/api/videos/${videoId}`,
+    );
+    expect(await detailResponse.json()).toMatchObject({
+      video: {
+        transcriptStatus: "failed",
+        transcriptCheckError: "The URL is not a supported YouTube link.",
+        transcriptCheckedAt: expect.any(String),
+        transcriptRetryAt: null,
+      },
+    });
+  });
+
   it("resolves and caches the YouTube title instead of using a clip title", async () => {
     const videoId = crypto.randomUUID();
     const clipId = crypto.randomUUID();
