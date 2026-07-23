@@ -433,6 +433,33 @@ print("yt-dlp stall line detection test passed")
   run("python3", ["-c", script]);
 }
 
+function testRetainedSourceDownloadCommand() {
+  const script = `
+import sys
+
+sys.path.insert(0, ${JSON.stringify(path.join(root, "container"))})
+from encoder import _ytdlp_download_command
+
+command, section_start = _ytdlp_download_command(
+    "https://www.youtube.com/watch?v=retained-source",
+    "/tmp/source.%(ext)s",
+    trim_start=0,
+    trim_end=0,
+    use_sections=False,
+    remux_to_mp4=True,
+)
+
+assert section_start == 0
+assert "--download-sections" not in command
+assert "--remux-video" in command
+assert command[command.index("--remux-video") + 1] == "mp4"
+
+print("Retained YouTube source command test passed")
+`;
+
+  run("python3", ["-c", script]);
+}
+
 function testSectionEncodeBounds() {
   const script = `
 import sys
@@ -2574,6 +2601,85 @@ HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
   }
 }
 
+function runRetainedYoutubeSourceContract(frameCounterPath: string) {
+  const retainedOutputDir = path.join(outputDir, "youtube-retained-source");
+  fs.rmSync(retainedOutputDir, { recursive: true, force: true });
+  fs.mkdirSync(retainedOutputDir, { recursive: true });
+
+  const jobId = "youtube-retained-source";
+  const jobPath = path.join(retainedOutputDir, "job.json");
+  fs.writeFileSync(
+    jobPath,
+    JSON.stringify({
+      jobId,
+      source: {
+        type: "youtube",
+        url: "https://www.youtube.com/watch?v=retained-source",
+      },
+      trimStart: 2,
+      trimEnd: 5,
+      caption: null,
+      filters: [],
+      quality: "1080p",
+      maxClipLengthSeconds: 60,
+      outputs: {
+        mp4Key: "clips/retained/clip.mp4",
+        thumbnailKey: "clips/retained/thumbnail.jpg",
+      },
+      retainSourceArtifact: true,
+      deferArtifactUpload: true,
+    }),
+  );
+
+  const retainedContainer = `${containerName}-retained-source`;
+  const encoderPort = 18096;
+  try {
+    const retained = runEncoderYoutubeJob(
+      retainedContainer,
+      encoderPort,
+      jobPath,
+      {
+        fakeYtdlpPath: path.join(fixturesDir, "fake-ytdlp-full.sh"),
+        outputDir: retainedOutputDir,
+        frameCounterPath,
+      },
+    );
+    if (retained.result.status !== "staged") {
+      throw new Error(
+        `Expected staged retained source, got ${retained.result.status}: ${retained.result.errorMessage ?? ""}`,
+      );
+    }
+    if (retained.logs.includes("--download-sections")) {
+      throw new Error("Retained source unexpectedly used a section download");
+    }
+    if (!retained.logs.includes("--remux-video mp4")) {
+      throw new Error("Retained source did not request MP4 remuxing");
+    }
+
+    for (const name of ["source.mp4", "clip.mp4", "thumbnail.jpg"]) {
+      const probe = spawnSync(
+        "curl",
+        [
+          "-sS",
+          "-o",
+          "/dev/null",
+          "-w",
+          "%{http_code}",
+          `http://127.0.0.1:${encoderPort}/outputs/${jobId}/${name}`,
+        ],
+        { encoding: "utf-8" },
+      );
+      if (probe.stdout?.trim() !== "200") {
+        throw new Error(`Retained output ${name} was not served`);
+      }
+    }
+
+    console.log("Encoder retained YouTube source contract test passed");
+  } finally {
+    run("docker", ["rm", "-f", retainedContainer]);
+  }
+}
+
 function runStageSourceContract(frameCounterPath: string) {
   fs.mkdirSync(outputDir, { recursive: true });
   const encoderPort = 18084;
@@ -3153,6 +3259,7 @@ function main() {
   testEncodeErrorClassification();
   testYoutubeErrorClassification();
   testYtdlpStallLineDetection();
+  testRetainedSourceDownloadCommand();
   testSectionEncodeBounds();
   testStreamCopyGate();
   buildImage();
@@ -3165,6 +3272,7 @@ function main() {
   runEncoderEncodeFailureContract();
   runEncoderContract(barsPath, frameCounterPath);
   runEncoderGifContract(barsPath);
+  runRetainedYoutubeSourceContract(frameCounterPath);
   runEncoderUploadContract(frameCounterPath);
   runEncoderCaptionContract(barsPath, frameCounterPath);
 }

@@ -4,7 +4,8 @@ import type { UIMessage } from "ai";
 import { useAgent } from "agents/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  extractTimestampWindows,
+  extractTimestampEntities,
+  type TimestampEntity,
   type TimestampWindow,
 } from "../timestamp-windows";
 import { ClipApprovalCard } from "./ClipApprovalCard";
@@ -50,6 +51,7 @@ export function VideoAgentChat({
     useState<ClipWindowSeconds>(10);
   const [connected, setConnected] = useState(false);
   const completedClipIds = useRef(new Set<string>());
+  const lastAutoAppliedTimestamp = useRef<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
   const agent = useAgent({
@@ -67,12 +69,36 @@ export function VideoAgentChat({
     error,
   } = useAgentChat({ agent });
   const chatMessages = messages as UIMessage[];
-  const timestampWindows = useMemo(
-    () => extractTimestampWindows(input, clipWindowSeconds),
+  const timestampEntities = useMemo(
+    () => extractTimestampEntities(input, clipWindowSeconds),
     [clipWindowSeconds, input],
   );
+  const composerMirrorRef = useRef<HTMLDivElement>(null);
 
   const working = status === "submitted" || status === "streaming";
+
+  useEffect(() => {
+    const entity = timestampEntities.at(-1);
+    if (!entity) {
+      lastAutoAppliedTimestamp.current = null;
+      return;
+    }
+
+    const signature = [
+      entity.startIndex,
+      entity.endIndex,
+      entity.startSeconds,
+      entity.endSeconds,
+    ].join(":");
+    if (lastAutoAppliedTimestamp.current === signature) return;
+
+    lastAutoAppliedTimestamp.current = signature;
+    onTimestampSelect({
+      label: entity.label,
+      startSeconds: entity.startSeconds,
+      endSeconds: entity.endSeconds,
+    });
+  }, [onTimestampSelect, timestampEntities]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -198,67 +224,117 @@ export function VideoAgentChat({
         </div>
       ) : null}
 
-      <div className="agent-composer-tools">
-        <div className="agent-window-picker">
-          <span>Clip length</span>
-          <div role="group" aria-label="Default clip length">
-            {CLIP_WINDOW_SECONDS.map((seconds) => (
-              <button
-                key={seconds}
-                type="button"
-                aria-label={`Use ${seconds} second clips`}
-                aria-pressed={clipWindowSeconds === seconds}
-                onClick={() => setClipWindowSeconds(seconds)}
-              >
-                {seconds}s
-              </button>
-            ))}
+      <form className="agent-composer" onSubmit={submit}>
+        <div className="agent-composer-input">
+          <div
+            ref={composerMirrorRef}
+            className="agent-composer-highlight"
+          >
+            <TimestampHighlightedText
+              text={input}
+              entities={timestampEntities}
+              onSelect={onTimestampSelect}
+            />
           </div>
+          <textarea
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            onScroll={(event) => {
+              if (composerMirrorRef.current) {
+                composerMirrorRef.current.scrollTop =
+                  event.currentTarget.scrollTop;
+              }
+            }}
+            placeholder="Clip from 1:20 to 1:35…"
+            rows={3}
+            disabled={!connected || working}
+            aria-label="Clip instruction"
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                event.currentTarget.form?.requestSubmit();
+              }
+            }}
+          />
         </div>
-
-        {timestampWindows.length > 0 ? (
-          <div className="agent-detected-times" aria-label="Detected timestamps">
-            <span>Move editor</span>
-            <div>
-              {timestampWindows.map((window) => (
+        <div className="agent-composer-footer">
+          <div className="agent-window-picker">
+            <span>Clip length</span>
+            <div role="group" aria-label="Default clip length">
+              {CLIP_WINDOW_SECONDS.map((seconds) => (
                 <button
-                  key={`${window.startSeconds}-${window.endSeconds}`}
+                  key={seconds}
                   type="button"
-                  className="agent-timestamp-chip"
-                  aria-label={`Set editor to ${window.label.replace(" → ", " through ")}`}
-                  onClick={() => onTimestampSelect(window)}
+                  aria-label={`Use ${seconds} second clips`}
+                  aria-pressed={clipWindowSeconds === seconds}
+                  onClick={() => setClipWindowSeconds(seconds)}
                 >
-                  {window.label}
+                  {seconds}s
                 </button>
               ))}
             </div>
           </div>
-        ) : null}
-      </div>
-
-      <form className="agent-composer" onSubmit={submit}>
-        <textarea
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          placeholder="Clip from 1:20 to 1:35…"
-          rows={2}
-          disabled={!connected || working}
-          aria-label="Clip instruction"
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && !event.shiftKey) {
-              event.preventDefault();
-              event.currentTarget.form?.requestSubmit();
-            }
-          }}
-        />
-        <button
-          type="submit"
-          className="btn-primary"
-          disabled={!connected || working || !input.trim()}
-        >
-          Send
-        </button>
+          <button
+            type="submit"
+            className="btn-primary"
+            disabled={!connected || working || !input.trim()}
+          >
+            Send
+          </button>
+        </div>
       </form>
     </section>
   );
+}
+
+function TimestampHighlightedText({
+  text,
+  entities,
+  onSelect,
+}: {
+  text: string;
+  entities: TimestampEntity[];
+  onSelect: (window: TimestampWindow) => void;
+}) {
+  const parts: React.ReactNode[] = [];
+  let cursor = 0;
+
+  for (const entity of entities) {
+    if (entity.startIndex > cursor) {
+      parts.push(
+        <span aria-hidden="true" key={`text-${cursor}`}>
+          {text.slice(cursor, entity.startIndex)}
+        </span>,
+      );
+    }
+    parts.push(
+      <button
+        key={`timestamp-${entity.startIndex}-${entity.endIndex}`}
+        type="button"
+        className="agent-inline-timestamp"
+        aria-label={`Set editor to ${entity.label.replace(" → ", " through ")}`}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() =>
+          onSelect({
+            label: entity.label,
+            startSeconds: entity.startSeconds,
+            endSeconds: entity.endSeconds,
+          })
+        }
+      >
+        {entity.sourceText}
+      </button>,
+    );
+    cursor = entity.endIndex;
+  }
+
+  if (cursor < text.length) {
+    parts.push(
+      <span aria-hidden="true" key={`text-${cursor}`}>
+        {text.slice(cursor)}
+      </span>,
+    );
+  }
+
+  return parts;
 }

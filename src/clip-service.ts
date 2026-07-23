@@ -1,4 +1,8 @@
-import { getSourceVideoById, insertClip } from "./db";
+import {
+  getSourceVideoById,
+  insertClip,
+  markClipHelperPending,
+} from "./db";
 import type { Env } from "./env";
 import {
   isHelperEnabled,
@@ -48,12 +52,25 @@ export async function enqueueClip({
   videoId,
 }: EnqueueClipOptions): Promise<ClipResponse> {
   const clipId = crypto.randomUUID();
-  const useHelper =
-    isHelperEnabled(env) && clipRequest.source.type === "youtube";
   const record = await insertClip(env.DB, clipId, clipRequest, {
-    helperState: useHelper ? "pending" : undefined,
     videoId,
   });
+  const sourceVideo = record.video_id
+    ? await getSourceVideoById(env.DB, record.video_id)
+    : null;
+  const retainedYoutubeSourceReady =
+    sourceVideo?.retained_source_status === "ready" &&
+    Boolean(sourceVideo.retained_source_key);
+  const shouldUseHelper =
+    isHelperEnabled(env) &&
+    clipRequest.source.type === "youtube" &&
+    !retainedYoutubeSourceReady;
+  const useHelper =
+    shouldUseHelper && (await markClipHelperPending(env.DB, clipId));
+
+  if (useHelper) {
+    record.helper_state = "pending";
+  }
 
   if (useHelper) {
     waitUntil(

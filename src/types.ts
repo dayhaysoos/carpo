@@ -19,6 +19,8 @@ export type GifStatus = (typeof GIF_STATUSES)[number];
 
 export type SourceType = "youtube" | "upload";
 
+export type RetainedSourceStatus = "empty" | "importing" | "ready" | "failed";
+
 export type HelperState =
   | "pending"
   | "claimed"
@@ -129,6 +131,10 @@ export interface SourceVideoRecord {
   archived_at: string | null;
   youtube_title_resolved_at: string | null;
   youtube_title_checked_at: string | null;
+  retained_source_key: string | null;
+  retained_source_status: RetainedSourceStatus;
+  retained_source_error: string | null;
+  retained_source_updated_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -167,6 +173,7 @@ export interface ClipListResponse {
 
 export interface EncoderJobSpec {
   jobId: string;
+  sourceVideoId?: string;
   source: ClipSource;
   trimStart: number;
   trimEnd: number;
@@ -186,6 +193,8 @@ export interface EncoderJobSpec {
   };
   /** Worker-authenticated URL for the encoder to fetch an upload source. */
   sourceFetchUrl?: string;
+  /** Preserve a full YouTube download as a reusable source artifact. */
+  retainSourceArtifact?: boolean;
 }
 
 export interface GifEncoderJobSpec {

@@ -74,7 +74,7 @@ describe("VideoAgentChat", () => {
     });
   });
 
-  it("turns typed timestamps into clickable editor windows", async () => {
+  it("automatically applies typed timestamps and keeps them clickable", async () => {
     const user = userEvent.setup();
     const onTimestampSelect = vi.fn();
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
@@ -94,10 +94,28 @@ describe("VideoAgentChat", () => {
       name: "Clip instruction",
     });
     await user.type(instruction, "Start at 10:23");
+
+    expect(onTimestampSelect).toHaveBeenLastCalledWith({
+      label: "10:23 → 10:33",
+      startSeconds: 623,
+      endSeconds: 633,
+    });
+
     await user.click(screen.getByRole("button", { name: "Use 30 second clips" }));
-    await user.click(
-      screen.getByRole("button", { name: "Set editor to 10:23 through 10:53" }),
-    );
+    expect(onTimestampSelect).toHaveBeenLastCalledWith({
+      label: "10:23 → 10:53",
+      startSeconds: 623,
+      endSeconds: 653,
+    });
+
+    const timestamp = screen.getByRole("button", {
+      name: "Set editor to 10:23 through 10:53",
+    });
+
+    expect(timestamp.closest(".agent-composer-input")).toBeTruthy();
+    expect(screen.queryByText("Move editor")).toBeNull();
+    onTimestampSelect.mockClear();
+    await user.click(timestamp);
 
     expect(onTimestampSelect).toHaveBeenCalledWith({
       label: "10:23 → 10:53",

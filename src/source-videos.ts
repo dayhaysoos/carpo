@@ -1,5 +1,7 @@
 import type { ClipSource } from "./types";
 
+const RETAINED_YOUTUBE_SOURCE_KEY_PREFIX = "sources/youtube/";
+
 export function extractYoutubeVideoId(urlString: string): string | null {
   try {
     const url = new URL(urlString);
@@ -33,6 +35,14 @@ export function normalizeClipSource(source: ClipSource): ClipSource {
 
 export function sourceReference(source: ClipSource): string {
   return source.type === "youtube" ? source.url : source.key;
+}
+
+export function youtubeRetainedSourceKey(videoId: string): string {
+  return `${RETAINED_YOUTUBE_SOURCE_KEY_PREFIX}${videoId}/source.mp4`;
+}
+
+export function isYoutubeRetainedSourceKey(key: string): boolean {
+  return key.startsWith(RETAINED_YOUTUBE_SOURCE_KEY_PREFIX);
 }
 
 export function fallbackSourceTitle(source: ClipSource, clipTitle: string): string {

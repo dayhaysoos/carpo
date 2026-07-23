@@ -6,9 +6,20 @@ import {
   failClipAmbiguous,
   recordEncoderRunOutcome,
 } from "./jobs";
-import { markClipDownloadingIfQueued, markGifComplete } from "./db";
+import {
+  getSourceVideoById,
+  markClipDownloadingIfQueued,
+  markGifComplete,
+  markSourceVideoRetainedSourceFailed,
+  markSourceVideoRetainedSourceImporting,
+  markSourceVideoRetainedSourceReady,
+} from "./db";
 import type { EncoderJobSpec, GifEncoderJobSpec } from "./types";
 import { UPLOAD_KEY_PREFIX } from "./uploads";
+import {
+  isYoutubeRetainedSourceKey,
+  youtubeRetainedSourceKey,
+} from "./source-videos";
 
 type RunJobSpec = Omit<EncoderJobSpec, "source"> & {
   deferArtifactUpload?: boolean;
@@ -245,9 +256,72 @@ export class EncoderContainer extends Container<Env> {
       lastPhase = now;
     };
 
+    let retainedSourceAttempt:
+      | { videoId: string; key: string }
+      | null = null;
+    let retainedSourceReady = false;
+
     try {
+      if (job.source?.type === "youtube" && job.sourceVideoId) {
+        const sourceVideo = await getSourceVideoById(
+          this.env.DB,
+          job.sourceVideoId,
+        );
+        if (!sourceVideo) {
+          await failClip(this.env, clipId, "Video source not found");
+          return Response.json(
+            { status: "failed", errorMessage: "Video source not found" },
+            { status: 404 },
+          );
+        }
+
+        if (
+          sourceVideo.retained_source_status === "ready" &&
+          sourceVideo.retained_source_key
+        ) {
+          const staged = await this.stageBucketSource(
+            sourceVideo.retained_source_key,
+            jobId,
+          );
+          if (staged.ok) {
+            logPhase("stage-retained-source");
+            job = {
+              ...job,
+              source: { type: "file", path: stagedSourcePath(jobId) },
+            } as RunJobSpec;
+          } else {
+            await markSourceVideoRetainedSourceFailed(
+              this.env.DB,
+              sourceVideo.id,
+              staged.error,
+            );
+          }
+        }
+
+        if (job.source?.type === "youtube") {
+          const key = youtubeRetainedSourceKey(sourceVideo.id);
+          const marked = await markSourceVideoRetainedSourceImporting(
+            this.env.DB,
+            sourceVideo.id,
+            key,
+          );
+          if (!marked) {
+            await failClip(this.env, clipId, "Unable to retain video source");
+            return Response.json(
+              {
+                status: "failed",
+                errorMessage: "Unable to retain video source",
+              },
+              { status: 500 },
+            );
+          }
+          retainedSourceAttempt = { videoId: sourceVideo.id, key };
+          job = { ...job, retainSourceArtifact: true };
+        }
+      }
+
       if (job.source?.type === "upload") {
-        const staged = await this.stageUploadSource(job.source.key, jobId);
+        const staged = await this.stageBucketSource(job.source.key, jobId);
         logPhase("stage-source");
         if (!staged.ok) {
           await failClip(this.env, clipId, staged.error);
@@ -285,6 +359,23 @@ export class EncoderContainer extends Container<Env> {
         const result = classified.result;
         if (result.status === "staged" || result.status === "complete") {
           try {
+            if (retainedSourceAttempt) {
+              await this.uploadDeferredSource(
+                retainedSourceAttempt.key,
+                jobId,
+              );
+              const retained = await markSourceVideoRetainedSourceReady(
+                this.env.DB,
+                retainedSourceAttempt.videoId,
+                retainedSourceAttempt.key,
+              );
+              if (!retained) {
+                await this.env.CLIPS_BUCKET.delete(retainedSourceAttempt.key);
+                throw new Error("Video was deleted during source import");
+              }
+              retainedSourceReady = true;
+              logPhase("retain-source");
+            }
             await this.uploadDeferredArtifacts(job.outputs, jobId);
             logPhase("upload-artifacts");
           } catch (error) {
@@ -293,6 +384,13 @@ export class EncoderContainer extends Container<Env> {
               error instanceof Error
                 ? error.message
                 : "Failed to upload encoded artifacts";
+            if (retainedSourceAttempt && !retainedSourceReady) {
+              await markSourceVideoRetainedSourceFailed(
+                this.env.DB,
+                retainedSourceAttempt.videoId,
+                message,
+              );
+            }
             await failClip(this.env, clipId, message);
             return Response.json(
               { status: "failed", errorMessage: message },
@@ -323,27 +421,51 @@ export class EncoderContainer extends Container<Env> {
       this.ctx.waitUntil(recordEncoderRunOutcome(this.env, clipId, classified));
       await recordEncoderRunOutcome(this.env, clipId, classified);
 
+      if (retainedSourceAttempt && !retainedSourceReady) {
+        const message =
+          classified.kind === "ok"
+            ? classified.result.errorMessage ?? "Source import failed"
+            : "Source import failed";
+        await markSourceVideoRetainedSourceFailed(
+          this.env.DB,
+          retainedSourceAttempt.videoId,
+          message,
+        );
+      }
+
       if (classified.kind === "ok") {
         return Response.json(classified.result, { status: response.status });
       }
 
       return new Response(rawBody || null, { status: response.status });
+    } catch (error) {
+      if (retainedSourceAttempt && !retainedSourceReady) {
+        await markSourceVideoRetainedSourceFailed(
+          this.env.DB,
+          retainedSourceAttempt.videoId,
+          error instanceof Error ? error.message : "Source import failed",
+        );
+      }
+      throw error;
     } finally {
       await this.cleanupJobFiles(jobId);
     }
   }
 
-  private async stageUploadSource(
-    uploadKey: string,
+  private async stageBucketSource(
+    sourceKey: string,
     jobId: string,
   ): Promise<{ ok: true } | { ok: false; error: string }> {
-    if (!uploadKey.startsWith(UPLOAD_KEY_PREFIX)) {
-      return { ok: false, error: "Invalid upload key" };
+    if (
+      !sourceKey.startsWith(UPLOAD_KEY_PREFIX) &&
+      !isYoutubeRetainedSourceKey(sourceKey)
+    ) {
+      return { ok: false, error: "Invalid video source key" };
     }
 
-    const object = await this.env.CLIPS_BUCKET.get(uploadKey);
+    const object = await this.env.CLIPS_BUCKET.get(sourceKey);
     if (!object) {
-      return { ok: false, error: "Upload source not found" };
+      return { ok: false, error: "Video source not found" };
     }
 
     const headers = new Headers();
@@ -354,7 +476,7 @@ export class EncoderContainer extends Container<Env> {
     headers.set("Content-Length", String(object.size));
 
     if (!object.body) {
-      return { ok: false, error: "Upload source body is empty" };
+      return { ok: false, error: "Video source body is empty" };
     }
 
     const { readable, writable } = new FixedLengthStream(object.size);
@@ -374,7 +496,7 @@ export class EncoderContainer extends Container<Env> {
       const detail = await stageResponse.text();
       return {
         ok: false,
-        error: detail || `Failed to stage upload source (${stageResponse.status})`,
+        error: detail || `Failed to stage video source (${stageResponse.status})`,
       };
     }
 
@@ -526,6 +648,29 @@ export class EncoderContainer extends Container<Env> {
     const head = await this.env.CLIPS_BUCKET.head(gifKey);
     if (!head) {
       throw new Error("GIF artifact was not durably stored in R2");
+    }
+  }
+
+  private async uploadDeferredSource(
+    sourceKey: string,
+    jobId: string,
+  ): Promise<void> {
+    const sourceResponse = await super.fetch(
+      new Request(jobOutputUrl(jobId, "source.mp4")),
+    );
+    if (!sourceResponse.ok) {
+      throw new Error(
+        `Failed to read retained source (${sourceResponse.status})`,
+      );
+    }
+
+    await this.env.CLIPS_BUCKET.put(sourceKey, sourceResponse.body, {
+      httpMetadata: { contentType: "video/mp4" },
+    });
+
+    const head = await this.env.CLIPS_BUCKET.head(sourceKey);
+    if (!head) {
+      throw new Error("Video source was not durably stored in R2");
     }
   }
 

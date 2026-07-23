@@ -9,12 +9,19 @@ Successor to [gfycat-machine](https://github.com/ndejesus1227/gfycat-machine), r
 - **Frontend:** Vite + React + TypeScript, served as static assets from a Cloudflare Worker
 - **API:** Cloudflare Worker (create jobs, poll status, library, downloads)
 - **Encoder:** Cloudflare Container running `yt-dlp` + `ffmpeg`, one instance per job
-- **Storage:** R2 (clips + thumbnails), D1 (clip records)
+- **Storage:** R2 (retained source videos, clips, and thumbnails), D1 (video and clip records)
 - **Auth:** Cloudflare Access in front of the whole app
 
 ## Helper daemon
 
 For reliable YouTube downloads from a residential IP, see [helper/README.md](helper/README.md).
+
+## Reusable YouTube sources
+
+The first server-side clip from a YouTube video imports a complete 1080p source
+into R2. Later clips stage that retained source directly into the encoder and do
+not contact YouTube again. The retained object is removed only when its video is
+explicitly deleted.
 
 ## Status
 

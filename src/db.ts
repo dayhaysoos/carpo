@@ -159,6 +159,22 @@ export async function markClipDownloadingIfQueued(
   return (result.meta.changes ?? 0) > 0;
 }
 
+export async function markClipHelperPending(
+  db: D1Database,
+  id: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE clips
+       SET helper_state = 'pending',
+           updated_at = datetime('now')
+       WHERE id = ? AND status = 'queued'`,
+    )
+    .bind(id)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
 // Terminal status guards (compare-and-set): complete and confirmed-failed are
 // sticky. Writes succeed only when status != 'complete' AND NOT (status =
 // 'failed' AND failure_mode = 'confirmed'). Confirmed failure may overwrite
@@ -285,6 +301,10 @@ const SOURCE_VIDEO_SELECT = `
     source_videos.archived_at,
     source_videos.youtube_title_resolved_at,
     source_videos.youtube_title_checked_at,
+    source_videos.retained_source_key,
+    source_videos.retained_source_status,
+    source_videos.retained_source_error,
+    source_videos.retained_source_updated_at,
     source_videos.created_at,
     COALESCE(MAX(clips.updated_at), source_videos.updated_at) AS updated_at
   FROM source_videos
@@ -372,6 +392,63 @@ export async function markSourceVideoTitleChecked(
     .run();
 }
 
+export async function markSourceVideoRetainedSourceImporting(
+  db: D1Database,
+  id: string,
+  key: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE source_videos
+       SET retained_source_key = ?,
+           retained_source_status = 'importing',
+           retained_source_error = NULL,
+           retained_source_updated_at = datetime('now')
+       WHERE id = ? AND source_type = 'youtube'`,
+    )
+    .bind(key, id)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function markSourceVideoRetainedSourceReady(
+  db: D1Database,
+  id: string,
+  key: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE source_videos
+       SET retained_source_key = ?,
+           retained_source_status = 'ready',
+           retained_source_error = NULL,
+           retained_source_updated_at = datetime('now'),
+           updated_at = datetime('now')
+       WHERE id = ? AND source_type = 'youtube'`,
+    )
+    .bind(key, id)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function markSourceVideoRetainedSourceFailed(
+  db: D1Database,
+  id: string,
+  errorMessage: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE source_videos
+       SET retained_source_status = 'failed',
+           retained_source_error = ?,
+           retained_source_updated_at = datetime('now')
+       WHERE id = ? AND source_type = 'youtube'`,
+    )
+    .bind(errorMessage, id)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
 export async function isRetainedUploadSource(
   db: D1Database,
   key: string,
@@ -394,6 +471,12 @@ export async function deleteSourceVideoRecords(
 ): Promise<boolean> {
   const results = await db.batch([
     ...queueClipArtifactDeletions(db, "video_id", id),
+    db.prepare(
+      `INSERT OR IGNORE INTO artifact_deletions (key)
+       SELECT retained_source_key
+       FROM source_videos
+       WHERE id = ? AND retained_source_key IS NOT NULL`,
+    ).bind(id),
     db.prepare(
       `INSERT OR IGNORE INTO artifact_deletions (key)
        SELECT source_ref

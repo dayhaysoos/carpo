@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { extractTimestampWindows } from "./timestamp-windows";
+import {
+  extractTimestampEntities,
+  extractTimestampWindows,
+} from "./timestamp-windows";
 
 describe("extractTimestampWindows", () => {
   it("turns a standalone timestamp into the selected default clip window", () => {
@@ -39,5 +42,20 @@ describe("extractTimestampWindows", () => {
 
   it("ignores incomplete or invalid timestamps", () => {
     expect(extractTimestampWindows("Try 10:9 or 10:99", 10)).toEqual([]);
+  });
+
+  it("locates the source text used for an inline timestamp control", () => {
+    expect(
+      extractTimestampEntities("Clip 10:23 to 10:41 please", 30),
+    ).toEqual([
+      {
+        label: "10:23 → 10:41",
+        sourceText: "10:23 to 10:41",
+        startIndex: 5,
+        endIndex: 19,
+        startSeconds: 623,
+        endSeconds: 641,
+      },
+    ]);
   });
 });

@@ -1025,6 +1025,7 @@ def _ytdlp_download_command(
     trim_end: float,
     use_sections: bool,
     force_keyframes: bool = False,
+    remux_to_mp4: bool = False,
     quality: str = DEFAULT_QUALITY,
 ) -> tuple[list[str], float]:
     section_start = 0.0
@@ -1052,6 +1053,8 @@ def _ytdlp_download_command(
         "-f",
         format_selector,
     ]
+    if remux_to_mp4:
+        command.extend(["--remux-video", "mp4"])
     if use_sections:
         section_start, section_end = youtube_section_bounds(
             trim_start,
@@ -1080,6 +1083,32 @@ def _ytdlp_download_command(
         ],
     )
     return command, section_start
+
+
+def download_youtube_full(
+    url: str,
+    workdir: Path,
+    *,
+    quality: str = DEFAULT_QUALITY,
+) -> Path:
+    """Download and normalize a complete YouTube source for durable reuse."""
+    output_template = str(workdir / "source.%(ext)s")
+    command, _ = _ytdlp_download_command(
+        url,
+        output_template,
+        trim_start=0,
+        trim_end=0,
+        use_sections=False,
+        remux_to_mp4=True,
+        quality=quality,
+    )
+    started = time.monotonic()
+    run_ytdlp(command, workdir)
+    log(
+        "phase timing: full source download: "
+        f"{time.monotonic() - started:.1f}s",
+    )
+    return _resolve_ytdlp_source_path(workdir)
 
 
 def _resolve_ytdlp_source_path(workdir: Path) -> Path:
@@ -1589,13 +1618,21 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
             if source_type == "youtube":
                 log_ytdlp_environment()
                 download_started = time.monotonic()
-                source_path, encode_trim_start, encode_trim_end = download_youtube(
-                    source["url"],
-                    workdir,
-                    trim_start=trim_start,
-                    trim_end=trim_end,
-                    quality=quality,
-                )
+                if job.get("retainSourceArtifact"):
+                    source_path = download_youtube_full(
+                        source["url"],
+                        workdir,
+                    )
+                else:
+                    source_path, encode_trim_start, encode_trim_end = (
+                        download_youtube(
+                            source["url"],
+                            workdir,
+                            trim_start=trim_start,
+                            trim_end=trim_end,
+                            quality=quality,
+                        )
+                    )
                 log(
                     "phase timing: download total: "
                     f"{time.monotonic() - download_started:.1f}s",
@@ -1663,6 +1700,8 @@ def process_job(job: dict[str, Any]) -> dict[str, Any]:
                 out_dir.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(output_mp4, out_dir / "clip.mp4")
                 shutil.copy2(output_thumb, out_dir / "thumbnail.jpg")
+                if source_type == "youtube" and job.get("retainSourceArtifact"):
+                    shutil.move(source_path, out_dir / "source.mp4")
             else:
                 upload_artifacts(
                     job,
@@ -1734,6 +1773,7 @@ class EncoderHandler(BaseHTTPRequestHandler):
                     "clip.mp4": "video/mp4",
                     "thumbnail.jpg": "image/jpeg",
                     "clip.gif": "image/gif",
+                    "source.mp4": "video/mp4",
                 }
                 if name in content_types:
                     try:

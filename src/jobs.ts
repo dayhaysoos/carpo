@@ -162,6 +162,7 @@ export async function dispatchEncodingJob(
 
     const jobSpec: EncoderJobSpec = {
       jobId: clipId,
+      sourceVideoId: record.video_id ?? undefined,
       source: request.source,
       trimStart: request.trimStart,
       trimEnd: request.trimEnd,

@@ -9,7 +9,7 @@ export function statusLabel(status: ClipStatus): string {
     case "queued":
       return "Queued";
     case "downloading":
-      return "Downloading";
+      return "Preparing source";
     case "encoding":
       return "Encoding";
     case "uploading":

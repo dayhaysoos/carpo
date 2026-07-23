@@ -6,6 +6,12 @@ export interface TimestampWindow {
   endSeconds: number;
 }
 
+export interface TimestampEntity extends TimestampWindow {
+  sourceText: string;
+  startIndex: number;
+  endIndex: number;
+}
+
 export interface ClipWindowRequest extends TimestampWindow {
   requestId: number;
 }
@@ -44,9 +50,30 @@ export function extractTimestampWindows(
   text: string,
   defaultDurationSeconds: number,
 ): TimestampWindow[] {
-  const matches = timestampMatches(text);
+  const entities = extractTimestampEntities(text, defaultDurationSeconds);
   const windows: TimestampWindow[] = [];
   const seen = new Set<string>();
+
+  for (const entity of entities) {
+    const key = `${entity.startSeconds}:${entity.endSeconds}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    windows.push({
+      label: entity.label,
+      startSeconds: entity.startSeconds,
+      endSeconds: entity.endSeconds,
+    });
+  }
+
+  return windows;
+}
+
+export function extractTimestampEntities(
+  text: string,
+  defaultDurationSeconds: number,
+): TimestampEntity[] {
+  const matches = timestampMatches(text);
+  const entities: TimestampEntity[] = [];
   const defaultDuration = Math.max(1, defaultDurationSeconds);
 
   for (let index = 0; index < matches.length; index += 1) {
@@ -65,19 +92,20 @@ export function extractTimestampWindows(
     const endLabel = isExplicitRange
       ? next.label
       : compactTimestamp(endSeconds);
-    const key = `${current.seconds}:${endSeconds}`;
+    const sourceEndIndex = isExplicitRange
+      ? next.endIndex
+      : current.endIndex;
 
-    if (!seen.has(key)) {
-      seen.add(key);
-      windows.push({
-        label: `${current.label} → ${endLabel}`,
-        startSeconds: current.seconds,
-        endSeconds,
-      });
-    }
-
+    entities.push({
+      label: `${current.label} → ${endLabel}`,
+      sourceText: text.slice(current.startIndex, sourceEndIndex),
+      startIndex: current.startIndex,
+      endIndex: sourceEndIndex,
+      startSeconds: current.seconds,
+      endSeconds,
+    });
     if (isExplicitRange) index += 1;
   }
 
-  return windows;
+  return entities;
 }

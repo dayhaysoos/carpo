@@ -2660,6 +2660,106 @@ describe("source video library", () => {
     );
   });
 
+  it("imports a YouTube source once and reuses it for later clips", async () => {
+    const savedHelperToken = env.HELPER_TOKEN;
+    env.HELPER_TOKEN = undefined;
+
+    try {
+      const firstResponse = await workerFetch("http://example.com/api/clips", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: "first retained YouTube clip",
+          sourceTitle: "Reusable YouTube source",
+          source: {
+            type: "youtube",
+            url: "https://www.youtube.com/watch?v=retain-source-once",
+          },
+          trimStart: 10,
+          trimEnd: 15,
+          filters: [],
+        }),
+      });
+      expect(firstResponse.status).toBe(201);
+      const first = (await firstResponse.json()) as {
+        id: string;
+        videoId: string;
+      };
+
+      let cached: {
+        retained_source_key: string | null;
+        retained_source_status: string;
+      } | null = null;
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        cached = await env.DB.prepare(
+          `SELECT retained_source_key, retained_source_status
+           FROM source_videos WHERE id = ?`,
+        )
+          .bind(first.videoId)
+          .first<{
+          retained_source_key: string | null;
+          retained_source_status: string;
+        }>();
+        if (cached?.retained_source_status === "ready") break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(cached).toEqual({
+        retained_source_key: `sources/youtube/${first.videoId}/source.mp4`,
+        retained_source_status: "ready",
+      });
+      expect(await env.CLIPS_BUCKET.head(cached!.retained_source_key!)).not.toBeNull();
+      expect(await getEncoderJobEvents(first.id)).toContain("retain-source");
+
+      env.HELPER_TOKEN = savedHelperToken ?? TEST_HELPER_TOKEN;
+      const secondResponse = await workerFetch(
+        `http://example.com/api/videos/${first.videoId}/clips`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: "second retained YouTube clip",
+            trimStart: 40,
+            trimEnd: 45,
+            filters: [],
+          }),
+        },
+      );
+      expect(secondResponse.status).toBe(201);
+      const second = (await secondResponse.json()) as { id: string };
+      let secondEvents: string[] = [];
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        secondEvents = await getEncoderJobEvents(second.id);
+        if (secondEvents.includes("stage-retained-source")) break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(secondEvents).toContain("stage-retained-source");
+      expect(secondEvents).not.toContain("retain-source");
+
+      let secondStatus = "";
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        const statusResponse = await workerFetch(
+          `http://example.com/api/clips/${second.id}`,
+        );
+        const statusBody = (await statusResponse.json()) as { status?: string };
+        secondStatus = statusBody.status ?? "";
+        if (secondStatus === "complete" || secondStatus === "failed") break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(secondStatus).toBe("complete");
+
+      const deleted = await workerFetch(
+        `http://example.com/api/videos/${first.videoId}`,
+        { method: "DELETE" },
+      );
+      expect(deleted.status).toBe(204);
+      expect(
+        await env.CLIPS_BUCKET.head(cached!.retained_source_key!),
+      ).toBeNull();
+    } finally {
+      env.HELPER_TOKEN = savedHelperToken;
+    }
+  });
+
   it("keeps reused legacy YouTube URLs attached to their existing video", async () => {
     const legacyVideoId = crypto.randomUUID();
     await env.DB.prepare(

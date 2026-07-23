@@ -6,8 +6,15 @@ import {
   classifyEncoderRunResponse,
   recordEncoderRunOutcome,
 } from "../src/jobs";
-import { markClipDownloadingIfQueued, markGifComplete } from "../src/db";
+import {
+  getSourceVideoById,
+  markClipDownloadingIfQueued,
+  markGifComplete,
+  markSourceVideoRetainedSourceImporting,
+  markSourceVideoRetainedSourceReady,
+} from "../src/db";
 import type { EncoderJobSpec, GifEncoderJobSpec } from "../src/types";
+import { youtubeRetainedSourceKey } from "../src/source-videos";
 
 const FAKE_MP4 = new Uint8Array([
   0x00, 0x00, 0x00, 0x1c, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d,
@@ -279,6 +286,31 @@ export class EncoderStub extends DurableObject<Env> {
   private async runYoutubeJob(encodeJob: EncoderJobSpec): Promise<Response> {
     return this.withRunSlot(async () => {
       await markClipDownloadingIfQueued(this.env.DB, encodeJob.jobId);
+
+      const simulatesRetainedSource =
+        encodeJob.source.type === "youtube" &&
+        encodeJob.source.url.includes("retain-source-once");
+      if (encodeJob.sourceVideoId && simulatesRetainedSource) {
+        const video = await getSourceVideoById(
+          this.env.DB,
+          encodeJob.sourceVideoId,
+        );
+        if (
+          video?.retained_source_status === "ready" &&
+          video.retained_source_key &&
+          (await this.env.CLIPS_BUCKET.head(video.retained_source_key))
+        ) {
+          this.recordJobEvent(encodeJob.jobId, "stage-retained-source");
+        } else if (video) {
+          const key = youtubeRetainedSourceKey(video.id);
+          await markSourceVideoRetainedSourceImporting(this.env.DB, video.id, key);
+          await this.env.CLIPS_BUCKET.put(key, FAKE_MP4, {
+            httpMetadata: { contentType: "video/mp4" },
+          });
+          await markSourceVideoRetainedSourceReady(this.env.DB, video.id, key);
+          this.recordJobEvent(encodeJob.jobId, "retain-source");
+        }
+      }
 
       const authHeaders = {
         "Content-Type": "application/json",
