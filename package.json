@@ -14,7 +14,7 @@
     "deploy": "npm run build:web && wrangler deploy",
     "typecheck": "tsc --noEmit && npm run typecheck -w web",
     "test": "npm run test:api && npm run test:web",
-    "test:api": "vitest run test/api.test.ts",
+    "test:api": "vitest run test",
     "test:web": "npm test --workspace web",
     "test:encoder": "node --experimental-strip-types scripts/test-encoder-contract.ts",
     "test:helper": "python3 -m unittest discover helper",
@@ -22,7 +22,11 @@
     "db:migrate:local": "wrangler d1 migrations apply carpo --local"
   },
   "dependencies": {
-    "@cloudflare/containers": "^0.0.30"
+    "@cloudflare/containers": "^0.0.30",
+    "@cloudflare/think": "^0.14.0",
+    "agents": "^0.18.0",
+    "ai": "^6.0.234",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.18.2",

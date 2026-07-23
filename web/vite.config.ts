@@ -11,6 +11,10 @@ export default defineConfig({
     proxy: {
       "/api": "http://localhost:8787",
       "/artifacts": "http://localhost:8787",
+      "/agents": {
+        target: "http://localhost:8787",
+        ws: true,
+      },
     },
   },
 });

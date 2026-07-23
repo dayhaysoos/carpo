@@ -1,7 +1,9 @@
 export interface Env {
+  AI: Ai;
   DB: D1Database;
   CLIPS_BUCKET: R2Bucket;
   ENCODER_CONTAINER: DurableObjectNamespace;
+  VideoClipAgent: DurableObjectNamespace;
   ASSETS: Fetcher;
   MAX_CLIP_LENGTH_SECONDS: string;
   R2_PUBLIC_PREFIX: string;

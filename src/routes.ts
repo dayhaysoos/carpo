@@ -4,7 +4,6 @@ import {
   deleteSourceVideoRecords,
   getClipById,
   getSourceVideoById,
-  insertClip,
   isRetainedUploadSource,
   listClips,
   listClipsByVideoId,
@@ -18,7 +17,7 @@ import {
 import type { Env } from "./env";
 import { prewarmEncoder } from "./encoder-pool";
 import { JOB_SECRET_HEADER, verifyJobSecret } from "./auth";
-import { applyStatusUpdate, dispatchEncodingJob, dispatchGifExportJob } from "./jobs";
+import { applyStatusUpdate, dispatchGifExportJob } from "./jobs";
 import { recordToResponse, sourceVideoRecordToResponse } from "./serialize";
 import type { ClipRecord, ClipStatus, CreateClipRequest } from "./types";
 import {
@@ -35,13 +34,12 @@ import {
   handleHelperClaim,
   handleHelperFail,
   handleHelperFulfill,
-  isHelperEnabled,
-  scheduleHelperClaimWindowFallback,
   sweepAndRecoverHelperClips,
 } from "./helper";
 import { normalizeClipSource } from "./source-videos";
 import { drainArtifactDeletions } from "./artifact-deletions";
 import { resolveUnresolvedYoutubeTitles } from "./youtube-metadata";
+import { createClipForVideo, enqueueClip } from "./clip-service";
 
 export async function handleRequest(
   request: Request,
@@ -253,11 +251,6 @@ async function handleCreateClipForVideo(
   env: Env,
   ctx: ExecutionContext,
 ): Promise<Response> {
-  const video = await getSourceVideoById(env.DB, videoId);
-  if (!video) {
-    return json({ error: "Video not found" }, 404);
-  }
-
   let body: unknown;
   try {
     body = await request.json();
@@ -265,51 +258,19 @@ async function handleCreateClipForVideo(
     return json({ error: "Invalid JSON body" }, 400);
   }
 
-  const source =
-    video.source_type === "youtube"
-      ? { type: "youtube" as const, url: video.source_ref }
-      : { type: "upload" as const, key: video.source_ref };
-  const validation = validateCreateClipRequest(
-    {
-      ...(body && typeof body === "object" ? body : {}),
-      source,
-      sourceTitle: video.title,
-    },
-    Number(env.MAX_CLIP_LENGTH_SECONDS) || 60,
-  );
-  if (!validation.ok) {
-    return json({ error: "Validation failed", details: validation.errors }, 400);
-  }
-
-  if (source.type === "upload") {
-    const object = await env.CLIPS_BUCKET.head(source.key);
-    if (!object) {
-      return json(
-        {
-          error: "Video source unavailable",
-          details: [
-            {
-              field: "videoId",
-              message: "The original uploaded video is no longer available",
-            },
-          ],
-        },
-        409,
-      );
-    }
-  }
-
-  const clipRequest = {
-    ...validation.value,
-    source: normalizeClipSource(validation.value.source),
-  };
-  return createClipJob(
-    clipRequest,
-    env,
-    ctx,
-    new URL(request.url).origin,
+  const result = await createClipForVideo({
     videoId,
-  );
+    input: body,
+    env,
+    origin: new URL(request.url).origin,
+    waitUntil: (promise) => ctx.waitUntil(promise),
+  });
+  return result.ok
+    ? json(result.clip, 201)
+    : json(
+        { error: result.error, ...(result.details ? { details: result.details } : {}) },
+        result.status,
+      );
 }
 
 async function createClipJob(
@@ -319,30 +280,14 @@ async function createClipJob(
   origin: string,
   videoId?: string,
 ): Promise<Response> {
-  const clipId = crypto.randomUUID();
-  const useHelper =
-    isHelperEnabled(env) && clipRequest.source.type === "youtube";
-  const record = await insertClip(
-    env.DB,
-    clipId,
+  const clip = await enqueueClip({
     clipRequest,
-    {
-      helperState: useHelper ? "pending" : undefined,
-      videoId,
-    },
-  );
-
-  if (useHelper) {
-    ctx.waitUntil(
-      scheduleHelperClaimWindowFallback(env, clipId, origin, ctx),
-    );
-  } else {
-    ctx.waitUntil(
-      dispatchEncodingJob(env, clipId, clipRequest, origin),
-    );
-  }
-
-  return json(recordToResponse(record, env.R2_PUBLIC_PREFIX), 201);
+    env,
+    origin,
+    waitUntil: (promise) => ctx.waitUntil(promise),
+    videoId,
+  });
+  return json(clip, 201);
 }
 
 async function handleSourceVideoSource(
@@ -393,13 +338,17 @@ function resolveR2Range(
   if (!range) {
     return null;
   }
-  if ("suffix" in range) {
+  if ("suffix" in range && typeof range.suffix === "number") {
     const length = Math.min(range.suffix, objectSize);
     return { offset: objectSize - length, length };
   }
 
-  const offset = range.offset ?? 0;
-  const length = range.length ?? objectSize - offset;
+  const offset =
+    "offset" in range && typeof range.offset === "number" ? range.offset : 0;
+  const length =
+    "length" in range && typeof range.length === "number"
+      ? range.length
+      : objectSize - offset;
   return { offset, length };
 }
 

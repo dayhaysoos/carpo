@@ -50,7 +50,7 @@ export async function scheduleHelperClaimWindowFallback(
   env: Env,
   clipId: string,
   origin: string,
-  ctx: ExecutionContext,
+  ctx: Pick<ExecutionContext, "waitUntil">,
 ): Promise<void> {
   const windowMs = helperClaimWindowMs(env);
   if (windowMs > 0) {
@@ -78,7 +78,7 @@ export async function recoverHelperFallback(
   env: Env,
   record: ClipRecord,
   origin: string,
-  ctx: ExecutionContext,
+  ctx: Pick<ExecutionContext, "waitUntil">,
 ): Promise<void> {
   const claimed = await markHelperRecovering(env.DB, record.id);
   if (!claimed) {
@@ -100,7 +100,7 @@ export async function recoverHelperFallback(
 export async function sweepAndRecoverHelperClips(
   env: Env,
   origin: string,
-  ctx: ExecutionContext,
+  ctx: Pick<ExecutionContext, "waitUntil">,
 ): Promise<void> {
   await sweepStaleHelperClaims(env.DB, helperClaimWindowMs(env) / 1000);
   const records = await listRecoverableHelperClips(env.DB);

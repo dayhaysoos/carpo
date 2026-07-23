@@ -1370,6 +1370,224 @@ input {
   }
 }
 
+.agent-chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 560px;
+}
+
+.agent-chat-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.agent-connection {
+  flex: none;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.agent-connection.connected {
+  border-color: rgba(61, 214, 140, 0.35);
+  color: var(--success);
+  background: rgba(61, 214, 140, 0.08);
+}
+
+.agent-messages {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.875rem;
+  min-height: 300px;
+  max-height: 520px;
+  padding: 0.875rem;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.agent-empty {
+  margin: auto;
+  max-width: 300px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.agent-empty strong {
+  color: var(--text);
+}
+
+.agent-empty p {
+  margin: 0.375rem 0 0;
+  font-size: 0.8125rem;
+}
+
+.agent-message {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.agent-message.user {
+  align-items: flex-end;
+}
+
+.agent-bubble {
+  max-width: 88%;
+  padding: 0.625rem 0.75rem;
+  border-radius: 12px 12px 12px 4px;
+  background: var(--bg-hover);
+  white-space: pre-wrap;
+}
+
+.agent-message.user .agent-bubble {
+  border-radius: 12px 12px 4px 12px;
+  background: var(--accent);
+  color: white;
+}
+
+.agent-thinking,
+.agent-tool-status {
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.agent-tool-success,
+.agent-tool-error {
+  width: 100%;
+  padding: 0.625rem 0.75rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.8125rem;
+}
+
+.agent-tool-success {
+  color: var(--success);
+  background: rgba(61, 214, 140, 0.08);
+}
+
+.agent-tool-error {
+  color: var(--error);
+  background: rgba(255, 107, 122, 0.08);
+}
+
+.agent-approval-card {
+  width: 100%;
+  padding: 1rem;
+  border: 1px solid rgba(91, 140, 255, 0.5);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(145deg, rgba(91, 140, 255, 0.12), rgba(139, 92, 246, 0.06));
+  box-shadow: 0 0 0 3px rgba(91, 140, 255, 0.08);
+}
+
+.agent-approval-status {
+  margin-bottom: 0.25rem;
+  color: var(--accent-hover);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.agent-approval-card h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.agent-approval-time {
+  margin-top: 0.375rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.agent-approval-meta {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.agent-approval-meta span {
+  padding: 0.2rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.agent-approval-caption {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.agent-approval-caption span {
+  color: var(--text-muted);
+  font-size: 0.6875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.agent-approval-caption p {
+  margin: 0.25rem 0 0;
+}
+
+.agent-approval-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.agent-approval-actions .btn-primary,
+.agent-approval-actions .btn-ghost {
+  width: auto;
+}
+
+.agent-composer {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.625rem;
+  margin-top: 0.875rem;
+}
+
+.agent-composer textarea {
+  min-width: 0;
+  resize: vertical;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.agent-composer textarea:focus {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.agent-composer .btn-primary {
+  width: auto;
+  align-self: stretch;
+}
+
+@media (max-width: 520px) {
+  .agent-composer {
+    grid-template-columns: 1fr;
+  }
+
+  .agent-composer .btn-primary {
+    width: 100%;
+  }
+}
+
 .library-card {
   display: flex;
   flex-direction: column;
