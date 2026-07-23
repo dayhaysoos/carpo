@@ -1549,11 +1549,95 @@ input {
   width: auto;
 }
 
+.agent-composer-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+  margin-top: 0.875rem;
+}
+
+.agent-window-picker,
+.agent-detected-times {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.agent-window-picker > span,
+.agent-detected-times > span {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.agent-window-picker [role="group"],
+.agent-detected-times > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.375rem;
+}
+
+.agent-window-picker button,
+.agent-timestamp-chip {
+  min-height: 30px;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s,
+    color 0.15s;
+}
+
+.agent-window-picker button:hover,
+.agent-timestamp-chip:hover {
+  border-color: var(--border-focus);
+  color: var(--text);
+}
+
+.agent-window-picker button:focus-visible,
+.agent-timestamp-chip:focus-visible {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.agent-window-picker button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: rgba(91, 140, 255, 0.14);
+  color: var(--text);
+}
+
+.agent-detected-times {
+  align-items: flex-start;
+  padding-top: 0.625rem;
+  border-top: 1px solid var(--border);
+}
+
+.agent-detected-times > span {
+  padding-top: 0.35rem;
+}
+
+.agent-timestamp-chip {
+  border-color: rgba(91, 140, 255, 0.45);
+  background: rgba(91, 140, 255, 0.1);
+  color: var(--accent-hover);
+  font-variant-numeric: tabular-nums;
+}
+
 .agent-composer {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 0.625rem;
-  margin-top: 0.875rem;
+  margin-top: 0.625rem;
 }
 
 .agent-composer textarea {
@@ -1579,6 +1663,22 @@ input {
 }
 
 @media (max-width: 520px) {
+  .agent-window-picker,
+  .agent-detected-times {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+
+  .agent-window-picker [role="group"],
+  .agent-detected-times > div {
+    justify-content: flex-start;
+  }
+
+  .agent-detected-times > span {
+    padding-top: 0;
+  }
+
   .agent-composer {
     grid-template-columns: 1fr;
   }

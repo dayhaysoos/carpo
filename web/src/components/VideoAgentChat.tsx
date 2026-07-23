@@ -2,14 +2,22 @@ import { useAgentChat } from "@cloudflare/think/react";
 import { getToolName, isToolUIPart } from "ai";
 import type { UIMessage } from "ai";
 import { useAgent } from "agents/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  extractTimestampWindows,
+  type TimestampWindow,
+} from "../timestamp-windows";
 import { ClipApprovalCard } from "./ClipApprovalCard";
 import type { ManualClipInput } from "./ClipApprovalCard";
 
 interface VideoAgentChatProps {
   videoId: string;
   onClipCreated: () => void;
+  onTimestampSelect: (window: TimestampWindow) => void;
 }
+
+const CLIP_WINDOW_SECONDS = [5, 10, 30, 60] as const;
+type ClipWindowSeconds = (typeof CLIP_WINDOW_SECONDS)[number];
 
 function isManualClipInput(value: unknown): value is ManualClipInput {
   if (!value || typeof value !== "object") return false;
@@ -35,8 +43,11 @@ function messageText(parts: Array<{ type: string; text?: string }>): string {
 export function VideoAgentChat({
   videoId,
   onClipCreated,
+  onTimestampSelect,
 }: VideoAgentChatProps) {
   const [input, setInput] = useState("");
+  const [clipWindowSeconds, setClipWindowSeconds] =
+    useState<ClipWindowSeconds>(10);
   const [connected, setConnected] = useState(false);
   const completedClipIds = useRef(new Set<string>());
   const endRef = useRef<HTMLDivElement>(null);
@@ -56,6 +67,10 @@ export function VideoAgentChat({
     error,
   } = useAgentChat({ agent });
   const chatMessages = messages as UIMessage[];
+  const timestampWindows = useMemo(
+    () => extractTimestampWindows(input, clipWindowSeconds),
+    [clipWindowSeconds, input],
+  );
 
   const working = status === "submitted" || status === "streaming";
 
@@ -182,6 +197,44 @@ export function VideoAgentChat({
           {error.message}
         </div>
       ) : null}
+
+      <div className="agent-composer-tools">
+        <div className="agent-window-picker">
+          <span>Clip length</span>
+          <div role="group" aria-label="Default clip length">
+            {CLIP_WINDOW_SECONDS.map((seconds) => (
+              <button
+                key={seconds}
+                type="button"
+                aria-label={`Use ${seconds} second clips`}
+                aria-pressed={clipWindowSeconds === seconds}
+                onClick={() => setClipWindowSeconds(seconds)}
+              >
+                {seconds}s
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {timestampWindows.length > 0 ? (
+          <div className="agent-detected-times" aria-label="Detected timestamps">
+            <span>Move editor</span>
+            <div>
+              {timestampWindows.map((window) => (
+                <button
+                  key={`${window.startSeconds}-${window.endSeconds}`}
+                  type="button"
+                  className="agent-timestamp-chip"
+                  aria-label={`Set editor to ${window.label.replace(" → ", " through ")}`}
+                  onClick={() => onTimestampSelect(window)}
+                >
+                  {window.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
 
       <form className="agent-composer" onSubmit={submit}>
         <textarea

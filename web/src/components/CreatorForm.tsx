@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   createClip,
@@ -25,17 +25,22 @@ import {
   validateUploadFile,
 } from "../upload";
 import { extractYoutubeVideoId, isValidYoutubeUrl } from "../youtube";
+import type { ClipWindowRequest } from "../timestamp-windows";
 import { TrimSlider } from "./TrimSlider";
 
 type SourceMode = "youtube" | "upload";
 
 interface CreatorFormProps {
   onClipCreated: () => void;
+  clipWindowRequest?: ClipWindowRequest | null;
 }
 
 const DEFAULT_MAX_UPLOAD_BYTES = 95 * 1024 * 1024;
 
-export function CreatorForm({ onClipCreated }: CreatorFormProps) {
+export function CreatorForm({
+  onClipCreated,
+  clipWindowRequest,
+}: CreatorFormProps) {
   const [searchParams] = useSearchParams();
   const reusableVideoId = searchParams.get("video") ?? "";
   const [sourceMode, setSourceMode] = useState<SourceMode>("upload");
@@ -50,6 +55,7 @@ export function CreatorForm({ onClipCreated }: CreatorFormProps) {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<string | null>(null);
   const [maxUploadBytes, setMaxUploadBytes] = useState(DEFAULT_MAX_UPLOAD_BYTES);
+  const appliedClipWindowRequest = useRef<number | null>(null);
 
   const {
     data: reusableVideoData,
@@ -111,6 +117,21 @@ export function CreatorForm({ onClipCreated }: CreatorFormProps) {
   const duration = sourceMode === "youtube" ? youtube.duration : native.duration;
   const seekTo = sourceMode === "youtube" ? youtube.seekTo : native.seekTo;
   const trim = useTrimRange({ duration, onSeek: seekTo });
+
+  useEffect(() => {
+    if (
+      !ready ||
+      !clipWindowRequest ||
+      appliedClipWindowRequest.current === clipWindowRequest.requestId
+    ) {
+      return;
+    }
+    trim.setClipWindow(
+      clipWindowRequest.startSeconds,
+      clipWindowRequest.endSeconds,
+    );
+    appliedClipWindowRequest.current = clipWindowRequest.requestId;
+  }, [clipWindowRequest, ready, trim.setClipWindow]);
 
   const clipDuration = trim.range.end - trim.range.start;
   const canCreate =

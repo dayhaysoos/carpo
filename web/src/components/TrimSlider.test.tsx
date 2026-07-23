@@ -7,12 +7,34 @@ import { TrimSlider } from "./TrimSlider";
 function TrimHarness({
   duration = 24 * 60,
   onSeek = vi.fn(),
+  showTimestampCommand = false,
 }: {
   duration?: number;
   onSeek?: (seconds: number) => void;
+  showTimestampCommand?: boolean;
 }) {
   const trim = useTrimRange({ duration, onSeek });
-  return <TrimSlider duration={duration} ready trim={trim} />;
+  return (
+    <>
+      {showTimestampCommand ? (
+        <>
+          <button type="button" onClick={() => trim.setClipWindow(623, 633)}>
+            Use timestamp
+          </button>
+          <button
+            type="button"
+            onClick={() => trim.setClipWindow(1435, 1465)}
+          >
+            Use ending timestamp
+          </button>
+          <button type="button" onClick={() => trim.setClipWindow(628, 638)}>
+            Use nearby timestamp
+          </button>
+        </>
+      ) : null}
+      <TrimSlider duration={duration} ready trim={trim} />
+    </>
+  );
 }
 
 describe("TrimSlider precision controls", () => {
@@ -42,6 +64,57 @@ describe("TrimSlider precision controls", () => {
 
     await user.click(end);
     expect(screen.getByText("Precision end")).toBeTruthy();
+  });
+
+  it("applies a timestamp window, seeks, and opens precision at its start", async () => {
+    const user = userEvent.setup();
+    const onSeek = vi.fn();
+    render(<TrimHarness onSeek={onSeek} showTimestampCommand />);
+    onSeek.mockClear();
+
+    await user.click(screen.getByRole("button", { name: "Use timestamp" }));
+
+    expect((screen.getByLabelText("Start") as HTMLInputElement).value).toBe(
+      "10:23.000",
+    );
+    expect((screen.getByLabelText("End") as HTMLInputElement).value).toBe(
+      "10:33.000",
+    );
+    expect(screen.getByText("Precision start")).toBeTruthy();
+    expect(onSeek).toHaveBeenCalledTimes(1);
+    expect(onSeek).toHaveBeenCalledWith(623);
+  });
+
+  it("keeps the timestamp start fixed when its window reaches the video end", async () => {
+    const user = userEvent.setup();
+    render(<TrimHarness showTimestampCommand />);
+
+    await user.click(
+      screen.getByRole("button", { name: "Use ending timestamp" }),
+    );
+
+    expect((screen.getByLabelText("Start") as HTMLInputElement).value).toBe(
+      "23:55.000",
+    );
+    expect((screen.getByLabelText("End") as HTMLInputElement).value).toBe(
+      "24:00.000",
+    );
+    expect(screen.getByText("5.00s")).toBeTruthy();
+  });
+
+  it("recenters precision for every timestamp selection, even nearby ones", async () => {
+    const user = userEvent.setup();
+    render(<TrimHarness showTimestampCommand />);
+
+    await user.click(screen.getByRole("button", { name: "Use timestamp" }));
+    expect(screen.getByText("10:08.000")).toBeTruthy();
+    expect(screen.getByText("10:38.000")).toBeTruthy();
+
+    await user.click(
+      screen.getByRole("button", { name: "Use nearby timestamp" }),
+    );
+    expect(screen.getByText("10:13.000")).toBeTruthy();
+    expect(screen.getByText("10:43.000")).toBeTruthy();
   });
 
   it("nudges the active boundary by tenths and whole seconds", async () => {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   TrimHandle,
   TrimTimelineWindow,
@@ -130,6 +130,7 @@ export function TrimSlider({ duration, ready, trim }: TrimSliderProps) {
   const [precisionSeconds, setPrecisionSeconds] =
     useState<PrecisionWindowSeconds>(30);
   const [precisionAnchor, setPrecisionAnchor] = useState(0);
+  const centeredClipWindowRevision = useRef(0);
 
   const activeValue = trim.activeHandle
     ? trim.range[trim.activeHandle]
@@ -153,6 +154,11 @@ export function TrimSlider({ duration, ready, trim }: TrimSliderProps) {
     trim.activeHandle,
     trim.draggingHandle,
   ]);
+  useEffect(() => {
+    if (trim.clipWindowRevision === centeredClipWindowRevision.current) return;
+    centeredClipWindowRevision.current = trim.clipWindowRevision;
+    setPrecisionAnchor(trim.range.start);
+  }, [trim.clipWindowRevision, trim.range.start]);
   const precisionStartPercent = percentageInWindow(
     trim.range.start,
     precisionWindow,

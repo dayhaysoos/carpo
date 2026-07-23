@@ -69,6 +69,7 @@ export function useTrimRange({ duration, onSeek }: UseTrimRangeOptions) {
   const [endInput, setEndInput] = useState("0:10.000");
   const [activeHandle, setActiveHandle] = useState<TrimHandle | null>(null);
   const [draggingHandle, setDraggingHandle] = useState<TrimHandle | null>(null);
+  const [clipWindowRevision, setClipWindowRevision] = useState(0);
   const dragRef = useRef<{
     handle: TrimHandle;
     trackLeft: number;
@@ -82,17 +83,47 @@ export function useTrimRange({ duration, onSeek }: UseTrimRangeOptions) {
     setEndInput(formatTimestamp(next.end));
   }, []);
 
+  const commitRange = useCallback(
+    (next: TrimRange, seekSeconds?: number) => {
+      setRange(next);
+      syncInputs(next);
+      if (seekSeconds !== undefined) onSeek(seekSeconds);
+      return next;
+    },
+    [onSeek, syncInputs],
+  );
+
   const applyRange = useCallback(
     (start: number, end: number, seekHandle?: TrimHandle) => {
       const next = clampRange(start, end, duration, seekHandle);
-      setRange(next);
-      syncInputs(next);
-      if (seekHandle) {
-        onSeek(seekHandle === "start" ? next.start : next.end);
-      }
+      return commitRange(
+        next,
+        seekHandle
+          ? seekHandle === "start"
+            ? next.start
+            : next.end
+          : undefined,
+      );
+    },
+    [commitRange, duration],
+  );
+
+  const setClipWindow = useCallback(
+    (start: number, end: number) => {
+      const maxEnd = duration > 0 ? duration : MAX_CLIP_LENGTH_SECONDS;
+      const minimumGap = Math.min(MIN_TRIM_GAP_SECONDS, maxEnd);
+      const safeStart = Math.max(
+        0,
+        Math.min(start, Math.max(0, maxEnd - minimumGap)),
+      );
+      const safeEnd = Math.max(safeStart + minimumGap, end);
+      const next = clampRange(safeStart, safeEnd, duration, "end");
+      commitRange(next, next.start);
+      setActiveHandle("start");
+      setClipWindowRevision((revision) => revision + 1);
       return next;
     },
-    [duration, onSeek, syncInputs],
+    [commitRange, duration],
   );
 
   useEffect(() => {
@@ -229,8 +260,10 @@ export function useTrimRange({ duration, onSeek }: UseTrimRangeOptions) {
     overMax,
     activeHandle,
     draggingHandle,
+    clipWindowRevision,
     focusHandle,
     nudgeHandle,
+    setClipWindow,
     onHandleKeyDown,
     onPointerDown,
     onPointerMove,

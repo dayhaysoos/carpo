@@ -1,5 +1,6 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { VideoAgentChat } from "./VideoAgentChat";
 
@@ -8,7 +9,10 @@ const chat = vi.hoisted(() => ({
 }));
 
 vi.mock("agents/react", () => ({
-  useAgent: () => ({}),
+  useAgent: (options: { onOpen?: () => void }) => {
+    useEffect(() => options.onOpen?.(), [options.onOpen]);
+    return {};
+  },
 }));
 
 vi.mock("@cloudflare/think/react", () => ({
@@ -54,7 +58,11 @@ describe("VideoAgentChat", () => {
     });
 
     render(
-      <VideoAgentChat videoId="video-1" onClipCreated={vi.fn()} />,
+      <VideoAgentChat
+        videoId="video-1"
+        onClipCreated={vi.fn()}
+        onTimestampSelect={vi.fn()}
+      />,
     );
 
     expect(screen.getByText("1:00.000–1:04.000")).toBeTruthy();
@@ -63,6 +71,38 @@ describe("VideoAgentChat", () => {
     expect(chat.addToolApprovalResponse).toHaveBeenCalledWith({
       id: "approval-1",
       approved: true,
+    });
+  });
+
+  it("turns typed timestamps into clickable editor windows", async () => {
+    const user = userEvent.setup();
+    const onTimestampSelect = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+
+    render(
+      <VideoAgentChat
+        videoId="video-1"
+        onClipCreated={vi.fn()}
+        onTimestampSelect={onTimestampSelect}
+      />,
+    );
+
+    const instruction = await screen.findByRole("textbox", {
+      name: "Clip instruction",
+    });
+    await user.type(instruction, "Start at 10:23");
+    await user.click(screen.getByRole("button", { name: "Use 30 second clips" }));
+    await user.click(
+      screen.getByRole("button", { name: "Set editor to 10:23 through 10:53" }),
+    );
+
+    expect(onTimestampSelect).toHaveBeenCalledWith({
+      label: "10:23 → 10:53",
+      startSeconds: 623,
+      endSeconds: 653,
     });
   });
 });
