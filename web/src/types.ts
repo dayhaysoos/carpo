@@ -1,4 +1,5 @@
 export const MAX_CLIP_LENGTH_SECONDS = 60;
+export const MIN_TRIM_GAP_SECONDS = 0.001;
 export const MAX_CAPTION_LENGTH = 200;
 
 export const CLIP_QUALITIES = ["720p", "1080p"] as const;
