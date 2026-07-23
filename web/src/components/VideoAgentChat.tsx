@@ -139,6 +139,7 @@ export function VideoAgentChat({
     [input],
   );
   const composerMirrorRef = useRef<HTMLDivElement>(null);
+  const transcriptSearchSupported = source?.type !== "upload";
 
   const working = status === "submitted" || status === "streaming";
 
@@ -305,7 +306,11 @@ export function VideoAgentChat({
       <div className="card-header agent-chat-header">
         <div>
           <h2>Clip with Think</h2>
-          <p>Describe clips by timestamp. You approve them before creation.</p>
+          <p>
+            {transcriptSearchSupported
+              ? "Describe clips by timestamp or spoken phrase. You approve them before creation."
+              : "Describe clips by timestamp. You approve them before creation."}
+          </p>
         </div>
         <span className={`agent-connection ${connected ? "connected" : ""}`}>
           {connected ? "Ready" : "Connecting"}
@@ -315,7 +320,10 @@ export function VideoAgentChat({
       <div className="agent-messages" aria-live="polite">
         {chatMessages.length === 0 ? (
           <div className="agent-empty">
-            <strong>Try a manual instruction</strong>
+            <strong>Try an instruction</strong>
+            {transcriptSearchSupported ? (
+              <p>“Clip every time ‘code’ is said.”</p>
+            ) : null}
             <p>“Clip from 2:10 to 2:28 and call it PO tokens explained.”</p>
           </div>
         ) : null}
@@ -433,7 +441,11 @@ export function VideoAgentChat({
                   event.currentTarget.scrollTop;
               }
             }}
-            placeholder="Clip from 1:20 to 1:35…"
+            placeholder={
+              transcriptSearchSupported
+                ? "Clip by time or spoken phrase…"
+                : "Clip from 1:20 to 1:35…"
+            }
             rows={3}
             disabled={!connected || working}
             aria-label="Clip instruction"

@@ -42,6 +42,12 @@ import { drainArtifactDeletions } from "./artifact-deletions";
 import { resolveUnresolvedYoutubeTitles } from "./youtube-metadata";
 import { createClipForVideo, enqueueClip } from "./clip-service";
 import { checkSourceVideoTranscript } from "./video-context";
+import {
+  MAX_TRANSCRIPT_PADDING_SECONDS,
+  MAX_TRANSCRIPT_QUERY_LENGTH,
+  MAX_TRANSCRIPT_SEARCH_RESULTS,
+  searchVideoTranscript,
+} from "./transcript-search";
 
 export async function handleRequest(
   request: Request,
@@ -92,6 +98,17 @@ export async function handleRequest(
   );
   if (request.method === "POST" && transcriptCheckMatch) {
     return handleTranscriptCheck(transcriptCheckMatch[1], env);
+  }
+
+  const transcriptSearchMatch = url.pathname.match(
+    /^\/api\/videos\/([^/]+)\/transcript\/search$/,
+  );
+  if (request.method === "POST" && transcriptSearchMatch) {
+    return handleTranscriptSearch(
+      request,
+      transcriptSearchMatch[1],
+      env,
+    );
   }
 
   const videoMatch = url.pathname.match(/^\/api\/videos\/([^/]+)$/);
@@ -212,6 +229,104 @@ async function handleTranscriptCheck(
           error instanceof Error
             ? error.message
             : "Transcript availability check failed",
+      },
+      502,
+    );
+  }
+}
+
+async function handleTranscriptSearch(
+  request: Request,
+  videoId: string,
+  env: Env,
+): Promise<Response> {
+  const existing = await getSourceVideoById(env.DB, videoId);
+  if (!existing) {
+    return json({ error: "Video not found" }, 404);
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON body" }, 400);
+  }
+  if (!body || typeof body !== "object") {
+    return json({ error: "Request body must be an object" }, 400);
+  }
+  const input = body as Record<string, unknown>;
+  const query = typeof input.query === "string" ? input.query.trim() : "";
+  if (!query || query.length > MAX_TRANSCRIPT_QUERY_LENGTH) {
+    return json(
+      {
+        error: `query must be between 1 and ${MAX_TRANSCRIPT_QUERY_LENGTH} characters`,
+      },
+      400,
+    );
+  }
+
+  const optionalNumber = (
+    field: string,
+    fallback: number,
+    maximum: number,
+    integer = false,
+  ): number | Response => {
+    const value = input[field] ?? fallback;
+    if (
+      typeof value !== "number" ||
+      !Number.isFinite(value) ||
+      value < 0 ||
+      value > maximum ||
+      (integer && !Number.isInteger(value))
+    ) {
+      return json(
+        {
+          error: `${field} must be ${integer ? "an integer" : "a number"} between 0 and ${maximum}`,
+        },
+        400,
+      );
+    }
+    return value;
+  };
+  const beforeSeconds = optionalNumber(
+    "beforeSeconds",
+    1,
+    MAX_TRANSCRIPT_PADDING_SECONDS,
+  );
+  if (beforeSeconds instanceof Response) return beforeSeconds;
+  const afterSeconds = optionalNumber(
+    "afterSeconds",
+    2,
+    MAX_TRANSCRIPT_PADDING_SECONDS,
+  );
+  if (afterSeconds instanceof Response) return afterSeconds;
+  const limit = optionalNumber(
+    "limit",
+    20,
+    MAX_TRANSCRIPT_SEARCH_RESULTS,
+    true,
+  );
+  if (limit instanceof Response) return limit;
+  if (limit < 1) {
+    return json({ error: "limit must be at least 1" }, 400);
+  }
+
+  try {
+    return json(
+      await searchVideoTranscript(env, videoId, {
+        query,
+        beforeSeconds,
+        afterSeconds,
+        limit,
+      }),
+    );
+  } catch (error) {
+    return json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Transcript search failed",
       },
       502,
     );

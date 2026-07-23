@@ -123,6 +123,52 @@ describe("VideoAgentChat", () => {
     vi.clearAllMocks();
   });
 
+  it("only offers spoken-phrase clipping for YouTube sources", () => {
+    chat.messages = [];
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const { rerender } = render(
+      <VideoAgentChat
+        videoId="video-1"
+        onClipCreated={vi.fn()}
+        onTimestampSelect={vi.fn()}
+        source={{
+          type: "youtube",
+          url: "https://www.youtube.com/watch?v=434cG4g5KLE",
+        }}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "Describe clips by timestamp or spoken phrase. You approve them before creation.",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("“Clip every time ‘code’ is said.”")).toBeTruthy();
+    expect(
+      screen.getByPlaceholderText("Clip by time or spoken phrase…"),
+    ).toBeTruthy();
+
+    rerender(
+      <VideoAgentChat
+        videoId="video-1"
+        onClipCreated={vi.fn()}
+        onTimestampSelect={vi.fn()}
+        source={{ type: "upload", key: "uploads/source.mp4" }}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "Describe clips by timestamp. You approve them before creation.",
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText("“Clip every time ‘code’ is said.”")).toBeNull();
+    expect(screen.getByPlaceholderText("Clip from 1:20 to 1:35…")).toBeTruthy();
+  });
+
   it("groups proposed clips into one chronological review flow", async () => {
     const user = userEvent.setup();
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {

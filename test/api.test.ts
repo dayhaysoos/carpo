@@ -10,6 +10,7 @@ import { handleRequest } from "../src/routes";
 import { getClipById, outputKeysForClip } from "../src/db";
 import { ENCODER_POOL_INSTANCE } from "../src/encoder-pool";
 import { dispatchEncodingJob, failClipAmbiguous } from "../src/jobs";
+import { transcriptObjectKey } from "../src/source-videos";
 import type { EncoderJobSpec } from "../src/types";
 import {
   isUploadSourceExpired,
@@ -2474,6 +2475,206 @@ describe("source video library", () => {
         transcriptRetryAt: null,
       },
     });
+  });
+
+  it("searches and reuses a normalized YouTube transcript", async () => {
+    const videoId = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO source_videos (id, source_type, source_ref, title)
+       VALUES (?, 'youtube', ?, ?)`,
+    )
+      .bind(
+        videoId,
+        "https://www.youtube.com/watch?v=transcript-search",
+        "Searchable transcript video",
+      )
+      .run();
+
+    const search = () =>
+      workerFetch(
+        `http://example.com/api/videos/${videoId}/transcript/search`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query: "code",
+            beforeSeconds: 1,
+            afterSeconds: 2,
+            limit: 10,
+          }),
+        },
+      );
+
+    const firstResponse = await search();
+    expect(firstResponse.status).toBe(200);
+    expect(await firstResponse.json()).toEqual({
+      transcriptStatus: "available",
+      query: "code",
+      language: "en",
+      automatic: true,
+      cached: false,
+      matches: [
+        {
+          startSeconds: 0,
+          endSeconds: 2.6,
+          spokenStartSeconds: 0.4,
+          spokenEndSeconds: 0.6,
+          text: "code",
+        },
+        {
+          startSeconds: 9,
+          endSeconds: 12.2,
+          spokenStartSeconds: 10,
+          spokenEndSeconds: 10.2,
+          text: "Code",
+        },
+      ],
+      totalMatches: 2,
+      truncated: false,
+    });
+
+    const distantPhraseResponse = await workerFetch(
+      `http://example.com/api/videos/${videoId}/transcript/search`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: "school code" }),
+      },
+    );
+    expect(await distantPhraseResponse.json()).toMatchObject({
+      transcriptStatus: "available",
+      cached: true,
+      matches: [],
+      totalMatches: 0,
+    });
+
+    const mergedResponse = await workerFetch(
+      `http://example.com/api/videos/${videoId}/transcript/search`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: "nearby" }),
+      },
+    );
+    expect(await mergedResponse.json()).toMatchObject({
+      transcriptStatus: "available",
+      cached: true,
+      matches: [
+        {
+          startSeconds: 23,
+          endSeconds: 27.2,
+          spokenStartSeconds: 24,
+          spokenEndSeconds: 25.2,
+          text: "nearby nearby",
+        },
+      ],
+      totalMatches: 1,
+      truncated: false,
+    });
+
+    const cachedResponse = await search();
+    expect(cachedResponse.status).toBe(200);
+    expect(await cachedResponse.json()).toMatchObject({
+      transcriptStatus: "available",
+      cached: true,
+      totalMatches: 2,
+      truncated: false,
+    });
+  });
+
+  it("returns an empty unavailable result when YouTube has no captions", async () => {
+    const videoId = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO source_videos (id, source_type, source_ref, title)
+       VALUES (?, 'youtube', ?, ?)`,
+    )
+      .bind(
+        videoId,
+        "https://www.youtube.com/watch?v=transcript-none",
+        "No transcript video",
+      )
+      .run();
+
+    const response = await workerFetch(
+      `http://example.com/api/videos/${videoId}/transcript/search`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: "code" }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      transcriptStatus: "unavailable",
+      query: "code",
+      language: null,
+      automatic: null,
+      cached: false,
+      matches: [],
+      totalMatches: 0,
+      truncated: false,
+    });
+
+    const detailResponse = await workerFetch(
+      `http://example.com/api/videos/${videoId}`,
+    );
+    expect(await detailResponse.json()).toMatchObject({
+      video: {
+        transcriptStatus: "unavailable",
+        transcriptCheckError: null,
+      },
+    });
+  });
+
+  it("reports transcript search as unsupported for uploaded videos", async () => {
+    const videoId = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO source_videos (id, source_type, source_ref, title)
+       VALUES (?, 'upload', ?, ?)`,
+    )
+      .bind(videoId, "uploads/transcript-source.mp4", "Uploaded video")
+      .run();
+
+    const response = await workerFetch(
+      `http://example.com/api/videos/${videoId}/transcript/search`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: "code" }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      transcriptStatus: "unsupported",
+      matches: [],
+      totalMatches: 0,
+    });
+  });
+
+  it("deletes a retained transcript with its video", async () => {
+    const videoId = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO source_videos (id, source_type, source_ref, title)
+       VALUES (?, 'youtube', ?, ?)`,
+    )
+      .bind(
+        videoId,
+        "https://www.youtube.com/watch?v=transcript-delete",
+        "Delete transcript video",
+      )
+      .run();
+    const key = transcriptObjectKey(videoId);
+    await env.CLIPS_BUCKET.put(key, JSON.stringify({ cues: [] }));
+
+    const response = await workerFetch(
+      `http://example.com/api/videos/${videoId}`,
+      { method: "DELETE" },
+    );
+
+    expect(response.status).toBe(204);
+    expect(await env.CLIPS_BUCKET.head(key)).toBeNull();
   });
 
   it("resolves and caches the YouTube title instead of using a clip title", async () => {

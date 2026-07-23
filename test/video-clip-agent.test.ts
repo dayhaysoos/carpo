@@ -4,6 +4,7 @@ import {
   agentVideoContextSystemBlock,
   forceVideoContextOnFirstStep,
   loadAgentVideoContext,
+  VideoClipAgent,
 } from "../src/video-clip-agent";
 
 describe("VideoClipAgent context", () => {
@@ -46,6 +47,74 @@ describe("VideoClipAgent context", () => {
       toolChoice: { type: "tool", toolName: "getVideoContext" },
     });
     expect(forceVideoContextOnFirstStep(1)).toBeUndefined();
+  });
+
+  it("exposes exact transcript matches for clip proposals", async () => {
+    const videoId = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO source_videos (
+         id,
+         source_type,
+         source_ref,
+         title,
+         duration_seconds
+       ) VALUES (?, 'youtube', ?, ?, ?)`,
+    )
+      .bind(
+        videoId,
+        "https://www.youtube.com/watch?v=transcript-search",
+        "Search tool context video",
+        30,
+      )
+      .run();
+    const agent = {
+      env,
+      name: videoId,
+    } as unknown as VideoClipAgent;
+    const tools = VideoClipAgent.prototype.getTools.call(agent);
+    const execute = tools.searchTranscript.execute;
+    if (!execute) {
+      throw new Error("searchTranscript tool has no execute function");
+    }
+
+    const result = await execute(
+      {
+        query: "code",
+        beforeSeconds: 1,
+        afterSeconds: 2,
+        limit: 20,
+      },
+      {
+        toolCallId: "transcript-search-tool-call",
+        messages: [],
+      },
+    );
+
+    expect(result).toMatchObject({
+      transcriptStatus: "available",
+      query: "code",
+      totalMatches: 2,
+      truncated: false,
+      matches: [
+        {
+          startSeconds: 0,
+          endSeconds: 2.6,
+          spokenStartSeconds: 0.4,
+          spokenEndSeconds: 0.6,
+        },
+        {
+          startSeconds: 9,
+          endSeconds: 12.2,
+          spokenStartSeconds: 10,
+          spokenEndSeconds: 10.2,
+        },
+      ],
+    });
+    expect(
+      VideoClipAgent.prototype.getSystemPrompt.call(agent).toLowerCase(),
+    ).toContain(
+      "call createclip once for every returned range",
+    );
   });
 
   it("automatically retries a failed transcript check after its cooldown", async () => {

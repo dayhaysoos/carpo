@@ -12,6 +12,10 @@ The image defaults `YOUTUBE_PO_TOKEN_MODE=bgutil`. Every YouTube download:
 
 Set `YOUTUBE_PO_TOKEN_MODE=off` to restore yt-dlp's default client selection for an A/B comparison. PO tokens improve client attestation but do not guarantee that YouTube will accept Cloudflare's egress IP.
 
+The same yt-dlp/PO-token path retrieves YouTube subtitle or automatic-caption
+tracks for transcript-aware clipping. Caption tracks are normalized into timed
+cues by the container and retained as JSON in R2 by the Worker.
+
 ## YouTube maintenance ritual
 
 When YouTube breaks extraction (new player JS, `nsig extraction failed`, throttled downloads ~50kB/s, or widespread `video unavailable` errors):

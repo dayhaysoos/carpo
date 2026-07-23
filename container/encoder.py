@@ -1046,8 +1046,12 @@ def parse_youtube_metadata(info: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def inspect_youtube_metadata(url: str) -> dict[str, Any]:
-    command = [
+class TranscriptUnavailableError(RuntimeError):
+    """Raised when a YouTube video exposes no usable caption track."""
+
+
+def _youtube_metadata_command(url: str) -> list[str]:
+    return [
         "yt-dlp",
         *ytdlp_po_token_args(),
         "--no-playlist",
@@ -1062,6 +1066,10 @@ def inspect_youtube_metadata(url: str) -> dict[str, Any]:
         str(YOUTUBE_SOCKET_TIMEOUT_SECONDS),
         url,
     ]
+
+
+def inspect_youtube_info(url: str) -> dict[str, Any]:
+    command = _youtube_metadata_command(url)
     log(f"running metadata check: {' '.join(command)}")
     try:
         completed = subprocess.run(
@@ -1084,7 +1092,223 @@ def inspect_youtube_metadata(url: str) -> dict[str, Any]:
         raise RuntimeError("YouTube metadata check returned invalid data.") from exc
     if not isinstance(info, dict):
         raise RuntimeError("YouTube metadata check returned invalid data.")
-    return parse_youtube_metadata(info)
+    return info
+
+
+def inspect_youtube_metadata(url: str) -> dict[str, Any]:
+    return parse_youtube_metadata(inspect_youtube_info(url))
+
+
+def _preferred_transcript_track(
+    info: dict[str, Any],
+) -> tuple[str, bool] | None:
+    for automatic, field in (
+        (False, "subtitles"),
+        (True, "automatic_captions"),
+    ):
+        tracks = info.get(field)
+        if not isinstance(tracks, dict):
+            continue
+        languages = [
+            language
+            for language, formats in tracks.items()
+            if language != "live_chat"
+            and isinstance(formats, list)
+            and len(formats) > 0
+        ]
+        if not languages:
+            continue
+        language = min(
+            languages,
+            key=lambda value: (
+                0
+                if value.lower() == "en"
+                else 1
+                if value.lower() in ("en-orig", "en-us", "en-gb")
+                else 2
+                if value.lower().startswith("en-")
+                else 3,
+                value,
+            ),
+        )
+        return language, automatic
+    return None
+
+
+def parse_youtube_transcript(
+    payload: dict[str, Any],
+    *,
+    language: str,
+    automatic: bool,
+) -> dict[str, Any]:
+    events = payload.get("events")
+    if not isinstance(events, list):
+        raise RuntimeError("YouTube transcript returned invalid data.")
+
+    cues: list[dict[str, Any]] = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        raw_start = event.get("tStartMs")
+        raw_duration = event.get("dDurationMs")
+        segments = event.get("segs")
+        if not isinstance(raw_start, (int, float)) or not isinstance(
+            segments,
+            list,
+        ):
+            continue
+        start_seconds = max(0.0, float(raw_start) / 1000.0)
+        duration_seconds = (
+            max(0.0, float(raw_duration) / 1000.0)
+            if isinstance(raw_duration, (int, float))
+            else 0.0
+        )
+        event_end_seconds = start_seconds + max(duration_seconds, 0.001)
+        timed_segments: list[tuple[float, str]] = []
+        for segment in segments:
+            if not isinstance(segment, dict):
+                continue
+            raw_text = segment.get("utf8")
+            if not isinstance(raw_text, str):
+                continue
+            raw_offset = segment.get("tOffsetMs")
+            offset_seconds = (
+                max(0.0, float(raw_offset) / 1000.0)
+                if isinstance(raw_offset, (int, float))
+                else 0.0
+            )
+            if (
+                timed_segments
+                and abs(timed_segments[-1][0] - offset_seconds) < 0.000001
+            ):
+                previous_offset, previous_text = timed_segments[-1]
+                timed_segments[-1] = (
+                    previous_offset,
+                    previous_text + raw_text,
+                )
+            else:
+                timed_segments.append((offset_seconds, raw_text))
+
+        timed_segments.sort(key=lambda item: item[0])
+        for index, (offset_seconds, raw_text) in enumerate(timed_segments):
+            text = re.sub(r"\s+", " ", raw_text).strip()
+            if not text:
+                continue
+            cue_start_seconds = start_seconds + offset_seconds
+            next_offset_seconds = (
+                timed_segments[index + 1][0]
+                if index + 1 < len(timed_segments)
+                else duration_seconds
+            )
+            cue_end_seconds = max(
+                cue_start_seconds + 0.001,
+                min(
+                    event_end_seconds,
+                    start_seconds + next_offset_seconds,
+                ),
+            )
+            words = text.split()
+            word_duration_seconds = (
+                cue_end_seconds - cue_start_seconds
+            ) / len(words)
+            for word_index, word in enumerate(words):
+                word_start_seconds = (
+                    cue_start_seconds
+                    + word_duration_seconds * word_index
+                )
+                word_end_seconds = (
+                    cue_end_seconds
+                    if word_index == len(words) - 1
+                    else cue_start_seconds
+                    + word_duration_seconds * (word_index + 1)
+                )
+                cues.append(
+                    {
+                        "startSeconds": word_start_seconds,
+                        "endSeconds": word_end_seconds,
+                        "text": word,
+                    },
+                )
+
+    if not cues:
+        raise TranscriptUnavailableError(
+            "This YouTube video has no usable transcript cues.",
+        )
+    return {
+        "language": language,
+        "automatic": automatic,
+        "cues": cues,
+    }
+
+
+def inspect_youtube_transcript(url: str) -> dict[str, Any]:
+    info = inspect_youtube_info(url)
+    selected = _preferred_transcript_track(info)
+    if selected is None:
+        raise TranscriptUnavailableError(
+            "This YouTube video has no subtitles or automatic captions.",
+        )
+    language, automatic = selected
+
+    with tempfile.TemporaryDirectory(prefix="carpo-transcript-") as tmpdir:
+        output_template = str(Path(tmpdir) / "transcript.%(ext)s")
+        command = [
+            "yt-dlp",
+            *ytdlp_po_token_args(),
+            "--no-playlist",
+            "--skip-download",
+            "--write-subs",
+            "--write-auto-subs",
+            "--sub-langs",
+            language,
+            "--sub-format",
+            "json3",
+            "--output",
+            output_template,
+            "--no-warnings",
+            "--retries",
+            "1",
+            "--extractor-retries",
+            "1",
+            "--socket-timeout",
+            str(YOUTUBE_SOCKET_TIMEOUT_SECONDS),
+            url,
+        ]
+        log(f"running transcript fetch: {' '.join(command)}")
+        try:
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=YOUTUBE_METADATA_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("YouTube transcript fetch timed out.") from exc
+        if completed.returncode != 0:
+            output = "\n".join(
+                part for part in (completed.stderr, completed.stdout) if part
+            )
+            raise RuntimeError(classify_ytdlp_error(output))
+
+        candidates = sorted(Path(tmpdir).glob("transcript*.json3"))
+        if not candidates:
+            raise TranscriptUnavailableError(
+                "YouTube did not return a usable transcript.",
+            )
+        try:
+            payload = json.loads(candidates[0].read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                "YouTube transcript returned invalid data.",
+            ) from exc
+        if not isinstance(payload, dict):
+            raise RuntimeError("YouTube transcript returned invalid data.")
+        return parse_youtube_transcript(
+            payload,
+            language=language,
+            automatic=automatic,
+        )
 
 
 def _ytdlp_download_command(
@@ -1906,6 +2130,39 @@ class EncoderHandler(BaseHTTPRequestHandler):
                         "status": "failed",
                         "errorMessage": str(exc)
                         or "Transcript availability check failed",
+                    },
+                )
+            return
+
+        if self.path == "/video-transcript":
+            try:
+                body = self._read_json()
+                url = body.get("url")
+                if not isinstance(url, str) or not url.strip():
+                    self._send_json(
+                        400,
+                        {
+                            "status": "failed",
+                            "errorMessage": "YouTube URL is required",
+                        },
+                    )
+                    return
+                self._send_json(200, inspect_youtube_transcript(url.strip()))
+            except TranscriptUnavailableError as exc:
+                self._send_json(
+                    404,
+                    {
+                        "status": "unavailable",
+                        "errorMessage": str(exc),
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(
+                    502,
+                    {
+                        "status": "failed",
+                        "errorMessage": str(exc)
+                        or "Transcript fetch failed",
                     },
                 )
             return

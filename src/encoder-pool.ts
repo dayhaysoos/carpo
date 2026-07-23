@@ -12,6 +12,20 @@ export interface StoredVideoMetadata {
   durationSeconds: number | null;
 }
 
+export interface TranscriptCue {
+  startSeconds: number;
+  endSeconds: number;
+  text: string;
+}
+
+export interface YoutubeTranscript {
+  language: string;
+  automatic: boolean;
+  cues: TranscriptCue[];
+}
+
+export class TranscriptUnavailableError extends Error {}
+
 /** Idempotent warm-up via the container's /__carpo/start endpoint. */
 export async function prewarmEncoder(
   env: Env,
@@ -55,6 +69,45 @@ export async function inspectYoutubeVideo(
     );
   }
   return response.json() as Promise<VideoMetadata>;
+}
+
+export async function fetchYoutubeTranscript(
+  env: Env,
+  url: string,
+): Promise<YoutubeTranscript> {
+  await prewarmEncoder(env, {
+    body: { source: { type: "youtube", url } },
+  });
+  const container = env.ENCODER_CONTAINER.getByName(ENCODER_POOL_INSTANCE);
+  const response = await container.fetch(
+    "http://encoder/__carpo/video-transcript",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    },
+  );
+  if (!response.ok) {
+    const rawDetail = await response.text();
+    let detail = rawDetail;
+    try {
+      const parsed = JSON.parse(rawDetail) as { errorMessage?: unknown };
+      if (typeof parsed.errorMessage === "string") {
+        detail = parsed.errorMessage;
+      }
+    } catch {
+      // Plain-text encoder failures are already suitable error details.
+    }
+    if (response.status === 404) {
+      throw new TranscriptUnavailableError(
+        detail || "This YouTube video has no usable transcript.",
+      );
+    }
+    throw new Error(
+      detail || `Transcript fetch failed (${response.status})`,
+    );
+  }
+  return response.json() as Promise<YoutubeTranscript>;
 }
 
 export async function inspectStoredVideo(

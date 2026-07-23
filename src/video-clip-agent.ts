@@ -22,6 +22,12 @@ import {
   checkSourceVideoTranscript,
   nextTranscriptRetryAt,
 } from "./video-context";
+import {
+  MAX_TRANSCRIPT_PADDING_SECONDS,
+  MAX_TRANSCRIPT_QUERY_LENGTH,
+  MAX_TRANSCRIPT_SEARCH_RESULTS,
+  searchVideoTranscript,
+} from "./transcript-search";
 
 const MAX_AGENT_OCCUPIED_RANGES = 200;
 
@@ -120,6 +126,28 @@ const manualClipInput = z
       });
     }
   });
+
+const transcriptSearchInput = z.object({
+  query: z.string().trim().min(1).max(MAX_TRANSCRIPT_QUERY_LENGTH),
+  beforeSeconds: z
+    .number()
+    .finite()
+    .min(0)
+    .max(MAX_TRANSCRIPT_PADDING_SECONDS)
+    .default(1),
+  afterSeconds: z
+    .number()
+    .finite()
+    .min(0)
+    .max(MAX_TRANSCRIPT_PADDING_SECONDS)
+    .default(2),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_TRANSCRIPT_SEARCH_RESULTS)
+    .default(20),
+});
 
 export async function loadAgentVideoContext(
   env: Env,
@@ -253,12 +281,15 @@ export class VideoClipAgent extends Think<Env> {
   override getSystemPrompt() {
     return [
       "You are Carpo's clip assistant. This conversation is scoped to exactly one existing video.",
-      "Only help with manual timestamp clipping in this version. Do not claim you can transcribe, search speech, understand scenes, or inspect the video's contents.",
+      "Help with manual timestamp clipping and exact spoken-word or phrase clipping. Do not claim you can understand visual scenes or inspect anything beyond transcript search results.",
       "Convert timestamps such as 1:20, 01:20.500, or 'one minute twenty seconds' into numeric seconds.",
       "When the user gives a start and end time, call createClip with the exact range. The interface will show a preview and let the user adjust the range before anything is created.",
       "The current video context is injected into every turn. Keep every proposed range inside durationSeconds and avoid overlapping existing clips unless the user asks for overlap.",
       "For a random-clips request without a requested length, use 10 seconds per clip. Choose non-overlapping ranges spread across the video and avoid existing clips when possible.",
-      "When asked whether a transcript or captions are available, call checkTranscriptAvailability. This only checks availability; it does not let you search or quote the transcript.",
+      "When asked whether a transcript or captions are available, call checkTranscriptAvailability.",
+      "When asked to clip every time a word or exact phrase is spoken, call searchTranscript. It returns pre-merged clip ranges. Use only its exact startSeconds/endSeconds and call createClip once for every returned range so the user can preview and approve the batch. Never guess spoken timestamps.",
+      "If transcript search is unavailable, explain that this YouTube video has no captions. If it is unsupported, explain that uploaded-video transcription is not available yet. If an available transcript has no matches, say the phrase was not found. Do not propose clips for any of those empty results.",
+      "If transcript search reports truncated results, clearly say that only the returned matches were proposed.",
       "Use 1080p unless the user asks for 720p. Add a caption only when requested. If no title is supplied, make a concise title from the video title and timestamp range.",
       "If either timestamp is missing or ambiguous, ask one short clarifying question. Never invent a missing timestamp.",
       "After createClip succeeds, say that the clip was queued. If the user rejects it, acknowledge that nothing was created.",
@@ -273,10 +304,11 @@ export class VideoClipAgent extends Think<Env> {
       activeTools: [
         "getVideoContext",
         "checkTranscriptAvailability",
+        "searchTranscript",
         "createClip",
       ],
       temperature: 0,
-      maxSteps: 4,
+      maxSteps: 6,
     };
   }
 
@@ -311,7 +343,8 @@ export class VideoClipAgent extends Think<Env> {
               durationSeconds: video.duration_seconds,
               transcriptCheckError: video.transcript_check_error,
               retryAt: video.transcript_retry_at,
-              canSearchTranscript: false,
+              canSearchTranscript:
+                video.transcript_status === "available",
             };
           } catch (error) {
             const video = await getSourceVideoById(this.env.DB, this.name);
@@ -330,6 +363,13 @@ export class VideoClipAgent extends Think<Env> {
             };
           }
         },
+      }),
+      searchTranscript: tool({
+        description:
+          "Search the selected video's retained YouTube captions for an exact spoken word or phrase. Returns deterministic timestamp ranges with padding for clip proposals. Use these exact ranges with createClip.",
+        inputSchema: transcriptSearchInput,
+        execute: async (input) =>
+          searchVideoTranscript(this.env, this.name, input),
       }),
       createClip: tool({
         description:

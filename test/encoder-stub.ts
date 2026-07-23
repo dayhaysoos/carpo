@@ -219,6 +219,76 @@ export class EncoderStub extends DurableObject<Env> {
       });
     }
 
+    if (url.pathname === "/__carpo/video-transcript") {
+      const body = (await request.json()) as { url?: string };
+      if (body.url?.includes("transcript-search")) {
+        return Response.json({
+          language: "en",
+          automatic: true,
+          cues: [
+            {
+              startSeconds: 0,
+              endSeconds: 0.2,
+              text: "Welcome",
+            },
+            {
+              startSeconds: 0.2,
+              endSeconds: 0.4,
+              text: "to",
+            },
+            {
+              startSeconds: 0.4,
+              endSeconds: 0.6,
+              text: "code",
+            },
+            {
+              startSeconds: 0.6,
+              endSeconds: 1,
+              text: "school",
+            },
+            {
+              startSeconds: 10,
+              endSeconds: 10.2,
+              text: "Code",
+            },
+            {
+              startSeconds: 10.2,
+              endSeconds: 10.3,
+              text: "is",
+            },
+            {
+              startSeconds: 10.3,
+              endSeconds: 10.5,
+              text: "useful",
+            },
+            {
+              startSeconds: 20,
+              endSeconds: 20.5,
+              text: "Please decode this",
+            },
+            {
+              startSeconds: 24,
+              endSeconds: 24.2,
+              text: "nearby",
+            },
+            {
+              startSeconds: 25,
+              endSeconds: 25.2,
+              text: "nearby",
+            },
+          ],
+        });
+      }
+      return Response.json(
+        {
+          status: "unavailable",
+          errorMessage:
+            "This YouTube video has no subtitles or automatic captions.",
+        },
+        { status: 404 },
+      );
+    }
+
     if (url.pathname === "/__carpo/stored-video-metadata") {
       return Response.json({ durationSeconds: 42 });
     }

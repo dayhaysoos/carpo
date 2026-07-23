@@ -14,6 +14,7 @@ import { extractCaptionFromFilters } from "./validation";
 import {
   fallbackSourceTitle,
   sourceReference,
+  transcriptObjectKey,
 } from "./source-videos";
 
 export interface InsertClipOptions {
@@ -565,6 +566,12 @@ export async function deleteSourceVideoRecords(
        FROM source_videos
        WHERE id = ? AND source_type = 'upload'`,
     ).bind(id),
+    db.prepare(
+      `INSERT OR IGNORE INTO artifact_deletions (key)
+       SELECT ?
+       FROM source_videos
+       WHERE id = ?`,
+    ).bind(transcriptObjectKey(id), id),
     db.prepare("DELETE FROM clips WHERE video_id = ?").bind(id),
     db.prepare("DELETE FROM source_videos WHERE id = ?").bind(id),
   ]);

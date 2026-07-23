@@ -1,6 +1,7 @@
 import type { ClipSource } from "./types";
 
 const RETAINED_YOUTUBE_SOURCE_KEY_PREFIX = "sources/youtube/";
+const TRANSCRIPT_KEY_PREFIX = "transcripts/";
 
 export function extractYoutubeVideoId(urlString: string): string | null {
   try {
@@ -43,6 +44,10 @@ export function youtubeRetainedSourceKey(videoId: string): string {
 
 export function isYoutubeRetainedSourceKey(key: string): boolean {
   return key.startsWith(RETAINED_YOUTUBE_SOURCE_KEY_PREFIX);
+}
+
+export function transcriptObjectKey(videoId: string): string {
+  return `${TRANSCRIPT_KEY_PREFIX}${videoId}.json`;
 }
 
 export function fallbackSourceTitle(source: ClipSource, clipTitle: string): string {

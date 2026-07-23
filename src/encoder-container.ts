@@ -107,6 +107,24 @@ export class EncoderContainer extends Container<Env> {
     }
 
     if (
+      url.pathname === "/__carpo/video-transcript" &&
+      request.method === "POST"
+    ) {
+      const stopKeepalive = this.startJobKeepalive();
+      try {
+        return await super.fetch(
+          new Request("http://encoder/video-transcript", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: request.body,
+          }),
+        );
+      } finally {
+        stopKeepalive();
+      }
+    }
+
+    if (
       url.pathname === "/__carpo/stored-video-metadata" &&
       request.method === "POST"
     ) {

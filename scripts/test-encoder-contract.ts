@@ -503,6 +503,90 @@ print("YouTube metadata parsing test passed")
   run("python3", ["-c", script]);
 }
 
+function testYoutubeTranscriptParsing() {
+  const script = `
+import json
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+sys.path.insert(0, ${JSON.stringify(path.join(root, "container"))})
+from encoder import inspect_youtube_transcript, parse_youtube_transcript
+
+payload = {
+    "events": [
+        {
+            "tStartMs": 1000,
+            "dDurationMs": 900,
+            "segs": [
+                {"utf8": "Hello "},
+                {"utf8": "code", "tOffsetMs": 400},
+            ],
+        },
+        {
+            "tStartMs": 2000,
+            "dDurationMs": 500,
+            "segs": [{"utf8": "again today"}],
+        },
+        {"tStartMs": 2500, "dDurationMs": 100, "segs": [{"utf8": "\\n"}]},
+    ],
+}
+
+expected = {
+    "language": "en",
+    "automatic": True,
+    "cues": [
+        {"startSeconds": 1.0, "endSeconds": 1.4, "text": "Hello"},
+        {"startSeconds": 1.4, "endSeconds": 1.9, "text": "code"},
+        {"startSeconds": 2.0, "endSeconds": 2.25, "text": "again"},
+        {"startSeconds": 2.25, "endSeconds": 2.5, "text": "today"},
+    ],
+}
+
+transcript = parse_youtube_transcript(
+    payload,
+    language="en",
+    automatic=True,
+)
+assert transcript == expected
+
+info = {
+    "subtitles": {},
+    "automatic_captions": {
+        "en": [{"ext": "json3"}],
+        "es": [{"ext": "json3"}],
+    },
+}
+captured_command = None
+
+def fake_run(command, **kwargs):
+    global captured_command
+    captured_command = command
+    output_template = command[command.index("--output") + 1]
+    output_path = Path(output_template).parent / "transcript.en.json3"
+    output_path.write_text(json.dumps(payload), encoding="utf-8")
+    return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+with patch("encoder.inspect_youtube_info", return_value=info), \\
+     patch("encoder.subprocess.run", side_effect=fake_run):
+    fetched = inspect_youtube_transcript(
+        "https://www.youtube.com/watch?v=transcript-contract",
+    )
+
+assert fetched == expected
+assert captured_command is not None
+assert "--write-auto-subs" in captured_command
+assert "--write-subs" in captured_command
+assert captured_command[captured_command.index("--sub-langs") + 1] == "en"
+assert captured_command[captured_command.index("--sub-format") + 1] == "json3"
+
+print("YouTube transcript parsing test passed")
+`;
+
+  run("python3", ["-c", script]);
+}
+
 function testSectionEncodeBounds() {
   const script = `
 import sys
@@ -3304,6 +3388,7 @@ function main() {
   testYtdlpStallLineDetection();
   testRetainedSourceDownloadCommand();
   testYoutubeMetadataParsing();
+  testYoutubeTranscriptParsing();
   testSectionEncodeBounds();
   testStreamCopyGate();
   buildImage();
