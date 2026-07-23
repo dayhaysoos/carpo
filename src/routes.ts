@@ -2,6 +2,7 @@ import {
   deleteClip,
   deleteClipArtifacts,
   deleteSourceVideoRecords,
+  ensureSourceVideo,
   getClipById,
   getSourceVideoById,
   isRetainedUploadSource,
@@ -30,14 +31,20 @@ import {
   sweepExpiredUploadSources,
   validateUploadUrlRequest,
 } from "./uploads";
-import { validateCreateClipRequest } from "./validation";
+import {
+  validateCreateClipRequest,
+  validateCreateSourceVideoRequest,
+} from "./validation";
 import {
   handleHelperClaim,
   handleHelperFail,
   handleHelperFulfill,
   sweepAndRecoverHelperClips,
 } from "./helper";
-import { normalizeClipSource } from "./source-videos";
+import {
+  fallbackSourceTitle,
+  normalizeClipSource,
+} from "./source-videos";
 import { drainArtifactDeletions } from "./artifact-deletions";
 import { resolveUnresolvedYoutubeTitles } from "./youtube-metadata";
 import { createClipForVideo, enqueueClip } from "./clip-service";
@@ -76,6 +83,10 @@ export async function handleRequest(
 
   if (request.method === "GET" && url.pathname === "/api/videos") {
     return handleListSourceVideos(url, env, ctx);
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/videos") {
+    return handleCreateSourceVideo(request, env);
   }
 
   const videoSourceMatch = url.pathname.match(/^\/api\/videos\/([^/]+)\/source$/);
@@ -545,6 +556,53 @@ async function handleListSourceVideos(
     limit,
     offset,
   });
+}
+
+async function handleCreateSourceVideo(
+  request: Request,
+  env: Env,
+): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON body" }, 400);
+  }
+
+  const validation = validateCreateSourceVideoRequest(body);
+  if (!validation.ok) {
+    return json(
+      {
+        error: "Invalid video source",
+        details: validation.errors,
+      },
+      400,
+    );
+  }
+
+  const source = normalizeClipSource(validation.value.source);
+  const sourceTitle =
+    validation.value.title ||
+    fallbackSourceTitle(source, "Uploaded video");
+  const videoId = await ensureSourceVideo(env.DB, {
+    source,
+    title: sourceTitle,
+    updateUploadTitle: Boolean(
+      validation.value.title && source.type === "upload",
+    ),
+  });
+  if (validation.value.durationSeconds !== undefined) {
+    await updateSourceVideoDuration(
+      env.DB,
+      videoId,
+      validation.value.durationSeconds,
+    );
+  }
+  const video = await getSourceVideoById(env.DB, videoId);
+  if (!video) {
+    return json({ error: "Failed to create video" }, 500);
+  }
+  return json(sourceVideoRecordToResponse(video, env.R2_PUBLIC_PREFIX));
 }
 
 async function handleUpdateSourceVideo(

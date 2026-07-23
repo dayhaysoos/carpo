@@ -110,6 +110,12 @@ export interface SourceVideoResponse {
   updatedAt: string;
 }
 
+export interface CreateSourceVideoRequest {
+  source: ClipSource;
+  title?: string;
+  durationSeconds?: number;
+}
+
 export type CreateClipFromVideoRequest = Omit<
   CreateClipRequest,
   "source" | "sourceTitle"

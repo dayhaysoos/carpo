@@ -123,6 +123,33 @@ describe("VideoAgentChat", () => {
     vi.clearAllMocks();
   });
 
+  it("stays visible while waiting for a source video", () => {
+    chat.messages = [];
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+
+    render(
+      <VideoAgentChat
+        videoId=""
+        onClipCreated={vi.fn()}
+        onTimestampSelect={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "Clip with Think" })).toBeTruthy();
+    expect(screen.getByText("Waiting")).toBeTruthy();
+    expect(
+      screen.getByText("Choose a YouTube video or upload a file to start clipping."),
+    ).toBeTruthy();
+    expect(
+      screen
+        .getByRole("textbox", { name: "Clip instruction" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+  });
+
   it("only offers spoken-phrase clipping for YouTube sources", () => {
     chat.messages = [];
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {

@@ -1,6 +1,7 @@
 import type {
   ClipRecord,
   ClipStatus,
+  ClipSource,
   CreateClipRequest,
   FailureMode,
   GifStatus,
@@ -33,7 +34,18 @@ export async function insertClip(
   const filtersJson = JSON.stringify(request.filters ?? []);
   const callbackSecret = generateCallbackSecret();
   const helperState = options?.helperState ?? null;
-  const videoId = options?.videoId ?? await ensureSourceVideo(db, request);
+  const explicitSourceTitle = request.sourceTitle?.trim();
+  const videoId =
+    options?.videoId ??
+    (await ensureSourceVideo(db, {
+      source: request.source,
+      title:
+        explicitSourceTitle ||
+        fallbackSourceTitle(request.source, request.title),
+      updateUploadTitle: Boolean(
+        explicitSourceTitle && request.source.type === "upload",
+      ),
+    }));
 
   await db
     .prepare(
@@ -66,17 +78,19 @@ export async function insertClip(
   return record;
 }
 
-async function ensureSourceVideo(
+export async function ensureSourceVideo(
   db: D1Database,
-  request: CreateClipRequest,
+  input: {
+    source: ClipSource;
+    title: string;
+    updateUploadTitle?: boolean;
+  },
 ): Promise<string> {
-  const sourceType = request.source.type;
-  const sourceRef = sourceReference(request.source);
-  const explicitTitle = request.sourceTitle?.trim();
-  const title = explicitTitle || fallbackSourceTitle(request.source, request.title);
+  const sourceType = input.source.type;
+  const sourceRef = sourceReference(input.source);
   const id = crypto.randomUUID();
 
-  if (explicitTitle && sourceType === "upload") {
+  if (input.updateUploadTitle && sourceType === "upload") {
     await db
       .prepare(
         `INSERT INTO source_videos (id, source_type, source_ref, title)
@@ -85,7 +99,7 @@ async function ensureSourceVideo(
            title = excluded.title,
            updated_at = datetime('now')`,
       )
-      .bind(id, sourceType, sourceRef, title)
+      .bind(id, sourceType, sourceRef, input.title)
       .run();
   } else {
     await db
@@ -95,7 +109,7 @@ async function ensureSourceVideo(
          ON CONFLICT (source_type, source_ref) DO UPDATE SET
            updated_at = datetime('now')`,
       )
-      .bind(id, sourceType, sourceRef, title)
+      .bind(id, sourceType, sourceRef, input.title)
       .run();
   }
 

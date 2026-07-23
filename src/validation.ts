@@ -5,7 +5,13 @@ import {
   MAX_CAPTION_LENGTH,
   MAX_CLIP_LENGTH_SECONDS,
 } from "./types";
-import type { ClipQuality, ClipSource, CreateClipRequest, FilterSpec } from "./types";
+import type {
+  ClipQuality,
+  ClipSource,
+  CreateClipRequest,
+  CreateSourceVideoRequest,
+  FilterSpec,
+} from "./types";
 import { isValidUploadKey } from "./uploads";
 
 const YOUTUBE_HOSTS = new Set([
@@ -48,39 +54,7 @@ export function validateCreateClipRequest(
     });
   }
 
-  const source = input.source;
-  if (!source || typeof source !== "object") {
-    errors.push({ field: "source", message: "Source is required" });
-  } else {
-    const sourceObj = source as Record<string, unknown>;
-    const sourceType = sourceObj.type;
-    if (sourceType === "youtube") {
-      const url = typeof sourceObj.url === "string" ? sourceObj.url.trim() : "";
-      if (!url) {
-        errors.push({ field: "source.url", message: "YouTube URL is required" });
-      } else if (!isValidYoutubeUrl(url)) {
-        errors.push({
-          field: "source.url",
-          message: "Must be a valid YouTube URL (youtube.com or youtu.be)",
-        });
-      }
-    } else if (sourceType === "upload") {
-      const key = typeof sourceObj.key === "string" ? sourceObj.key.trim() : "";
-      if (!key) {
-        errors.push({ field: "source.key", message: "Upload key is required" });
-      } else if (!isValidUploadKey(key)) {
-        errors.push({
-          field: "source.key",
-          message: "Upload key must be an uploads/ object key with a supported video extension",
-        });
-      }
-    } else {
-      errors.push({
-        field: "source.type",
-        message: "Source type must be 'youtube' or 'upload'",
-      });
-    }
-  }
+  const parsedSource = validateClipSource(input.source, errors);
 
   const trimStart = parseTimestamp(input.trimStart, "trimStart", errors);
   const trimEnd = parseTimestamp(input.trimEnd, "trimEnd", errors);
@@ -137,24 +111,12 @@ export function validateCreateClipRequest(
     return { ok: false, errors };
   }
 
-  const sourceObj = source as Record<string, unknown>;
-  const parsedSource: ClipSource =
-    sourceObj.type === "upload"
-      ? {
-          type: "upload",
-          key: (sourceObj.key as string).trim(),
-        }
-      : {
-          type: "youtube",
-          url: (sourceObj.url as string).trim(),
-        };
-
   return {
     ok: true,
     value: {
       title,
       ...(sourceTitle ? { sourceTitle } : {}),
-      source: parsedSource,
+      source: parsedSource!,
       trimStart: trimStart!,
       trimEnd: trimEnd!,
       filters,
@@ -162,6 +124,117 @@ export function validateCreateClipRequest(
       caption: extractCaptionFromFilters(filters),
     },
   };
+}
+
+export function validateCreateSourceVideoRequest(
+  body: unknown,
+):
+  | { ok: true; value: CreateSourceVideoRequest }
+  | { ok: false; errors: ValidationError[] } {
+  const errors: ValidationError[] = [];
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return {
+      ok: false,
+      errors: [{ field: "body", message: "Request body must be a JSON object" }],
+    };
+  }
+
+  const input = body as Record<string, unknown>;
+  const source = validateClipSource(input.source, errors);
+  const title = typeof input.title === "string" ? input.title.trim() : "";
+  if (
+    input.title !== undefined &&
+    input.title !== null &&
+    typeof input.title !== "string"
+  ) {
+    errors.push({
+      field: "title",
+      message: "Title must be a string",
+    });
+  } else if (title.length > 200) {
+    errors.push({
+      field: "title",
+      message: "Title must be 200 characters or fewer",
+    });
+  }
+
+  let durationSeconds: number | undefined;
+  if (input.durationSeconds !== undefined && input.durationSeconds !== null) {
+    if (
+      typeof input.durationSeconds !== "number" ||
+      !Number.isFinite(input.durationSeconds) ||
+      input.durationSeconds <= 0
+    ) {
+      errors.push({
+        field: "durationSeconds",
+        message: "durationSeconds must be a positive number",
+      });
+    } else {
+      durationSeconds = input.durationSeconds;
+    }
+  }
+
+  if (errors.length > 0) {
+    return { ok: false, errors };
+  }
+
+  return {
+    ok: true,
+    value: {
+      source: source!,
+      ...(title ? { title } : {}),
+      ...(durationSeconds !== undefined ? { durationSeconds } : {}),
+    },
+  };
+}
+
+function validateClipSource(
+  source: unknown,
+  errors: ValidationError[],
+): ClipSource | null {
+  if (!source || typeof source !== "object" || Array.isArray(source)) {
+    errors.push({ field: "source", message: "Source is required" });
+    return null;
+  }
+
+  const sourceObj = source as Record<string, unknown>;
+  if (sourceObj.type === "youtube") {
+    const url = typeof sourceObj.url === "string" ? sourceObj.url.trim() : "";
+    if (!url) {
+      errors.push({ field: "source.url", message: "YouTube URL is required" });
+      return null;
+    }
+    if (!isValidYoutubeUrl(url)) {
+      errors.push({
+        field: "source.url",
+        message: "Must be a valid YouTube URL (youtube.com or youtu.be)",
+      });
+      return null;
+    }
+    return { type: "youtube", url };
+  }
+
+  if (sourceObj.type === "upload") {
+    const key = typeof sourceObj.key === "string" ? sourceObj.key.trim() : "";
+    if (!key) {
+      errors.push({ field: "source.key", message: "Upload key is required" });
+      return null;
+    }
+    if (!isValidUploadKey(key)) {
+      errors.push({
+        field: "source.key",
+        message: "Upload key must be an uploads/ object key with a supported video extension",
+      });
+      return null;
+    }
+    return { type: "upload", key };
+  }
+
+  errors.push({
+    field: "source.type",
+    message: "Source type must be 'youtube' or 'upload'",
+  });
+  return null;
 }
 
 function validateFilters(filters: unknown[], errors: ValidationError[]): FilterSpec[] {

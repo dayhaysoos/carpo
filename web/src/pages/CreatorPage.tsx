@@ -18,7 +18,7 @@ import { toExistingClipRanges } from "../timeline";
 
 export function CreatorPage() {
   const queryClient = useQueryClient();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const videoId = searchParams.get("video") ?? "";
   const clipWindowSequence = useRef(0);
   const [clipWindowRequest, setClipWindowRequest] =
@@ -35,6 +35,13 @@ export function CreatorPage() {
     void queryClient.invalidateQueries({ queryKey: ["source-video"] });
   };
 
+  const handleVideoActivated = (activatedVideoId: string) => {
+    const nextSearchParams = new URLSearchParams(searchParams);
+    nextSearchParams.set("video", activatedVideoId);
+    nextSearchParams.delete("source");
+    setSearchParams(nextSearchParams, { replace: true });
+  };
+
   const handleTimestampSelect = (window: TimestampWindow) => {
     clipWindowSequence.current += 1;
     setClipWindowRequest({
@@ -48,20 +55,19 @@ export function CreatorPage() {
     <main className="app-main">
       <CreatorForm
         onClipCreated={handleClipCreated}
+        onVideoActivated={handleVideoActivated}
         clipWindowRequest={clipWindowRequest}
       />
-      {videoId ? (
-        <VideoAgentChat
-          videoId={videoId}
-          source={sourceVideoData?.video.source}
-          retainedSourceReady={
-            sourceVideoData?.video.retainedSourceReady ?? false
-          }
-          onClipCreated={handleClipCreated}
-          onTimestampSelect={handleTimestampSelect}
-          existingClips={existingClips}
-        />
-      ) : null}
+      <VideoAgentChat
+        videoId={videoId}
+        source={sourceVideoData?.video.source}
+        retainedSourceReady={
+          sourceVideoData?.video.retainedSourceReady ?? false
+        }
+        onClipCreated={handleClipCreated}
+        onTimestampSelect={handleTimestampSelect}
+        existingClips={existingClips}
+      />
       <StatusPanel />
     </main>
   );

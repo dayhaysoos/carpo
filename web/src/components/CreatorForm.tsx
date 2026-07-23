@@ -1,9 +1,16 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   createClip,
   createClipFromSourceVideo,
+  createSourceVideo,
   getSourceVideo,
   requestUploadUrl,
   sourceVideoUploadUrl,
@@ -18,6 +25,7 @@ import {
   MAX_CLIP_LENGTH_SECONDS,
   type ClipQuality,
   type CreateClipRequest,
+  type CreateSourceVideoRequest,
   DEFAULT_CLIP_QUALITY,
 } from "../types";
 import {
@@ -34,6 +42,7 @@ type SourceMode = "youtube" | "upload";
 
 interface CreatorFormProps {
   onClipCreated: () => void;
+  onVideoActivated: (videoId: string) => void;
   clipWindowRequest?: ClipWindowRequest | null;
 }
 
@@ -41,6 +50,7 @@ const DEFAULT_MAX_UPLOAD_BYTES = 95 * 1024 * 1024;
 
 export function CreatorForm({
   onClipCreated,
+  onVideoActivated,
   clipWindowRequest,
 }: CreatorFormProps) {
   const [searchParams] = useSearchParams();
@@ -59,6 +69,24 @@ export function CreatorForm({
   const [maxUploadBytes, setMaxUploadBytes] = useState(DEFAULT_MAX_UPLOAD_BYTES);
   const appliedClipWindowRequest = useRef<number | null>(null);
   const durationUpdateKey = useRef<string | null>(null);
+  const sourceActivationKey = useRef<string | null>(null);
+  const uploadGeneration = useRef(0);
+  const youtubeMetadata = useRef({ title: "", duration: 0 });
+  const [sourceActivationError, setSourceActivationError] = useState<
+    string | null
+  >(null);
+  const activateVideo = useCallback(
+    async (
+      request: CreateSourceVideoRequest,
+      shouldActivate: () => boolean = () => true,
+    ) => {
+      const video = await createSourceVideo(request);
+      if (shouldActivate()) {
+        onVideoActivated(video.id);
+      }
+    },
+    [onVideoActivated],
+  );
 
   const {
     data: reusableVideoData,
@@ -99,6 +127,10 @@ export function CreatorForm({
   }, [filePreviewUrl]);
 
   const youtube = useYoutubePlayer(sourceMode === "youtube" ? videoId : null);
+  youtubeMetadata.current = {
+    title: youtube.title,
+    duration: youtube.duration,
+  };
 
   const fileValidationError =
     sourceMode === "upload" && selectedFile
@@ -148,6 +180,60 @@ export function CreatorForm({
     ready,
     reusableVideo?.durationSeconds,
     reusableVideoId,
+  ]);
+
+  useEffect(() => {
+    if (
+      reusableVideoId ||
+      sourceMode !== "youtube" ||
+      !urlValid ||
+      !videoId
+    ) {
+      return;
+    }
+    const activationKey = `youtube:${videoId}`;
+    if (sourceActivationKey.current === activationKey) return;
+    let cancelled = false;
+    const timeout = window.setTimeout(() => {
+      sourceActivationKey.current = activationKey;
+      setSourceActivationError(null);
+      const metadata = youtubeMetadata.current;
+      void activateVideo(
+        {
+          source: { type: "youtube", url: trimmedUrl },
+          title: metadata.title || `YouTube video ${videoId}`,
+          ...(metadata.duration > 0
+            ? {
+                durationSeconds:
+                  Math.round(metadata.duration * 1000) / 1000,
+              }
+            : {}),
+        },
+        () =>
+          !cancelled && sourceActivationKey.current === activationKey,
+      )
+        .catch((error) => {
+          if (cancelled) return;
+          sourceActivationKey.current = null;
+          setSourceActivationError(
+            error instanceof Error ? error.message : "Failed to prepare video",
+          );
+        });
+    }, 300);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+      if (sourceActivationKey.current === activationKey) {
+        sourceActivationKey.current = null;
+      }
+    };
+  }, [
+    activateVideo,
+    reusableVideoId,
+    sourceMode,
+    trimmedUrl,
+    urlValid,
+    videoId,
   ]);
 
   useEffect(() => {
@@ -202,10 +288,13 @@ export function CreatorForm({
   }, [clipCreatedNotice]);
 
   const handleSourceModeChange = (mode: SourceMode) => {
+    uploadGeneration.current += 1;
     setSourceMode(mode);
     setUrlTouched(false);
     setUploadError(null);
     setUploadProgress(null);
+    setSourceActivationError(null);
+    sourceActivationKey.current = null;
     if (mode === "youtube") {
       setSelectedFile(null);
       setUploadKey(null);
@@ -233,6 +322,9 @@ export function CreatorForm({
   }, [searchParams]);
 
   const handleFileChange = async (file: File | null) => {
+    const generation = uploadGeneration.current + 1;
+    uploadGeneration.current = generation;
+    const isCurrentUpload = () => uploadGeneration.current === generation;
     setSelectedFile(file);
     setUploadKey(null);
     setUploadError(null);
@@ -261,6 +353,7 @@ export function CreatorForm({
         sizeBytes: file.size,
         filename: file.name,
       });
+      if (!isCurrentUpload()) return;
       setMaxUploadBytes(slot.maxSizeBytes);
 
       const slotValidation = validateUploadFile(file, slot.maxSizeBytes);
@@ -275,13 +368,24 @@ export function CreatorForm({
         file,
         slot.contentType,
         (loaded, total) => {
-          setUploadProgress(formatUploadProgress(loaded, total));
+          if (isCurrentUpload()) {
+            setUploadProgress(formatUploadProgress(loaded, total));
+          }
         },
       );
+      if (!isCurrentUpload()) return;
 
       setUploadKey(slot.key);
       setUploadProgress("Upload complete");
+      await activateVideo(
+        {
+          source: { type: "upload", key: slot.key },
+          title: file.name,
+        },
+        isCurrentUpload,
+      );
     } catch (error) {
+      if (!isCurrentUpload()) return;
       setUploadError(
         error instanceof Error ? error.message : "Upload failed",
       );
@@ -360,7 +464,17 @@ export function CreatorForm({
                 : "Uploaded video"}
             </span>
           </div>
-          <Link to="/" className="btn-ghost">
+          <Link
+            to="/"
+            className="btn-ghost"
+            onClick={() => {
+              setUrl("");
+              setSelectedFile(null);
+              setUploadKey(null);
+              sourceActivationKey.current = null;
+              uploadGeneration.current += 1;
+            }}
+          >
             Choose another
           </Link>
         </div>
@@ -542,6 +656,12 @@ export function CreatorForm({
       {mutation.error && (
         <div className="form-error" role="alert">
           {mutation.error.message}
+        </div>
+      )}
+
+      {sourceActivationError && (
+        <div className="form-error" role="alert">
+          {sourceActivationError}
         </div>
       )}
 

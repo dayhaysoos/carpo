@@ -4,6 +4,7 @@ import type {
   ClipResponse,
   CreateClipRequest,
   CreateClipFromVideoRequest,
+  CreateSourceVideoRequest,
   SourceVideoDetailResponse,
   SourceVideoListResponse,
   SourceVideoResponse,
@@ -125,6 +126,22 @@ export async function listSourceVideos(
     throw new Error(body.error || `Request failed (${response.status})`);
   }
   return response.json() as Promise<SourceVideoListResponse>;
+}
+
+export async function createSourceVideo(
+  request: CreateSourceVideoRequest,
+): Promise<SourceVideoResponse> {
+  const response = await fetch("/api/videos", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiError;
+    const detail = body.details?.map((d) => d.message).join("; ");
+    throw new Error(detail || body.error || `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<SourceVideoResponse>;
 }
 
 export async function createClipFromSourceVideo(

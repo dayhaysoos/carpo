@@ -2298,6 +2298,42 @@ describe("GET /api/clips", () => {
 });
 
 describe("source video library", () => {
+  it("creates or reuses a video before its first clip", async () => {
+    const source = {
+      type: "youtube",
+      url: "https://www.youtube.com/watch?v=alwaysThink01",
+    };
+    const create = () =>
+      workerFetch("http://example.com/api/videos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source,
+          title: "Always available Think source",
+          durationSeconds: 214,
+        }),
+      });
+
+    const firstResponse = await create();
+    expect(firstResponse.status).toBe(200);
+    const first = (await firstResponse.json()) as {
+      id: string;
+      durationSeconds: number;
+      clipCount: number;
+    };
+    expect(first).toMatchObject({
+      title: "Always available Think source",
+      source,
+      durationSeconds: 214,
+      clipCount: 0,
+    });
+
+    const secondResponse = await create();
+    expect(secondResponse.status).toBe(200);
+    const second = (await secondResponse.json()) as { id: string };
+    expect(second.id).toBe(first.id);
+  });
+
   it("persists player duration as reusable video context", async () => {
     const created = await createYoutubeClip("duration context clip");
 

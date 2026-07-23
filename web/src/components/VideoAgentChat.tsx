@@ -49,7 +49,52 @@ function messageText(parts: Array<{ type: string; text?: string }>): string {
     .join("");
 }
 
-export function VideoAgentChat({
+export function VideoAgentChat(props: VideoAgentChatProps) {
+  if (!props.videoId) {
+    return (
+      <section className="agent-chat card" aria-label="Clip with Think">
+        <div className="card-header agent-chat-header">
+          <div>
+            <h2>Clip with Think</h2>
+            <p>
+              Choose a YouTube video or upload a file to start clipping.
+            </p>
+          </div>
+          <span className="agent-connection" role="status" aria-live="polite">
+            Waiting
+          </span>
+        </div>
+
+        <div className="agent-messages" aria-live="polite">
+          <div className="agent-empty">
+            <strong>Think is ready when your video is</strong>
+            <p>Paste a YouTube URL or upload a video to continue.</p>
+          </div>
+        </div>
+
+        <form className="agent-composer">
+          <div className="agent-composer-input">
+            <textarea
+              placeholder="Choose a video to start clipping…"
+              rows={3}
+              disabled
+              aria-label="Clip instruction"
+            />
+          </div>
+          <div className="agent-composer-footer">
+            <button type="submit" className="btn-primary" disabled>
+              Send
+            </button>
+          </div>
+        </form>
+      </section>
+    );
+  }
+
+  return <ConnectedVideoAgentChat {...props} />;
+}
+
+function ConnectedVideoAgentChat({
   videoId,
   source,
   retainedSourceReady = false,
@@ -312,7 +357,11 @@ export function VideoAgentChat({
               : "Describe clips by timestamp. You approve them before creation."}
           </p>
         </div>
-        <span className={`agent-connection ${connected ? "connected" : ""}`}>
+        <span
+          className={`agent-connection ${connected ? "connected" : ""}`}
+          role="status"
+          aria-live="polite"
+        >
           {connected ? "Ready" : "Connecting"}
         </span>
       </div>

@@ -68,6 +68,12 @@ export interface UploadSource {
 
 export type ClipSource = YoutubeSource | UploadSource;
 
+export interface CreateSourceVideoRequest {
+  source: ClipSource;
+  title?: string;
+  durationSeconds?: number;
+}
+
 export interface CreateClipRequest {
   title: string;
   sourceTitle?: string;
