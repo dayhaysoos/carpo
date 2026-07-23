@@ -1,4 +1,8 @@
-import { Think } from "@cloudflare/think";
+import {
+  Think,
+  type PrepareStepContext,
+  type TurnContext,
+} from "@cloudflare/think";
 import { tool } from "ai";
 import { z } from "zod";
 import {
@@ -12,6 +16,22 @@ import { MAX_CAPTION_LENGTH, MAX_CLIP_LENGTH_SECONDS } from "./types";
 import { checkSourceVideoTranscript } from "./video-context";
 
 const MAX_AGENT_OCCUPIED_RANGES = 200;
+
+interface AgentVideoContext {
+  title: string;
+  durationSeconds: number | null;
+  sourceType: "youtube" | "upload";
+  retainedSourceReady: boolean;
+  transcriptStatus: string;
+  metadataCheckError: string | null;
+  constraints: {
+    maximumClipLengthSeconds: number;
+    qualities: string[];
+  };
+  existingClips: Array<{ startSeconds: number; endSeconds: number }>;
+  existingClipRangeCount: number;
+  existingClipRangesTruncated: boolean;
+}
 
 function occupiedRangeContext(
   clips: Array<{
@@ -77,6 +97,85 @@ const manualClipInput = z
     }
   });
 
+export async function loadAgentVideoContext(
+  env: Env,
+  videoId: string,
+): Promise<AgentVideoContext | { error: string }> {
+  const [initialVideo, clips] = await Promise.all([
+    getSourceVideoById(env.DB, videoId),
+    listClipsByVideoId(env.DB, videoId),
+  ]);
+  let video = initialVideo;
+  if (!video) {
+    return { error: "Video not found" };
+  }
+
+  let metadataCheckError: string | null = null;
+  if (video.source_type === "youtube" && video.duration_seconds === null) {
+    try {
+      video = (await checkSourceVideoTranscript(env, videoId)) ?? video;
+    } catch (error) {
+      metadataCheckError =
+        error instanceof Error ? error.message : "Video metadata check failed";
+    }
+  } else if (
+    video.source_type === "upload" &&
+    video.duration_seconds === null
+  ) {
+    try {
+      const metadata = await inspectStoredVideo(env, video.source_ref);
+      if (metadata.durationSeconds !== null) {
+        await updateSourceVideoDuration(
+          env.DB,
+          videoId,
+          metadata.durationSeconds,
+        );
+        video = (await getSourceVideoById(env.DB, videoId)) ?? video;
+      }
+    } catch (error) {
+      metadataCheckError =
+        error instanceof Error ? error.message : "Video metadata check failed";
+    }
+  }
+
+  return {
+    title: video.title,
+    durationSeconds: video.duration_seconds,
+    sourceType: video.source_type,
+    retainedSourceReady:
+      video.source_type === "upload" ||
+      video.retained_source_status === "ready",
+    transcriptStatus: video.transcript_status,
+    metadataCheckError,
+    constraints: {
+      maximumClipLengthSeconds: MAX_CLIP_LENGTH_SECONDS,
+      qualities: ["720p", "1080p"],
+    },
+    ...occupiedRangeContext(clips),
+  };
+}
+
+export function agentVideoContextSystemBlock(
+  context: AgentVideoContext | { error: string },
+): string {
+  return [
+    "CURRENT VIDEO CONTEXT (authoritative server data for this turn):",
+    JSON.stringify(context),
+    "Use this context directly. When durationSeconds is a number, never ask the user for the video duration.",
+    "The getVideoContext tool remains available if you need to refresh this data.",
+  ].join("\n");
+}
+
+export function forceVideoContextOnFirstStep(
+  stepNumber: number,
+) {
+  if (stepNumber !== 0) return undefined;
+  return {
+    activeTools: ["getVideoContext"],
+    toolChoice: { type: "tool", toolName: "getVideoContext" },
+  } as const;
+}
+
 export class VideoClipAgent extends Think<Env> {
   workspaceBash = false;
 
@@ -90,7 +189,7 @@ export class VideoClipAgent extends Think<Env> {
       "Only help with manual timestamp clipping in this version. Do not claim you can transcribe, search speech, understand scenes, or inspect the video's contents.",
       "Convert timestamps such as 1:20, 01:20.500, or 'one minute twenty seconds' into numeric seconds.",
       "When the user gives a start and end time, call createClip with the exact range. The interface will show a preview and let the user adjust the range before anything is created.",
-      "Before proposing any clip, call getVideoContext. Keep every proposed range inside durationSeconds and avoid overlapping existing clips unless the user asks for overlap.",
+      "The current video context is injected into every turn. Keep every proposed range inside durationSeconds and avoid overlapping existing clips unless the user asks for overlap.",
       "For a random-clips request without a requested length, use 10 seconds per clip. Choose non-overlapping ranges spread across the video and avoid existing clips when possible.",
       "When asked whether a transcript or captions are available, call checkTranscriptAvailability. This only checks availability; it does not let you search or quote the transcript.",
       "Use 1080p unless the user asks for 720p. Add a caption only when requested. If no title is supplied, make a concise title from the video title and timestamp range.",
@@ -100,8 +199,10 @@ export class VideoClipAgent extends Think<Env> {
     ].join("\n\n");
   }
 
-  override beforeTurn() {
+  override async beforeTurn(ctx: TurnContext) {
+    const videoContext = await loadAgentVideoContext(this.env, this.name);
     return {
+      system: `${ctx.system}\n\n${agentVideoContextSystemBlock(videoContext)}`,
       activeTools: [
         "getVideoContext",
         "checkTranscriptAvailability",
@@ -112,77 +213,17 @@ export class VideoClipAgent extends Think<Env> {
     };
   }
 
+  override beforeStep(ctx: PrepareStepContext) {
+    return forceVideoContextOnFirstStep(ctx.stepNumber);
+  }
+
   override getTools() {
     return {
       getVideoContext: tool({
         description:
           "Get the selected video's title, duration, source readiness, transcript status, clipping constraints, and existing clip ranges. Call this before generating random, multiple, or boundary-dependent clips.",
         inputSchema: z.object({}),
-        execute: async () => {
-          const [initialVideo, clips] = await Promise.all([
-            getSourceVideoById(this.env.DB, this.name),
-            listClipsByVideoId(this.env.DB, this.name),
-          ]);
-          let video = initialVideo;
-          if (!video) {
-            return { error: "Video not found" };
-          }
-          let metadataCheckError: string | null = null;
-          if (
-            video.source_type === "youtube" &&
-            video.duration_seconds === null
-          ) {
-            try {
-              video =
-                (await checkSourceVideoTranscript(this.env, this.name)) ??
-                video;
-            } catch (error) {
-              metadataCheckError =
-                error instanceof Error
-                  ? error.message
-                  : "Video metadata check failed";
-            }
-          } else if (
-            video.source_type === "upload" &&
-            video.duration_seconds === null
-          ) {
-            try {
-              const metadata = await inspectStoredVideo(
-                this.env,
-                video.source_ref,
-              );
-              if (metadata.durationSeconds !== null) {
-                await updateSourceVideoDuration(
-                  this.env.DB,
-                  this.name,
-                  metadata.durationSeconds,
-                );
-                video =
-                  (await getSourceVideoById(this.env.DB, this.name)) ?? video;
-              }
-            } catch (error) {
-              metadataCheckError =
-                error instanceof Error
-                  ? error.message
-                  : "Video metadata check failed";
-            }
-          }
-          return {
-            title: video.title,
-            durationSeconds: video.duration_seconds,
-            sourceType: video.source_type,
-            retainedSourceReady:
-              video.source_type === "upload" ||
-              video.retained_source_status === "ready",
-            transcriptStatus: video.transcript_status,
-            metadataCheckError,
-            constraints: {
-              maximumClipLengthSeconds: MAX_CLIP_LENGTH_SECONDS,
-              qualities: ["720p", "1080p"],
-            },
-            ...occupiedRangeContext(clips),
-          };
-        },
+        execute: async () => loadAgentVideoContext(this.env, this.name),
       }),
       checkTranscriptAvailability: tool({
         description:
