@@ -12,7 +12,7 @@ import type { Env } from "./env";
 import { transcriptObjectKey } from "./source-videos";
 import {
   MAX_CLIP_LENGTH_SECONDS,
-  type TranscriptStatus,
+  type SourceVideoRecord,
 } from "./types";
 import { nextTranscriptRetryAt } from "./video-context";
 
@@ -36,7 +36,7 @@ export interface TranscriptSearchMatch {
 }
 
 export interface TranscriptSearchResult {
-  transcriptStatus: TranscriptSearchStatus;
+  transcriptStatus: "available";
   query: string;
   language: string | null;
   automatic: boolean | null;
@@ -46,10 +46,27 @@ export interface TranscriptSearchResult {
   truncated: boolean;
 }
 
-type TranscriptSearchStatus = Extract<
-  TranscriptStatus,
-  "available" | "unavailable" | "unsupported"
->;
+export interface TranscriptBlock {
+  id: string;
+  startCueId: string;
+  endCueId: string;
+  startSeconds: number;
+  endSeconds: number;
+  text: string;
+}
+
+export interface TranscriptDocumentResult {
+  transcriptStatus: "available";
+  language: string;
+  automatic: boolean;
+  cached: boolean;
+  blocks: TranscriptBlock[];
+}
+
+export interface TranscriptClipRange {
+  startSeconds: number;
+  endSeconds: number;
+}
 
 export interface TranscriptSearchInput {
   query: string;
@@ -102,11 +119,11 @@ async function readCachedTranscript(
   }
 }
 
-async function loadYoutubeTranscript(
+async function loadVideoTranscript(
   env: Env,
-  videoId: string,
-  sourceUrl: string,
+  video: SourceVideoRecord,
 ): Promise<{ transcript: StoredTranscript; cached: boolean }> {
+  const videoId = video.id;
   const cached = await readCachedTranscript(env, videoId);
   if (cached) {
     return { transcript: cached, cached: true };
@@ -117,23 +134,40 @@ async function loadYoutubeTranscript(
   });
 
   let fetched: YoutubeTranscript;
-  try {
-    fetched = await fetchYoutubeTranscript(env, sourceUrl);
-  } catch (captionError) {
+  if (video.source_type === "youtube") {
+    try {
+      fetched = await fetchYoutubeTranscript(env, video.source_ref);
+    } catch (captionError) {
+      try {
+        fetched = await transcribeSourceVideo(env, videoId);
+      } catch (transcriptionError) {
+        const captionMessage =
+          captionError instanceof Error
+            ? captionError.message
+            : "YouTube caption fetch failed";
+        const transcriptionMessage =
+          transcriptionError instanceof Error
+            ? transcriptionError.message
+            : "Retained-source transcription failed";
+        const message =
+          `Caption retrieval failed (${captionMessage}); ` +
+          `retained-source transcription failed (${transcriptionMessage})`;
+        await updateSourceVideoTranscriptContext(env.DB, videoId, {
+          status: "failed",
+          error: message,
+          retryAt: nextTranscriptRetryAt(),
+        });
+        throw new Error(message);
+      }
+    }
+  } else {
     try {
       fetched = await transcribeSourceVideo(env, videoId);
     } catch (transcriptionError) {
-      const captionMessage =
-        captionError instanceof Error
-          ? captionError.message
-          : "YouTube caption fetch failed";
-      const transcriptionMessage =
+      const message =
         transcriptionError instanceof Error
           ? transcriptionError.message
-          : "Retained-source transcription failed";
-      const message =
-        `Caption retrieval failed (${captionMessage}); ` +
-        `retained-source transcription failed (${transcriptionMessage})`;
+          : "Uploaded-source transcription failed";
       await updateSourceVideoTranscriptContext(env.DB, videoId, {
         status: "failed",
         error: message,
@@ -196,20 +230,52 @@ function normalizedTokens(text: string): string[] {
   );
 }
 
-function emptyTranscriptSearchResult(
-  transcriptStatus: Exclude<TranscriptSearchStatus, "available">,
-  query: string,
-): TranscriptSearchResult {
-  return {
-    transcriptStatus,
-    query,
-    language: null,
-    automatic: null,
-    cached: false,
-    matches: [],
-    totalMatches: 0,
-    truncated: false,
-  };
+export function buildTranscriptClipRange(input: {
+  spokenStartSeconds: number;
+  spokenEndSeconds: number;
+  beforeSeconds: number;
+  afterSeconds: number;
+  durationSeconds: number | null;
+}): TranscriptClipRange | null {
+  if (
+    input.spokenEndSeconds <= input.spokenStartSeconds ||
+    input.spokenEndSeconds - input.spokenStartSeconds >
+      MAX_CLIP_LENGTH_SECONDS ||
+    (input.durationSeconds !== null &&
+      (input.spokenStartSeconds >= input.durationSeconds ||
+        input.spokenEndSeconds > input.durationSeconds))
+  ) {
+    return null;
+  }
+
+  let startSeconds = Math.max(
+    0,
+    input.spokenStartSeconds - input.beforeSeconds,
+  );
+  const paddedEnd = input.spokenEndSeconds + input.afterSeconds;
+  let endSeconds =
+    input.durationSeconds === null
+      ? paddedEnd
+      : Math.min(input.durationSeconds, paddedEnd);
+
+  if (endSeconds - startSeconds > MAX_CLIP_LENGTH_SECONDS) {
+    endSeconds = Math.min(
+      input.durationSeconds ?? Number.POSITIVE_INFINITY,
+      startSeconds + MAX_CLIP_LENGTH_SECONDS,
+    );
+    if (endSeconds < input.spokenEndSeconds) {
+      endSeconds = input.spokenEndSeconds;
+      startSeconds = Math.max(0, endSeconds - MAX_CLIP_LENGTH_SECONDS);
+    }
+  }
+
+  if (
+    endSeconds <= startSeconds ||
+    endSeconds - startSeconds > MAX_CLIP_LENGTH_SECONDS
+  ) {
+    return null;
+  }
+  return { startSeconds, endSeconds };
 }
 
 function mergeTranscriptMatchRanges(
@@ -282,38 +348,20 @@ function findTranscriptMatches(
     const lastCueIndex = tokens[index + queryTokens.length - 1].cueIndex;
     const firstCue = transcript.cues[firstCueIndex];
     const lastCue = transcript.cues[lastCueIndex];
-    if (
-      lastCue.endSeconds - firstCue.startSeconds >
-      MAX_CLIP_LENGTH_SECONDS
-    ) {
-      continue;
-    }
     const dedupeKey = `${firstCue.startSeconds}:${lastCue.endSeconds}`;
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
 
-    const paddedEnd = lastCue.endSeconds + options.afterSeconds;
-    let startSeconds = Math.max(
-      0,
-      firstCue.startSeconds - options.beforeSeconds,
-    );
-    let endSeconds =
-      options.durationSeconds === null
-        ? paddedEnd
-        : Math.min(options.durationSeconds, paddedEnd);
-    if (endSeconds - startSeconds > MAX_CLIP_LENGTH_SECONDS) {
-      endSeconds = startSeconds + MAX_CLIP_LENGTH_SECONDS;
-      if (endSeconds < lastCue.endSeconds) {
-        endSeconds = lastCue.endSeconds;
-        startSeconds = Math.max(
-          0,
-          endSeconds - MAX_CLIP_LENGTH_SECONDS,
-        );
-      }
-    }
+    const range = buildTranscriptClipRange({
+      spokenStartSeconds: firstCue.startSeconds,
+      spokenEndSeconds: lastCue.endSeconds,
+      beforeSeconds: options.beforeSeconds,
+      afterSeconds: options.afterSeconds,
+      durationSeconds: options.durationSeconds,
+    });
+    if (!range) continue;
     matches.push({
-      startSeconds,
-      endSeconds,
+      ...range,
       spokenStartSeconds: firstCue.startSeconds,
       spokenEndSeconds: lastCue.endSeconds,
       text: transcript.cues
@@ -323,6 +371,65 @@ function findTranscriptMatches(
     });
   }
   return mergeTranscriptMatchRanges(matches);
+}
+
+function transcriptBlocks(transcript: StoredTranscript): TranscriptBlock[] {
+  const groups: Array<{
+    startIndex: number;
+    endIndex: number;
+    startSeconds: number;
+    endSeconds: number;
+    texts: string[];
+  }> = [];
+
+  transcript.cues.forEach((cue, index) => {
+    const current = groups.at(-1);
+    const canAppend =
+      current &&
+      cue.startSeconds - current.endSeconds <= MAX_PHRASE_GAP_SECONDS &&
+      cue.endSeconds - current.startSeconds <= 12 &&
+      current.texts.join(" ").length + cue.text.length + 1 <= 240;
+    if (canAppend) {
+      current.endIndex = index;
+      current.endSeconds = cue.endSeconds;
+      current.texts.push(cue.text);
+      return;
+    }
+    groups.push({
+      startIndex: index,
+      endIndex: index,
+      startSeconds: cue.startSeconds,
+      endSeconds: cue.endSeconds,
+      texts: [cue.text],
+    });
+  });
+
+  return groups.map((group) => ({
+    id: `cue-${group.startIndex}-${group.endIndex}`,
+    startCueId: `cue-${group.startIndex}`,
+    endCueId: `cue-${group.endIndex}`,
+    startSeconds: group.startSeconds,
+    endSeconds: group.endSeconds,
+    text: group.texts.join(" "),
+  }));
+}
+
+export async function getVideoTranscript(
+  env: Env,
+  videoId: string,
+): Promise<TranscriptDocumentResult> {
+  const video = await getSourceVideoById(env.DB, videoId);
+  if (!video) {
+    throw new Error("Video not found");
+  }
+  const loaded = await loadVideoTranscript(env, video);
+  return {
+    transcriptStatus: "available",
+    language: loaded.transcript.language,
+    automatic: loaded.transcript.automatic,
+    cached: loaded.cached,
+    blocks: transcriptBlocks(loaded.transcript),
+  };
 }
 
 export async function searchVideoTranscript(
@@ -339,15 +446,7 @@ export async function searchVideoTranscript(
   const afterSeconds = input.afterSeconds ?? 2;
   const limit = input.limit ?? 20;
 
-  if (video.source_type !== "youtube") {
-    return emptyTranscriptSearchResult("unsupported", query);
-  }
-
-  const loaded = await loadYoutubeTranscript(
-    env,
-    videoId,
-    video.source_ref,
-  );
+  const loaded = await loadVideoTranscript(env, video);
 
   const matches = findTranscriptMatches(loaded.transcript, query, {
     beforeSeconds,

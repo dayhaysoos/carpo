@@ -1,11 +1,12 @@
 import { env } from "cloudflare:test";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   agentVideoContextSystemBlock,
   forceVideoContextOnFirstStep,
   loadAgentVideoContext,
   VideoClipAgent,
 } from "../src/video-clip-agent";
+import { transcriptObjectKey } from "../src/source-videos";
 
 describe("VideoClipAgent context", () => {
   it("injects a persisted duration so random clip requests never need user input", async () => {
@@ -120,6 +121,149 @@ describe("VideoClipAgent context", () => {
     ).toContain(
       "even when the current transcript status is failed or unavailable",
     );
+  });
+
+  it("grounds semantic clip proposals in real transcript block ids", async () => {
+    const videoId = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO source_videos (
+         id,
+         source_type,
+         source_ref,
+         title,
+         duration_seconds
+       ) VALUES (?, 'youtube', ?, ?, ?)`,
+    )
+      .bind(
+        videoId,
+        "https://www.youtube.com/watch?v=semantic-search",
+        "Semantic context video",
+        120,
+      )
+      .run();
+    await env.CLIPS_BUCKET.put(
+      transcriptObjectKey(videoId),
+      JSON.stringify({
+        version: 1,
+        fetchedAt: "2026-07-23T00:00:00.000Z",
+        language: "en",
+        automatic: true,
+        cues: [
+          {
+            startSeconds: 10,
+            endSeconds: 10.5,
+            text: "Reading every line",
+          },
+          {
+            startSeconds: 12,
+            endSeconds: 12.5,
+            text: "slows the review down",
+          },
+          {
+            startSeconds: 50,
+            endSeconds: 51,
+            text: "A separate thought",
+          },
+          {
+            startSeconds: 80,
+            endSeconds: 81,
+            text: "A third thought",
+          },
+          {
+            startSeconds: 130,
+            endSeconds: 131,
+            text: "Past the video duration",
+          },
+        ],
+      }),
+    );
+    const run = vi.fn().mockResolvedValue({
+      response: JSON.stringify({
+        matches: [
+          {
+            blockIds: ["cue-0-1"],
+            title: "Read less code",
+            reason: "Directly explains the cost of line-by-line review.",
+            score: 0.95,
+          },
+          {
+            blockIds: ["invented-block"],
+            title: "Hallucinated",
+            reason: "This id does not exist.",
+            score: 1,
+          },
+          {
+            blockIds: ["cue-2-2", "cue-0-1"],
+            title: "Reversed",
+            reason: "These blocks are reversed.",
+            score: 1,
+          },
+          {
+            blockIds: ["cue-0-1", "cue-0-1"],
+            title: "Duplicated",
+            reason: "This block is duplicated.",
+            score: 1,
+          },
+          {
+            blockIds: ["cue-0-1", "cue-3-3"],
+            title: "Noncontiguous",
+            reason: "These blocks skip another passage.",
+            score: 1,
+          },
+          {
+            blockIds: ["cue-4-4"],
+            title: "Out of range",
+            reason: "This passage exceeds the video duration.",
+            score: 1,
+          },
+        ],
+      }),
+    });
+    const agent = {
+      env: { ...env, AI: { run } },
+      name: videoId,
+    } as unknown as VideoClipAgent;
+    const tools = VideoClipAgent.prototype.getTools.call(agent);
+    const execute = tools.findTranscriptMoments.execute;
+    if (!execute) {
+      throw new Error("findTranscriptMoments tool has no execute function");
+    }
+
+    const result = await execute(
+      {
+        intent: "where he argues developers should read less code",
+        count: 3,
+        beforeSeconds: 1,
+        afterSeconds: 2,
+      },
+      {
+        toolCallId: "semantic-transcript-tool-call",
+        messages: [],
+      },
+    );
+
+    expect(result).toEqual({
+      transcriptStatus: "available",
+      intent: "where he argues developers should read less code",
+      matches: [
+        {
+          startSeconds: 9,
+          endSeconds: 14.5,
+          spokenStartSeconds: 10,
+          spokenEndSeconds: 12.5,
+          quote: "Reading every line slows the review down",
+          title: "Read less code",
+          reason: "Directly explains the cost of line-by-line review.",
+          blockIds: ["cue-0-1"],
+        },
+      ],
+      requestedCount: 3,
+      totalMatches: 1,
+    });
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(
+      VideoClipAgent.prototype.getSystemPrompt.call(agent),
+    ).toContain("findTranscriptMoments");
   });
 
   it("automatically retries a failed transcript check after its cooldown", async () => {

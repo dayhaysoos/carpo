@@ -25,14 +25,17 @@ explicitly deleted.
 
 ## Transcript-aware clipping
 
-Think can search a YouTube video's subtitles or automatic captions for an exact
-spoken word or phrase. Carpo normalizes the caption cues once, retains the
-transcript in R2, and turns matches into the same adjustable clip-review flow
-used for manual timestamps. Exact searches are case-insensitive and token-based,
-so `code` does not match `decode`.
+Think can search YouTube and uploaded videos for an exact spoken word or phrase.
+Carpo uses YouTube subtitles when available, falls back to speech-to-text over
+the retained source, normalizes the timestamped cues once, and retains the
+transcript in R2. Exact searches are case-insensitive and token-based, so `code`
+does not match `decode`.
 
-This first slice uses captions supplied by YouTube. Uploaded videos and YouTube
-videos without captions do not yet fall back to speech-to-text.
+The editor exposes that same grounded transcript for searching, seeking, and
+selecting a trim range. Think can also find meaning-based moments such as an
+argument or explanation. Semantic results must reference real transcript block
+IDs; Carpo derives the proposed timestamps from those blocks before sending them
+through the same adjustable clip-review flow used for manual timestamps.
 
 ## Status
 

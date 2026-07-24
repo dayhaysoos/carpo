@@ -184,7 +184,6 @@ function ConnectedVideoAgentChat({
     [input],
   );
   const composerMirrorRef = useRef<HTMLDivElement>(null);
-  const transcriptSearchSupported = source?.type !== "upload";
 
   const working = status === "submitted" || status === "streaming";
 
@@ -352,9 +351,8 @@ function ConnectedVideoAgentChat({
         <div>
           <h2>Clip with Think</h2>
           <p>
-            {transcriptSearchSupported
-              ? "Describe clips by timestamp or spoken phrase. You approve them before creation."
-              : "Describe clips by timestamp. You approve them before creation."}
+            Describe clips by timestamp, spoken phrase, or idea. You approve
+            them before creation.
           </p>
         </div>
         <span
@@ -370,9 +368,8 @@ function ConnectedVideoAgentChat({
         {chatMessages.length === 0 ? (
           <div className="agent-empty">
             <strong>Try an instruction</strong>
-            {transcriptSearchSupported ? (
-              <p>“Clip every time ‘code’ is said.”</p>
-            ) : null}
+            <p>“Clip every time ‘code’ is said.”</p>
+            <p>“Find the strongest explanation of the main idea.”</p>
             <p>“Clip from 2:10 to 2:28 and call it PO tokens explained.”</p>
           </div>
         ) : null}
@@ -490,11 +487,7 @@ function ConnectedVideoAgentChat({
                   event.currentTarget.scrollTop;
               }
             }}
-            placeholder={
-              transcriptSearchSupported
-                ? "Clip by time or spoken phrase…"
-                : "Clip from 1:20 to 1:35…"
-            }
+            placeholder="Clip by time, phrase, or idea…"
             rows={3}
             disabled={!connected || working}
             aria-label="Clip instruction"

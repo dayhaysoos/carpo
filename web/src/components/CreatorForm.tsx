@@ -36,6 +36,7 @@ import {
 import { extractYoutubeVideoId, isValidYoutubeUrl } from "../youtube";
 import type { ClipWindowRequest } from "../timestamp-windows";
 import { toExistingClipRanges } from "../timeline";
+import { TranscriptPanel } from "./TranscriptPanel";
 import { TrimSlider } from "./TrimSlider";
 
 type SourceMode = "youtube" | "upload";
@@ -154,6 +155,8 @@ export function CreatorForm({
             native.ready,
         );
   const duration = sourceMode === "youtube" ? youtube.duration : native.duration;
+  const currentTime =
+    sourceMode === "youtube" ? youtube.currentTime : native.currentTime;
   const seekTo = sourceMode === "youtube" ? youtube.seekTo : native.seekTo;
   const trim = useTrimRange({ duration, onSeek: seekTo });
 
@@ -629,6 +632,18 @@ export function CreatorForm({
             </div>
           </div>
         </div>
+      )}
+
+      {reusableVideoId && (
+        <TranscriptPanel
+          videoId={reusableVideoId}
+          currentTime={currentTime}
+          editorReady={ready && duration > 0}
+          onSeek={seekTo}
+          onRangeSelect={({ startSeconds, endSeconds }) =>
+            trim.setClipWindow(startSeconds, endSeconds)
+          }
+        />
       )}
 
       <label className="field">

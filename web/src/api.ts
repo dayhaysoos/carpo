@@ -8,6 +8,7 @@ import type {
   SourceVideoDetailResponse,
   SourceVideoListResponse,
   SourceVideoResponse,
+  TranscriptDocumentResponse,
   UploadUrlResponse,
 } from "./types";
 
@@ -223,6 +224,19 @@ export async function getSourceVideo(
     throw new Error(body.error || `Request failed (${response.status})`);
   }
   return response.json() as Promise<SourceVideoDetailResponse>;
+}
+
+export async function getVideoTranscript(
+  videoId: string,
+): Promise<TranscriptDocumentResponse> {
+  const response = await fetch(
+    `/api/videos/${encodeURIComponent(videoId)}/transcript`,
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiError;
+    throw new Error(body.error || `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<TranscriptDocumentResponse>;
 }
 
 export async function deleteClip(id: string): Promise<void> {

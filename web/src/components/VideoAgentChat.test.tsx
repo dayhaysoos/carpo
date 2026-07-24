@@ -150,7 +150,7 @@ describe("VideoAgentChat", () => {
     ).toBe(true);
   });
 
-  it("only offers spoken-phrase clipping for YouTube sources", () => {
+  it("offers transcript clipping for YouTube and uploaded sources", () => {
     chat.messages = [];
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
       configurable: true,
@@ -170,12 +170,12 @@ describe("VideoAgentChat", () => {
 
     expect(
       screen.getByText(
-        "Describe clips by timestamp or spoken phrase. You approve them before creation.",
+        "Describe clips by timestamp, spoken phrase, or idea. You approve them before creation.",
       ),
     ).toBeTruthy();
     expect(screen.getByText("“Clip every time ‘code’ is said.”")).toBeTruthy();
     expect(
-      screen.getByPlaceholderText("Clip by time or spoken phrase…"),
+      screen.getByPlaceholderText("Clip by time, phrase, or idea…"),
     ).toBeTruthy();
 
     rerender(
@@ -189,11 +189,16 @@ describe("VideoAgentChat", () => {
 
     expect(
       screen.getByText(
-        "Describe clips by timestamp. You approve them before creation.",
+        "Describe clips by timestamp, spoken phrase, or idea. You approve them before creation.",
       ),
     ).toBeTruthy();
-    expect(screen.queryByText("“Clip every time ‘code’ is said.”")).toBeNull();
-    expect(screen.getByPlaceholderText("Clip from 1:20 to 1:35…")).toBeTruthy();
+    expect(screen.getByText("“Clip every time ‘code’ is said.”")).toBeTruthy();
+    expect(
+      screen.getByText("“Find the strongest explanation of the main idea.”"),
+    ).toBeTruthy();
+    expect(
+      screen.getByPlaceholderText("Clip by time, phrase, or idea…"),
+    ).toBeTruthy();
   });
 
   it("groups proposed clips into one chronological review flow", async () => {

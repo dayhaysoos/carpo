@@ -2616,6 +2616,67 @@ describe("source video library", () => {
       totalMatches: 2,
       truncated: false,
     });
+
+  });
+
+  it("returns a readable grounded transcript for the editor", async () => {
+    const videoId = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO source_videos (id, source_type, source_ref, title)
+       VALUES (?, 'youtube', ?, ?)`,
+    )
+      .bind(
+        videoId,
+        `https://www.youtube.com/watch?v=transcript-search&workspace=${videoId}`,
+        "Transcript workspace video",
+      )
+      .run();
+
+    const response = await workerFetch(
+      `http://example.com/api/videos/${videoId}/transcript`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      transcriptStatus: "available",
+      language: "en",
+      automatic: true,
+      cached: false,
+      blocks: [
+        {
+          id: "cue-0-3",
+          startCueId: "cue-0",
+          endCueId: "cue-3",
+          startSeconds: 0,
+          endSeconds: 1,
+          text: "Welcome to code school",
+        },
+        {
+          id: "cue-4-6",
+          startCueId: "cue-4",
+          endCueId: "cue-6",
+          startSeconds: 10,
+          endSeconds: 10.5,
+          text: "Code is useful",
+        },
+        {
+          id: "cue-7-7",
+          startCueId: "cue-7",
+          endCueId: "cue-7",
+          startSeconds: 20,
+          endSeconds: 20.5,
+          text: "Please decode this",
+        },
+        {
+          id: "cue-8-9",
+          startCueId: "cue-8",
+          endCueId: "cue-9",
+          startSeconds: 24,
+          endSeconds: 25.2,
+          text: "nearby nearby",
+        },
+      ],
+    });
   });
 
   it("prepares and searches a retained-source transcript when captions are unavailable", async () => {
@@ -2700,7 +2761,7 @@ describe("source video library", () => {
     });
   });
 
-  it("reports transcript search as unsupported for uploaded videos", async () => {
+  it("prepares and searches transcripts for uploaded videos", async () => {
     const videoId = crypto.randomUUID();
     await env.DB.prepare(
       `INSERT INTO source_videos (id, source_type, source_ref, title)
@@ -2714,15 +2775,52 @@ describe("source video library", () => {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: "code" }),
+        body: JSON.stringify({ query: "cuss" }),
       },
     );
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
-      transcriptStatus: "unsupported",
-      matches: [],
-      totalMatches: 0,
+    expect(await response.json()).toEqual({
+      transcriptStatus: "available",
+      query: "cuss",
+      language: "en",
+      automatic: true,
+      cached: false,
+      matches: [
+        {
+          startSeconds: 3,
+          endSeconds: 6.4,
+          spokenStartSeconds: 4,
+          spokenEndSeconds: 4.4,
+          text: "cuss",
+        },
+        {
+          startSeconds: 11,
+          endSeconds: 14.4,
+          spokenStartSeconds: 12,
+          spokenEndSeconds: 12.4,
+          text: "cuss",
+        },
+      ],
+      totalMatches: 2,
+      truncated: false,
+    });
+
+    const transcriptResponse = await workerFetch(
+      `http://example.com/api/videos/${videoId}/transcript`,
+    );
+    expect(transcriptResponse.status).toBe(200);
+    expect(await transcriptResponse.json()).toMatchObject({
+      transcriptStatus: "available",
+      language: "en",
+      automatic: true,
+      cached: true,
+      blocks: expect.arrayContaining([
+        expect.objectContaining({
+          id: "cue-0-0",
+          text: "cuss",
+        }),
+      ]),
     });
   });
 
