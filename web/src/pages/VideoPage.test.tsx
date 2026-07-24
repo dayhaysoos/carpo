@@ -1,0 +1,201 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import {
+  deleteClip,
+  deleteSourceVideo,
+  getSourceVideo,
+  requestGifExport,
+  setSourceVideoArchived,
+} from "../api";
+import type { ClipResponse, SourceVideoDetailResponse } from "../types";
+import { VideoPage } from "./VideoPage";
+
+vi.mock("../api", () => ({
+  deleteClip: vi.fn(),
+  deleteSourceVideo: vi.fn(),
+  getSourceVideo: vi.fn(),
+  requestGifExport: vi.fn(),
+  setSourceVideoArchived: vi.fn(),
+}));
+
+function clip(
+  id: string,
+  title: string,
+  status: ClipResponse["status"] = "complete",
+): ClipResponse {
+  return {
+    id,
+    videoId: "video-1",
+    title,
+    source: { type: "youtube", url: "https://youtu.be/source" },
+    trimStart: 0,
+    trimEnd: 3,
+    quality: "1080p",
+    caption: null,
+    filters: [],
+    status,
+    errorMessage: status === "failed" ? "Encoding failed" : null,
+    gifStatus: "none",
+    gifErrorMessage: null,
+    outputs: {
+      mp4: status === "complete" ? `/clips/${id}.mp4` : null,
+      thumbnail: status === "complete" ? `/clips/${id}.jpg` : null,
+      gif: null,
+    },
+    createdAt: "2026-07-23T12:00:00Z",
+    updatedAt: "2026-07-23T12:00:00Z",
+  };
+}
+
+const detail: SourceVideoDetailResponse = {
+  video: {
+    id: "video-1",
+    title: "Source video",
+    source: { type: "youtube", url: "https://youtu.be/source" },
+    clipCount: 3,
+    activeClipCount: 0,
+    failedClipCount: 1,
+    thumbnail: null,
+    durationSeconds: 60,
+    retainedSourceReady: true,
+    transcriptStatus: "available",
+    transcriptCheckedAt: "2026-07-23T12:00:00Z",
+    transcriptCheckError: null,
+    transcriptRetryAt: null,
+    archivedAt: null,
+    createdAt: "2026-07-23T12:00:00Z",
+    updatedAt: "2026-07-23T12:00:00Z",
+  },
+  clips: [
+    clip("clip-1", "First clip"),
+    clip("clip-2", "Second clip"),
+    clip("clip-3", "Failed clip", "failed"),
+  ],
+};
+
+function renderVideoPage() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={["/library/videos/video-1"]}>
+        <Routes>
+          <Route path="/library/videos/:videoId" element={<VideoPage />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+describe("VideoPage clip actions", () => {
+  beforeEach(() => {
+    vi.mocked(getSourceVideo).mockResolvedValue(detail);
+    vi.mocked(deleteClip).mockResolvedValue();
+    vi.mocked(deleteSourceVideo).mockResolvedValue();
+    vi.mocked(requestGifExport).mockResolvedValue(detail.clips[0]);
+    vi.mocked(setSourceVideoArchived).mockResolvedValue(detail.video);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it("selects every clip and deletes them after one confirmation", async () => {
+    const user = userEvent.setup();
+    renderVideoPage();
+    await screen.findByText("First clip");
+
+    await user.click(screen.getByRole("button", { name: "Select clips" }));
+    await user.click(screen.getByRole("button", { name: "Select all clips" }));
+
+    expect(screen.getByText("3 selected")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Delete selected" }));
+    expect(
+      screen.getByRole("heading", { name: "Delete 3 clips?" }),
+    ).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Delete 3 clips" }));
+    await waitFor(() => expect(deleteClip).toHaveBeenCalledTimes(3));
+    expect(deleteClip).toHaveBeenCalledWith("clip-1");
+    expect(deleteClip).toHaveBeenCalledWith("clip-2");
+    expect(deleteClip).toHaveBeenCalledWith("clip-3");
+  });
+
+  it("keeps failed bulk clip deletions selected for retry", async () => {
+    vi.mocked(deleteClip)
+      .mockResolvedValueOnce()
+      .mockRejectedValueOnce(new Error("Storage is temporarily unavailable"))
+      .mockResolvedValueOnce();
+    const user = userEvent.setup();
+    renderVideoPage();
+    await screen.findByText("First clip");
+
+    await user.click(screen.getByRole("button", { name: "Select clips" }));
+    await user.click(screen.getByRole("button", { name: "Select all clips" }));
+    await user.click(screen.getByRole("button", { name: "Delete selected" }));
+    await user.click(screen.getByRole("button", { name: "Delete 3 clips" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Delete clip?" }),
+      ).toBeTruthy();
+    });
+    expect(screen.getByText("1 selected")).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toContain(
+      "2 succeeded. Could not delete 1 clip.",
+    );
+  });
+
+  it("moves between completed clip previews with arrow keys", async () => {
+    const user = userEvent.setup();
+    renderVideoPage();
+    await screen.findByText("First clip");
+
+    await user.click(
+      screen.getByRole("button", { name: "Play First clip" }),
+    );
+    expect(
+      screen.getByRole("heading", { level: 2, name: "First clip" }),
+    ).toBeTruthy();
+    expect(screen.getByText("1 of 2")).toBeTruthy();
+
+    await user.keyboard("{ArrowRight}");
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Second clip" }),
+    ).toBeTruthy();
+    expect(screen.getByText("2 of 2")).toBeTruthy();
+
+    await user.keyboard("{ArrowLeft}");
+    expect(
+      screen.getByRole("heading", { level: 2, name: "First clip" }),
+    ).toBeTruthy();
+  });
+
+  it("leaves arrow-key seeking to the focused video player", async () => {
+    const user = userEvent.setup();
+    renderVideoPage();
+    await screen.findByText("First clip");
+
+    await user.click(
+      screen.getByRole("button", { name: "Play First clip" }),
+    );
+    const player = screen.getByLabelText("First clip video");
+    player.focus();
+    fireEvent.keyDown(player, { key: "ArrowRight" });
+
+    expect(
+      screen.getByRole("heading", { level: 2, name: "First clip" }),
+    ).toBeTruthy();
+  });
+});

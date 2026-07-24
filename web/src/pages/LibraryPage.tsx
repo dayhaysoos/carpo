@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   deleteSourceVideo,
@@ -9,10 +9,11 @@ import {
 import { ModalDialog } from "../components/ModalDialog";
 import { VideoActionMenu } from "../components/VideoActionMenu";
 import { CLIPS_QUERY_KEY, SOURCE_VIDEOS_QUERY_KEY, sourceVideosQueryKey } from "../queries";
+import { settleWithConcurrency } from "../settleWithConcurrency";
 import type { SourceVideoResponse } from "../types";
+import { useSelection } from "../useSelection";
 
 type LibraryAction = "archive" | "restore" | "delete";
-const MAX_CONCURRENT_ACTIONS = 4;
 
 interface ActionRequest {
   action: LibraryAction;
@@ -43,31 +44,6 @@ function sourceLabel(video: SourceVideoResponse): string {
 
 function errorMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message : "The request failed";
-}
-
-async function settleWithConcurrency<T>(
-  items: T[],
-  task: (item: T) => Promise<unknown>,
-): Promise<PromiseSettledResult<void>[]> {
-  const results = new Array<PromiseSettledResult<void>>(items.length);
-  let nextIndex = 0;
-  const workers = Array.from(
-    { length: Math.min(MAX_CONCURRENT_ACTIONS, items.length) },
-    async () => {
-      while (nextIndex < items.length) {
-        const index = nextIndex;
-        nextIndex += 1;
-        try {
-          await task(items[index]);
-          results[index] = { status: "fulfilled", value: undefined };
-        } catch (reason) {
-          results[index] = { status: "rejected", reason };
-        }
-      }
-    },
-  );
-  await Promise.all(workers);
-  return results;
 }
 
 async function performLibraryAction(request: ActionRequest): Promise<ActionResult> {
@@ -189,8 +165,6 @@ export function LibraryPage() {
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const archived = searchParams.get("view") === "archived";
-  const [selecting, setSelecting] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [pendingDelete, setPendingDelete] = useState<SourceVideoResponse[]>([]);
   const [actionError, setActionError] = useState<string | null>(null);
   const {
@@ -219,25 +193,33 @@ export function LibraryPage() {
   });
   const videos = data?.pages.flatMap((page) => page.videos) ?? [];
   const total = data?.pages[0]?.total ?? 0;
-  const selectedVideos = useMemo(
-    () => videos.filter((video) => selectedIds.has(video.id)),
-    [selectedIds, videos],
-  );
+  const {
+    allSelected: allLoadedSelected,
+    cancelSelection,
+    clearSelection,
+    replaceSelection,
+    selectedIds,
+    selectedItems: selectedVideos,
+    selecting,
+    startSelection,
+    toggleAll,
+    toggleSelection,
+  } = useSelection(videos);
   const selectedClipCount = selectedVideos.reduce(
     (count, video) => count + video.clipCount,
     0,
   );
 
   useEffect(() => {
-    setSelecting(false);
-    setSelectedIds(new Set());
+    cancelSelection();
     setPendingDelete([]);
     setActionError(null);
+    // The library view is a new selection context.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [archived]);
 
   const resetSelection = () => {
-    setSelecting(false);
-    setSelectedIds(new Set());
+    cancelSelection();
     setActionError(null);
   };
 
@@ -256,14 +238,14 @@ export function LibraryPage() {
         setPendingDelete([]);
         if (result.bulk) resetSelection();
         else {
-          setSelectedIds(new Set());
+          clearSelection();
           setActionError(null);
         }
         return;
       }
 
-      if (result.bulk) setSelectedIds(failedIds);
-      else setSelectedIds(new Set());
+      if (result.bulk) replaceSelection(failedIds);
+      else clearSelection();
       if (result.action === "delete") {
         setPendingDelete(result.failures.map(({ video }) => video));
       }
@@ -277,15 +259,9 @@ export function LibraryPage() {
 
   const toggleSelected = (videoId: string) => {
     setActionError(null);
-    setSelectedIds((current) => {
-      const next = new Set(current);
-      if (next.has(videoId)) next.delete(videoId);
-      else next.add(videoId);
-      return next;
-    });
+    toggleSelection(videoId);
   };
 
-  const allLoadedSelected = videos.length > 0 && selectedVideos.length === videos.length;
   const deleteCount = pendingDelete.length;
   const deleteClipCount = pendingDelete.reduce(
     (count, video) => count + video.clipCount,
@@ -316,7 +292,7 @@ export function LibraryPage() {
                 onClick={() => {
                   if (selecting) resetSelection();
                   else {
-                    setSelecting(true);
+                    startSelection();
                     setActionError(null);
                   }
                 }}
@@ -358,13 +334,7 @@ export function LibraryPage() {
               <button
                 type="button"
                 className="btn-ghost"
-                onClick={() =>
-                  setSelectedIds(
-                    allLoadedSelected
-                      ? new Set()
-                      : new Set(videos.map((video) => video.id)),
-                  )
-                }
+                onClick={toggleAll}
                 disabled={actionMutation.isPending}
               >
                 {allLoadedSelected ? "Clear all" : "Select all loaded"}

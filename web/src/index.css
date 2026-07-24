@@ -1655,12 +1655,38 @@ input {
 }
 
 .library-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   border-radius: var(--radius-sm);
   background: var(--bg);
   border: 1px solid var(--border);
   overflow: hidden;
+}
+
+.library-card.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+.library-card-select-target {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.library-card-select-target:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -3px;
+}
+
+.library-card-select-target:hover ~ .library-thumb-btn,
+.library-card-select-target:hover ~ .library-card-body {
+  background-color: var(--bg-hover);
 }
 
 .library-thumb-btn {
@@ -1672,6 +1698,10 @@ input {
   background: #000;
   cursor: pointer;
   aspect-ratio: 16 / 9;
+}
+
+.library-thumb-btn .video-selection-mark {
+  z-index: 1;
 }
 
 .library-thumb-btn:disabled {
@@ -1765,6 +1795,69 @@ input {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   box-shadow: var(--shadow);
+}
+
+.clip-library-modal {
+  width: min(820px, 100%);
+}
+
+.clip-modal-heading {
+  min-width: 0;
+}
+
+.clip-modal-heading h2 {
+  margin-bottom: 0.125rem;
+}
+
+.clip-modal-heading span,
+.clip-modal-keyboard-hint {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.clip-modal-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.clip-modal-navigation {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.clip-modal-navigation .btn-secondary {
+  width: auto;
+}
+
+.clip-modal-toolbar .modal-actions {
+  margin: 0;
+}
+
+.clip-modal-keyboard-hint {
+  margin: 0.625rem 0 0;
+}
+
+@media (max-width: 640px) {
+  .clip-modal-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .clip-modal-navigation {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .clip-modal-navigation .btn-secondary {
+    width: 100%;
+  }
+
+  .clip-modal-toolbar .modal-actions {
+    justify-content: flex-start;
+  }
 }
 
 .clip-review-modal {

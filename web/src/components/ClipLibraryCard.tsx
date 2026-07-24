@@ -1,6 +1,7 @@
-import { ClipFailureMessage } from "./ClipFailureMessage";
+import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { statusLabel } from "../status";
 import type { ClipResponse } from "../types";
+import { ClipFailureMessage } from "./ClipFailureMessage";
 import { ModalDialog } from "./ModalDialog";
 
 function formatDate(iso: string): string {
@@ -14,38 +15,105 @@ function formatDate(iso: string): string {
 interface ClipModalProps {
   clip: ClipResponse;
   onClose: () => void;
+  position: number;
+  total: number;
+  onPrevious?: () => void;
+  onNext?: () => void;
 }
 
-export function ClipModal({ clip, onClose }: ClipModalProps) {
+export function ClipModal({
+  clip,
+  onClose,
+  position,
+  total,
+  onPrevious,
+  onNext,
+}: ClipModalProps) {
   if (!clip.outputs.mp4) return null;
 
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+    if (
+      target.closest(
+        "video, input, textarea, select, [contenteditable='true']",
+      )
+    ) {
+      return;
+    }
+    if (event.key === "ArrowLeft" && onPrevious) {
+      event.preventDefault();
+      onPrevious();
+    } else if (event.key === "ArrowRight" && onNext) {
+      event.preventDefault();
+      onNext();
+    }
+  };
+
   return (
-    <ModalDialog labelledBy="clip-modal-title" onDismiss={onClose}>
+    <ModalDialog
+      labelledBy="clip-modal-title"
+      onDismiss={onClose}
+      className="clip-library-modal"
+    >
+      <div onKeyDown={handleKeyDown}>
         <div className="modal-header">
-          <h2 id="clip-modal-title">{clip.title}</h2>
+          <div className="clip-modal-heading">
+            <h2 id="clip-modal-title">{clip.title}</h2>
+            <span aria-live="polite">
+              {position} of {total}
+            </span>
+          </div>
           <button type="button" className="btn-ghost" onClick={onClose}>
             Close
           </button>
         </div>
         <video
+          key={clip.id}
           src={clip.outputs.mp4}
           poster={clip.outputs.thumbnail ?? undefined}
+          aria-label={`${clip.title} video`}
           controls
           autoPlay
           loop
           playsInline
           className="clip-preview"
         />
-        <div className="modal-actions">
-          <a href={clip.outputs.mp4} download className="btn-secondary">
-            Download MP4
-          </a>
-          {clip.outputs.gif && (
-            <a href={clip.outputs.gif} download className="btn-secondary">
-              Download GIF
+        <div className="clip-modal-toolbar">
+          <div className="clip-modal-navigation" aria-label="Clip previews">
+            <button
+              type="button"
+              className="btn-secondary"
+              aria-label="Previous clip"
+              onClick={onPrevious}
+              disabled={!onPrevious}
+            >
+              <span aria-hidden="true">←</span> Previous
+            </button>
+            <button
+              type="button"
+              className="btn-secondary"
+              aria-label="Next clip"
+              onClick={onNext}
+              disabled={!onNext}
+            >
+              Next <span aria-hidden="true">→</span>
+            </button>
+          </div>
+          <div className="modal-actions">
+            <a href={clip.outputs.mp4} download className="btn-secondary">
+              Download MP4
             </a>
-          )}
+            {clip.outputs.gif && (
+              <a href={clip.outputs.gif} download className="btn-secondary">
+                Download GIF
+              </a>
+            )}
+          </div>
         </div>
+        <p className="clip-modal-keyboard-hint">
+          Use left and right arrows to move between clips.
+        </p>
+      </div>
     </ModalDialog>
   );
 }
@@ -57,6 +125,9 @@ interface ClipLibraryCardProps {
   deleting: boolean;
   onRequestGif: (clip: ClipResponse) => void;
   gifExporting: boolean;
+  selecting?: boolean;
+  selected?: boolean;
+  onToggle?: () => void;
 }
 
 export function ClipLibraryCard({
@@ -66,32 +137,66 @@ export function ClipLibraryCard({
   deleting,
   onRequestGif,
   gifExporting,
+  selecting = false,
+  selected = false,
+  onToggle,
 }: ClipLibraryCardProps) {
   const isComplete = clip.status === "complete";
   const showStatus = !isComplete;
 
   return (
-    <article className={`library-card status-${clip.status}`}>
-      <button
-        type="button"
-        className="library-thumb-btn"
-        onClick={() => isComplete && onPlay(clip)}
-        disabled={!isComplete}
-        aria-label={isComplete ? `Play ${clip.title}` : clip.title}
-      >
-        {clip.outputs.thumbnail ? (
-          <img src={clip.outputs.thumbnail} alt="" className="library-thumb" />
-        ) : (
-          <div className="library-thumb placeholder">
-            {showStatus ? statusLabel(clip.status) : "No preview"}
-          </div>
-        )}
-        {showStatus && (
-          <span className={`status-badge status-${clip.status}`}>
-            {statusLabel(clip.status)}
+    <article
+      className={`library-card status-${clip.status}${selected ? " selected" : ""}`}
+    >
+      {selecting && (
+        <button
+          type="button"
+          className="library-card-select-target"
+          aria-label={`${selected ? "Deselect" : "Select"} ${clip.title}`}
+          aria-pressed={selected}
+          onClick={onToggle}
+        />
+      )}
+      {selecting ? (
+        <div className="library-thumb-btn">
+          {clip.outputs.thumbnail ? (
+            <img src={clip.outputs.thumbnail} alt="" className="library-thumb" />
+          ) : (
+            <div className="library-thumb placeholder">
+              {showStatus ? statusLabel(clip.status) : "No preview"}
+            </div>
+          )}
+          <span className="video-selection-mark" aria-hidden="true">
+            {selected ? "✓" : ""}
           </span>
-        )}
-      </button>
+          {showStatus && (
+            <span className={`status-badge status-${clip.status}`}>
+              {statusLabel(clip.status)}
+            </span>
+          )}
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="library-thumb-btn"
+          onClick={() => isComplete && onPlay(clip)}
+          disabled={!isComplete}
+          aria-label={isComplete ? `Play ${clip.title}` : clip.title}
+        >
+          {clip.outputs.thumbnail ? (
+            <img src={clip.outputs.thumbnail} alt="" className="library-thumb" />
+          ) : (
+            <div className="library-thumb placeholder">
+              {showStatus ? statusLabel(clip.status) : "No preview"}
+            </div>
+          )}
+          {showStatus && (
+            <span className={`status-badge status-${clip.status}`}>
+              {statusLabel(clip.status)}
+            </span>
+          )}
+        </button>
+      )}
 
       <div className="library-card-body">
         <h3 className="library-card-title">{clip.title}</h3>
@@ -109,47 +214,49 @@ export function ClipLibraryCard({
           <p className="job-error">{clip.gifErrorMessage}</p>
         )}
 
-        <div className="library-card-actions">
-          {isComplete && clip.outputs.mp4 && (
-            <>
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={() => onPlay(clip)}
-              >
-                Play
-              </button>
-              <a href={clip.outputs.mp4} download className="btn-secondary">
-                Download
-              </a>
-              {clip.outputs.gif ? (
-                <a href={clip.outputs.gif} download className="btn-secondary">
-                  GIF
-                </a>
-              ) : clip.gifStatus === "encoding" || gifExporting ? (
-                <button type="button" className="btn-secondary" disabled>
-                  GIF…
-                </button>
-              ) : (
+        {!selecting && (
+          <div className="library-card-actions">
+            {isComplete && clip.outputs.mp4 && (
+              <>
                 <button
                   type="button"
                   className="btn-secondary"
-                  onClick={() => onRequestGif(clip)}
+                  onClick={() => onPlay(clip)}
                 >
-                  {clip.gifStatus === "failed" ? "Retry GIF" : "GIF"}
+                  Play
                 </button>
-              )}
-            </>
-          )}
-          <button
-            type="button"
-            className="btn-ghost library-delete"
-            onClick={() => onDelete(clip)}
-            disabled={deleting}
-          >
-            Delete
-          </button>
-        </div>
+                <a href={clip.outputs.mp4} download className="btn-secondary">
+                  Download
+                </a>
+                {clip.outputs.gif ? (
+                  <a href={clip.outputs.gif} download className="btn-secondary">
+                    GIF
+                  </a>
+                ) : clip.gifStatus === "encoding" || gifExporting ? (
+                  <button type="button" className="btn-secondary" disabled>
+                    GIF…
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => onRequestGif(clip)}
+                  >
+                    {clip.gifStatus === "failed" ? "Retry GIF" : "GIF"}
+                  </button>
+                )}
+              </>
+            )}
+            <button
+              type="button"
+              className="btn-ghost library-delete"
+              onClick={() => onDelete(clip)}
+              disabled={deleting}
+            >
+              Delete
+            </button>
+          </div>
+        )}
       </div>
     </article>
   );
