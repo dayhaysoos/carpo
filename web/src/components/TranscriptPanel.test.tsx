@@ -117,6 +117,23 @@ describe("TranscriptPanel", () => {
     expect(getVideoTranscript).toHaveBeenCalledTimes(2);
   });
 
+  it("stops polling when background transcript preparation fails", async () => {
+    vi.mocked(getVideoTranscript)
+      .mockResolvedValueOnce({
+        transcriptStatus: "checking",
+        retryAfterMs: 10,
+      })
+      .mockRejectedValue(new Error("simulated transcript preparation failure"));
+
+    renderPanel();
+
+    expect(
+      await screen.findByText("simulated transcript preparation failure"),
+    ).toBeTruthy();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(getVideoTranscript).toHaveBeenCalledTimes(2);
+  });
+
   it("seeks, selects a grounded passage, and sends it to the trim editor", async () => {
     vi.mocked(getVideoTranscript).mockResolvedValue(transcript);
     const user = userEvent.setup();

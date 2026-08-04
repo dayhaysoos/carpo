@@ -118,6 +118,20 @@ async function waitForTranscript(videoId: string): Promise<Response> {
   throw new Error(`Transcript preparation did not finish for ${videoId}`);
 }
 
+async function waitForTranscriptStatus(
+  videoId: string,
+  expectedStatus: string,
+): Promise<void> {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const video = await getSourceVideoById(env.DB, videoId);
+    if (video?.transcript_status === expectedStatus) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(
+    `Transcript status did not become ${expectedStatus} for ${videoId}`,
+  );
+}
+
 async function setPrewarmStartFailure(enabled: boolean): Promise<void> {
   const container = env.ENCODER_CONTAINER.getByName(ENCODER_POOL_INSTANCE);
   await container.fetch("http://encoder/__carpo/set-prewarm-start-failure", {
@@ -2719,8 +2733,9 @@ describe("source video library", () => {
          source_ref,
          title,
          transcript_status,
-         transcript_check_error
-       ) VALUES (?, 'youtube', ?, ?, 'failed', ?)`,
+         transcript_check_error,
+         transcript_retry_at
+       ) VALUES (?, 'youtube', ?, ?, 'failed', ?, datetime('now', '-1 minute'))`,
     )
       .bind(
         videoId,
@@ -2928,6 +2943,41 @@ describe("source video library", () => {
     expect(first.response.status).toBe(202);
     expect(second.response.status).toBe(202);
     await waitForTranscript(videoId);
+    expect(await getSourceTranscriptAttempts(videoId)).toBe(1);
+  });
+
+  it("surfaces background transcript failures without polling retries", async () => {
+    const videoId = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO source_videos (id, source_type, source_ref, title)
+       VALUES (?, 'upload', ?, ?)`,
+    )
+      .bind(
+        videoId,
+        `uploads/${videoId}-transcript-fail.mp4`,
+        "Failed transcript video",
+      )
+      .run();
+
+    const preparing = await workerFetch(
+      `http://example.com/api/videos/${videoId}/transcript`,
+    );
+    expect(preparing.status).toBe(202);
+    await waitForTranscriptStatus(videoId, "failed");
+
+    const failed = await workerFetch(
+      `http://example.com/api/videos/${videoId}/transcript`,
+    );
+    expect(failed.status).toBe(502);
+    expect(await failed.json()).toEqual({
+      error: "simulated transcript preparation failure",
+    });
+    expect(await getSourceTranscriptAttempts(videoId)).toBe(1);
+
+    const repeated = await workerFetch(
+      `http://example.com/api/videos/${videoId}/transcript`,
+    );
+    expect(repeated.status).toBe(502);
     expect(await getSourceTranscriptAttempts(videoId)).toBe(1);
   });
 

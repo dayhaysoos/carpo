@@ -314,6 +314,12 @@ export class EncoderStub extends DurableObject<Env> {
           { status: 404 },
         );
       }
+      if (video.source_ref.includes("transcript-fail")) {
+        return Response.json(
+          { errorMessage: "simulated transcript preparation failure" },
+          { status: 500 },
+        );
+      }
       if (
         video.source_type === "youtube" &&
         video.retained_source_status !== "ready"

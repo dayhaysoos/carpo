@@ -10,7 +10,7 @@ import {
 const SEMANTIC_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 const MAX_BATCH_CHARACTERS = 12_000;
 const MAX_CONCURRENT_BATCHES = 3;
-const BATCH_OVERLAP_BLOCKS = 2;
+const BATCH_OVERLAP_BLOCKS = 11;
 
 const modelCandidateSchema = z.object({
   blockIds: z.array(z.string()).min(1).max(12),
@@ -94,21 +94,27 @@ function makeBatches(blocks: TranscriptBlock[]): TranscriptBlock[][] {
 }
 
 function parseModelResponse(response: string | undefined): ModelCandidate[] {
-  if (!response) return [];
+  const invalidResponse = () =>
+    new Error("Semantic transcript ranking returned invalid data");
+  if (!response) throw invalidResponse();
   const start = response.indexOf("{");
   const end = response.lastIndexOf("}");
-  if (start < 0 || end < start) return [];
+  if (start < 0 || end < start) throw invalidResponse();
   try {
     const parsed = modelResultEnvelopeSchema.safeParse(
       JSON.parse(response.slice(start, end + 1)),
     );
-    if (!parsed.success) return [];
-    return parsed.data.matches.flatMap((candidate) => {
+    if (!parsed.success) throw invalidResponse();
+    const candidates = parsed.data.matches.flatMap((candidate) => {
       const result = modelCandidateSchema.safeParse(candidate);
       return result.success ? [result.data] : [];
     });
+    if (parsed.data.matches.length > 0 && candidates.length === 0) {
+      throw invalidResponse();
+    }
+    return candidates;
   } catch {
-    return [];
+    throw invalidResponse();
   }
 }
 
@@ -243,7 +249,6 @@ export async function findSemanticTranscriptMoments(
       startSeconds: clip.trim_start,
       endSeconds: clip.trim_end,
     }));
-  const seen = new Set<string>();
   const grounded = candidates.flatMap<
     SemanticTranscriptMatch & { score: number }
   >((candidate) => {
@@ -277,10 +282,6 @@ export async function findSemanticTranscriptMoments(
     ) {
       return [];
     }
-    const rangeKey = `${range.startSeconds}:${range.endSeconds}`;
-    if (seen.has(rangeKey)) return [];
-    seen.add(rangeKey);
-
     const firstIndex = groundedBlocks[0].index;
     const lastIndex = groundedBlocks.at(-1)!.index;
     const includedBlocks = transcript.blocks.slice(firstIndex, lastIndex + 1);
@@ -298,9 +299,16 @@ export async function findSemanticTranscriptMoments(
     ];
   });
 
-  const totalMatches = grounded.length;
-  const matches = grounded
-    .sort((left, right) => right.score - left.score)
+  const bestByRange = new Map<string, (typeof grounded)[number]>();
+  for (const match of grounded.sort(
+    (left, right) => right.score - left.score,
+  )) {
+    const rangeKey = `${match.startSeconds}:${match.endSeconds}`;
+    if (!bestByRange.has(rangeKey)) bestByRange.set(rangeKey, match);
+  }
+  const uniqueGrounded = [...bestByRange.values()];
+  const totalMatches = uniqueGrounded.length;
+  const matches = uniqueGrounded
     .slice(0, input.count)
     .sort((left, right) => left.startSeconds - right.startSeconds)
     .map(({ score: _score, ...match }) => match);

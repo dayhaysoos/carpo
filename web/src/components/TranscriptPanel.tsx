@@ -43,6 +43,7 @@ export function TranscriptPanel({
     enabled: Boolean(videoId),
     retry: false,
     refetchInterval: (query) => {
+      if (query.state.error) return false;
       const result = query.state.data;
       return result?.transcriptStatus === "checking"
         ? result.retryAfterMs

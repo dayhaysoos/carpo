@@ -216,6 +216,12 @@ describe("VideoClipAgent context", () => {
           },
           {
             blockIds: ["cue-0-1"],
+            title: "Weaker duplicate",
+            reason: "A later candidate grounds the same range more strongly.",
+            score: 0.2,
+          },
+          {
+            blockIds: ["cue-0-1"],
             title: "Read less code",
             reason: "Directly explains the cost of line-by-line review.",
             score: 0.95,
@@ -341,10 +347,10 @@ describe("VideoClipAgent context", () => {
       return {
         response: JSON.stringify({
           matches:
-            seamLeft && seamRight
+            shared.length === 11 && seamRight
               ? [
                   {
-                    blockIds: [seamLeft, seamRight],
+                    blockIds: [...shared, seamRight],
                     title: "Boundary passage",
                     reason: "The relevant thought spans both batches.",
                     score: 0.9,
@@ -372,7 +378,50 @@ describe("VideoClipAgent context", () => {
       throw new Error("Expected the cached transcript to be available");
     }
     expect(result.matches.length).toBeGreaterThan(0);
-    expect(result.matches[0].blockIds).toHaveLength(2);
+    expect(result.matches[0].blockIds).toHaveLength(12);
+  });
+
+  it("rejects malformed semantic output instead of reporting no matches", async () => {
+    const videoId = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO source_videos (
+         id, source_type, source_ref, title, duration_seconds
+       ) VALUES (?, 'upload', ?, ?, ?)`,
+    )
+      .bind(videoId, `uploads/${videoId}.mp4`, "Malformed semantic output", 30)
+      .run();
+    await env.CLIPS_BUCKET.put(
+      transcriptObjectKey(videoId),
+      JSON.stringify({
+        version: 1,
+        fetchedAt: "2026-08-04T00:00:00.000Z",
+        language: "en",
+        automatic: true,
+        cues: [
+          {
+            startSeconds: 2,
+            endSeconds: 4,
+            text: "A grounded passage exists here.",
+          },
+        ],
+      }),
+    );
+
+    await expect(
+      findSemanticTranscriptMoments(
+        {
+          ...env,
+          AI: { run: vi.fn().mockResolvedValue({ response: "not json" }) },
+        } as unknown as typeof env,
+        videoId,
+        {
+          intent: "find the grounded passage",
+          count: 1,
+          beforeSeconds: 0,
+          afterSeconds: 0,
+        },
+      ),
+    ).rejects.toThrow("Semantic transcript ranking returned invalid data");
   });
 
   it("automatically retries a failed transcript check after its cooldown", async () => {

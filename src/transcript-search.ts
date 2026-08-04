@@ -1,6 +1,6 @@
 import { getSourceVideoById } from "./db";
 import type { Env } from "./env";
-import { MAX_CLIP_LENGTH_SECONDS } from "./types";
+import { MAX_CLIP_LENGTH_SECONDS, type SourceVideoRecord } from "./types";
 import {
   readCachedTranscript,
   type StoredTranscript,
@@ -276,6 +276,21 @@ function transcriptDocument(
   };
 }
 
+function transcriptPreparationError(
+  video: SourceVideoRecord,
+): string | null {
+  if (video.transcript_status !== "failed") return null;
+  const retryAt = video.transcript_retry_at;
+  if (
+    retryAt &&
+    Number.isFinite(Date.parse(retryAt)) &&
+    Date.parse(retryAt) <= Date.now()
+  ) {
+    return null;
+  }
+  return video.transcript_check_error ?? "Transcript preparation failed";
+}
+
 export async function requestVideoTranscript(
   env: Env,
   videoId: string,
@@ -288,6 +303,8 @@ export async function requestVideoTranscript(
   if (cached) {
     return transcriptDocument(cached, true);
   }
+  const preparationError = transcriptPreparationError(video);
+  if (preparationError) throw new Error(preparationError);
 
   await dispatchTranscriptPreparation(env, videoId);
   return { transcriptStatus: "checking", retryAfterMs: 1_000 };
@@ -309,6 +326,8 @@ export async function searchVideoTranscript(
 
   const cached = await readCachedTranscript(env, videoId);
   if (!cached) {
+    const preparationError = transcriptPreparationError(video);
+    if (preparationError) throw new Error(preparationError);
     await dispatchTranscriptPreparation(env, videoId);
     return {
       transcriptStatus: "checking",

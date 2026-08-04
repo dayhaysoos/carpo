@@ -37,7 +37,7 @@ export class TranscriptPreparation extends DurableObject<Env> {
           this.running = null;
           this.statusReady = null;
         });
-      this.ctx.waitUntil(this.running);
+      this.ctx.waitUntil(this.running.catch(() => undefined));
     }
     await this.statusReady;
 
