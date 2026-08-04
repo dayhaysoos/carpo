@@ -51,7 +51,8 @@ export function TranscriptPanel({
     },
   });
   const transcript = data && "blocks" in data ? data : undefined;
-  const preparing = isLoading || data?.transcriptStatus === "checking";
+  const preparing =
+    !error && (isLoading || data?.transcriptStatus === "checking");
   const blocks = transcript?.blocks ?? [];
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const visibleBlocks = useMemo(

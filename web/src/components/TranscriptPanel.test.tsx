@@ -130,6 +130,7 @@ describe("TranscriptPanel", () => {
     expect(
       await screen.findByText("simulated transcript preparation failure"),
     ).toBeTruthy();
+    expect(screen.queryByText("Preparing transcript…")).toBeNull();
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(getVideoTranscript).toHaveBeenCalledTimes(2);
   });
