@@ -3,25 +3,24 @@ import { getSourceVideoById, listClipsByVideoId } from "./db";
 import type { Env } from "./env";
 import {
   buildTranscriptClipRange,
-  getVideoTranscript,
+  requestVideoTranscript,
   type TranscriptBlock,
 } from "./transcript-search";
 
 const SEMANTIC_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 const MAX_BATCH_CHARACTERS = 12_000;
 const MAX_CONCURRENT_BATCHES = 3;
+const BATCH_OVERLAP_BLOCKS = 2;
 
-const modelResultSchema = z.object({
-  matches: z
-    .array(
-      z.object({
-        blockIds: z.array(z.string()).min(1).max(12),
-        title: z.string().trim().min(1).max(120),
-        reason: z.string().trim().min(1).max(300),
-        score: z.number().min(0).max(1),
-      }),
-    )
-    .max(20),
+const modelCandidateSchema = z.object({
+  blockIds: z.array(z.string()).min(1).max(12),
+  title: z.string().trim().min(1).max(120),
+  reason: z.string().trim().min(1).max(300),
+  score: z.number().min(0).max(1),
+});
+
+const modelResultEnvelopeSchema = z.object({
+  matches: z.array(z.unknown()).max(20),
 });
 
 export interface SemanticTranscriptInput {
@@ -50,6 +49,13 @@ export interface SemanticTranscriptResult {
   totalMatches: number;
 }
 
+export interface SemanticTranscriptPreparationResult {
+  transcriptStatus: "checking";
+  intent: string;
+  requestedCount: number;
+  retryAfterMs: number;
+}
+
 interface ModelCandidate {
   blockIds: string[];
   title: string;
@@ -58,22 +64,33 @@ interface ModelCandidate {
 }
 
 function makeBatches(blocks: TranscriptBlock[]): TranscriptBlock[][] {
-  return blocks.reduce<TranscriptBlock[][]>((batches, block) => {
-    const current = batches.at(-1);
-    const serializedLength = JSON.stringify(block).length;
-    const currentLength = current
-      ? current.reduce(
-          (length, item) => length + JSON.stringify(item).length,
-          0,
-        )
-      : 0;
-    if (current && currentLength + serializedLength <= MAX_BATCH_CHARACTERS) {
-      current.push(block);
-    } else {
-      batches.push([block]);
+  const batches: TranscriptBlock[][] = [];
+  let nextIndex = 0;
+  while (nextIndex < blocks.length) {
+    const overlap = batches.at(-1)?.slice(-BATCH_OVERLAP_BLOCKS) ?? [];
+    const batch = [...overlap];
+    let serializedLength = batch.reduce(
+      (length, block) => length + JSON.stringify(block).length,
+      0,
+    );
+    let added = 0;
+    while (nextIndex < blocks.length) {
+      const block = blocks[nextIndex];
+      const blockLength = JSON.stringify(block).length;
+      if (
+        added > 0 &&
+        serializedLength + blockLength > MAX_BATCH_CHARACTERS
+      ) {
+        break;
+      }
+      batch.push(block);
+      serializedLength += blockLength;
+      nextIndex += 1;
+      added += 1;
     }
-    return batches;
-  }, []);
+    batches.push(batch);
+  }
+  return batches;
 }
 
 function parseModelResponse(response: string | undefined): ModelCandidate[] {
@@ -82,10 +99,14 @@ function parseModelResponse(response: string | undefined): ModelCandidate[] {
   const end = response.lastIndexOf("}");
   if (start < 0 || end < start) return [];
   try {
-    const parsed = modelResultSchema.safeParse(
+    const parsed = modelResultEnvelopeSchema.safeParse(
       JSON.parse(response.slice(start, end + 1)),
     );
-    return parsed.success ? parsed.data.matches : [];
+    if (!parsed.success) return [];
+    return parsed.data.matches.flatMap((candidate) => {
+      const result = modelCandidateSchema.safeParse(candidate);
+      return result.success ? [result.data] : [];
+    });
   } catch {
     return [];
   }
@@ -122,16 +143,19 @@ async function rankBatch(
         properties: {
           matches: {
             type: "array",
+            maxItems: 20,
             items: {
               type: "object",
               properties: {
                 blockIds: {
                   type: "array",
+                  minItems: 1,
+                  maxItems: 12,
                   items: { type: "string" },
                 },
-                title: { type: "string" },
-                reason: { type: "string" },
-                score: { type: "number" },
+                title: { type: "string", minLength: 1, maxLength: 120 },
+                reason: { type: "string", minLength: 1, maxLength: 300 },
+                score: { type: "number", minimum: 0, maximum: 1 },
               },
               required: ["blockIds", "title", "reason", "score"],
               additionalProperties: false,
@@ -186,13 +210,23 @@ export async function findSemanticTranscriptMoments(
   env: Env,
   videoId: string,
   input: SemanticTranscriptInput,
-): Promise<SemanticTranscriptResult> {
+): Promise<
+  SemanticTranscriptResult | SemanticTranscriptPreparationResult
+> {
   const [video, transcript, clips] = await Promise.all([
     getSourceVideoById(env.DB, videoId),
-    getVideoTranscript(env, videoId),
+    requestVideoTranscript(env, videoId),
     listClipsByVideoId(env.DB, videoId),
   ]);
   if (!video) throw new Error("Video not found");
+  if (transcript.transcriptStatus === "checking") {
+    return {
+      transcriptStatus: "checking",
+      intent: input.intent,
+      requestedCount: input.count,
+      retryAfterMs: transcript.retryAfterMs,
+    };
+  }
 
   const candidates = await rankBatches(
     env,

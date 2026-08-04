@@ -100,6 +100,23 @@ describe("TranscriptPanel", () => {
     vi.clearAllMocks();
   });
 
+  it("polls while durable transcript preparation is running", async () => {
+    vi.mocked(getVideoTranscript)
+      .mockResolvedValueOnce({
+        transcriptStatus: "checking",
+        retryAfterMs: 10,
+      })
+      .mockResolvedValue(transcript);
+
+    renderPanel();
+
+    expect(await screen.findByText("Preparing transcript…")).toBeTruthy();
+    expect(
+      await screen.findByRole("status", { name: "Transcript ready" }),
+    ).toBeTruthy();
+    expect(getVideoTranscript).toHaveBeenCalledTimes(2);
+  });
+
   it("seeks, selects a grounded passage, and sends it to the trim editor", async () => {
     vi.mocked(getVideoTranscript).mockResolvedValue(transcript);
     const user = userEvent.setup();

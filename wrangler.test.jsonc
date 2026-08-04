@@ -38,6 +38,10 @@
       {
         "name": "VideoClipAgent",
         "class_name": "VideoClipAgent"
+      },
+      {
+        "name": "TRANSCRIPT_PREPARATION",
+        "class_name": "TranscriptPreparation"
       }
     ]
   },
@@ -49,6 +53,10 @@
     {
       "tag": "v2",
       "new_sqlite_classes": ["VideoClipAgent"]
+    },
+    {
+      "tag": "v3",
+      "new_sqlite_classes": ["TranscriptPreparation"]
     }
   ]
 }

@@ -2,9 +2,10 @@ import { EncoderContainer } from "./encoder-container";
 import type { Env } from "./env";
 import { handleRequest } from "./routes";
 import { VideoClipAgent } from "./video-clip-agent";
+import { TranscriptPreparation } from "./transcript-preparation";
 import { routeAgentRequest } from "agents";
 
-export { EncoderContainer, VideoClipAgent };
+export { EncoderContainer, TranscriptPreparation, VideoClipAgent };
 
 export default {
   async fetch(

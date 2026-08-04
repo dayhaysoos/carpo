@@ -150,6 +150,15 @@ export interface TranscriptDocumentResponse {
   blocks: TranscriptBlock[];
 }
 
+export interface TranscriptPreparationResponse {
+  transcriptStatus: "checking";
+  retryAfterMs: number;
+}
+
+export type TranscriptResponse =
+  | TranscriptDocumentResponse
+  | TranscriptPreparationResponse;
+
 export interface ClipListResponse {
   clips: ClipResponse[];
   total: number;

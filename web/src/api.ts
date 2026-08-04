@@ -8,7 +8,7 @@ import type {
   SourceVideoDetailResponse,
   SourceVideoListResponse,
   SourceVideoResponse,
-  TranscriptDocumentResponse,
+  TranscriptResponse,
   UploadUrlResponse,
 } from "./types";
 
@@ -228,7 +228,7 @@ export async function getSourceVideo(
 
 export async function getVideoTranscript(
   videoId: string,
-): Promise<TranscriptDocumentResponse> {
+): Promise<TranscriptResponse> {
   const response = await fetch(
     `/api/videos/${encodeURIComponent(videoId)}/transcript`,
   );
@@ -236,7 +236,7 @@ export async function getVideoTranscript(
     const body = (await response.json().catch(() => ({}))) as ApiError;
     throw new Error(body.error || `Request failed (${response.status})`);
   }
-  return response.json() as Promise<TranscriptDocumentResponse>;
+  return response.json() as Promise<TranscriptResponse>;
 }
 
 export async function deleteClip(id: string): Promise<void> {

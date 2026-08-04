@@ -26,7 +26,7 @@ import {
   MAX_TRANSCRIPT_PADDING_SECONDS,
   MAX_TRANSCRIPT_QUERY_LENGTH,
   MAX_TRANSCRIPT_SEARCH_RESULTS,
-  getVideoTranscript,
+  requestVideoTranscript,
   searchVideoTranscript,
 } from "./transcript-search";
 import { findSemanticTranscriptMoments } from "./semantic-transcript";
@@ -299,8 +299,9 @@ export class VideoClipAgent extends Think<Env> {
       "The current video context is injected into every turn. Keep every proposed range inside durationSeconds and avoid overlapping existing clips unless the user asks for overlap.",
       "For a random-clips request without a requested length, use 10 seconds per clip. Choose non-overlapping ranges spread across the video and avoid existing clips when possible.",
       "When asked whether a transcript or captions are available, call checkTranscriptAvailability.",
-      "When asked to clip every time a word or exact phrase is spoken, always call searchTranscript—even when the current transcript status is failed or unavailable. The tool automatically tries captions, then prepares and transcribes the retained source when needed. It returns pre-merged clip ranges. Use only its exact startSeconds/endSeconds and call createClip once for every returned range so the user can preview and approve the batch. Never guess spoken timestamps or ask the user to retry before calling the tool.",
-      "When the user asks for ideas, arguments, explanations, highlights, or other meaning-based moments, call findTranscriptMoments. It uses only grounded transcript block IDs and returns authoritative ranges. Call createClip once for every returned match using its exact startSeconds, endSeconds, and title so the user can preview and approve the batch.",
+      "When asked to clip every time a word or exact phrase is spoken, always call searchTranscript—even when the current transcript status is failed or unavailable. The tool automatically tries captions, then prepares and transcribes the retained source when needed. When it returns available results, use only its exact startSeconds/endSeconds and call createClip once for every returned range so the user can preview and approve the batch. Never guess spoken timestamps.",
+      "When the user asks for ideas, arguments, explanations, highlights, or other meaning-based moments, call findTranscriptMoments. It uses only grounded transcript block IDs. When it returns available results, call createClip once for every returned match using its exact startSeconds, endSeconds, and title so the user can preview and approve the batch.",
+      "A transcript tool can return transcriptStatus checking while durable background preparation continues. In that case, say preparation has started and ask the user to retry shortly. Do not call createClip or claim there were no matches.",
       "If transcript preparation fails after a transcript tool is called, explain the returned error without claiming the user must create a clip first. If an available transcript has no matches, say the phrase or idea was not found. Do not propose clips for any empty result.",
       "If transcript search reports truncated results, clearly say that only the returned matches were proposed.",
       "Use 1080p unless the user asks for 720p. Add a caption only when requested. If no title is supplied, make a concise title from the video title and timestamp range.",
@@ -352,7 +353,7 @@ export class VideoClipAgent extends Think<Env> {
               return { error: "Video not found" };
             }
             if (existing.source_type === "upload") {
-              await getVideoTranscript(this.env, this.name);
+              await requestVideoTranscript(this.env, this.name);
             } else {
               await checkSourceVideoTranscript(this.env, this.name);
             }

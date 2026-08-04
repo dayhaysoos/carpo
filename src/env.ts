@@ -3,6 +3,7 @@ export interface Env {
   DB: D1Database;
   CLIPS_BUCKET: R2Bucket;
   ENCODER_CONTAINER: DurableObjectNamespace;
+  TRANSCRIPT_PREPARATION: DurableObjectNamespace;
   VideoClipAgent: DurableObjectNamespace;
   ASSETS: Fetcher;
   MAX_CLIP_LENGTH_SECONDS: string;

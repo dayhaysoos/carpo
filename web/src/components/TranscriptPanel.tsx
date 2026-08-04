@@ -42,8 +42,16 @@ export function TranscriptPanel({
     queryFn: () => getVideoTranscript(videoId),
     enabled: Boolean(videoId),
     retry: false,
+    refetchInterval: (query) => {
+      const result = query.state.data;
+      return result?.transcriptStatus === "checking"
+        ? result.retryAfterMs
+        : false;
+    },
   });
-  const blocks = data?.blocks ?? [];
+  const transcript = data && "blocks" in data ? data : undefined;
+  const preparing = isLoading || data?.transcriptStatus === "checking";
+  const blocks = transcript?.blocks ?? [];
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const visibleBlocks = useMemo(
     () =>
@@ -123,12 +131,12 @@ export function TranscriptPanel({
         <div>
           <h3 id="transcript-title">Transcript</h3>
           <p>
-            {data
-              ? `${data.automatic ? "Automatic" : "Creator"} transcript · ${data.language}`
+            {transcript
+              ? `${transcript.automatic ? "Automatic" : "Creator"} transcript · ${transcript.language}`
               : "Search, seek, or select text for the clip editor."}
           </p>
         </div>
-        {data && (
+        {transcript && (
           <span
             className="transcript-ready"
             role="status"
@@ -139,7 +147,7 @@ export function TranscriptPanel({
         )}
       </div>
 
-      {isLoading && (
+      {preparing && (
         <div className="transcript-state" role="status">
           <strong>Preparing transcript…</strong>
           <span>
@@ -162,7 +170,7 @@ export function TranscriptPanel({
         </div>
       )}
 
-      {data && (
+      {transcript && (
         <>
           <label className="transcript-search">
             <span className="sr-only">Search transcript</span>

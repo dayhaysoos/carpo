@@ -6,7 +6,16 @@ import {
   loadAgentVideoContext,
   VideoClipAgent,
 } from "../src/video-clip-agent";
+import { findSemanticTranscriptMoments } from "../src/semantic-transcript";
 import { transcriptObjectKey } from "../src/source-videos";
+
+async function waitForStoredTranscript(videoId: string): Promise<void> {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (await env.CLIPS_BUCKET.head(transcriptObjectKey(videoId))) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Transcript preparation did not finish for ${videoId}`);
+}
 
 describe("VideoClipAgent context", () => {
   it("injects a persisted duration so random clip requests never need user input", async () => {
@@ -78,7 +87,7 @@ describe("VideoClipAgent context", () => {
       throw new Error("searchTranscript tool has no execute function");
     }
 
-    const result = await execute(
+    const preparing = await execute(
       {
         query: "code",
         beforeSeconds: 1,
@@ -87,6 +96,25 @@ describe("VideoClipAgent context", () => {
       },
       {
         toolCallId: "transcript-search-tool-call",
+        messages: [],
+      },
+    );
+
+    expect(preparing).toEqual({
+      transcriptStatus: "checking",
+      retryAfterMs: 1_000,
+      query: "code",
+    });
+    await waitForStoredTranscript(videoId);
+    const result = await execute(
+      {
+        query: "code",
+        beforeSeconds: 1,
+        afterSeconds: 2,
+        limit: 20,
+      },
+      {
+        toolCallId: "transcript-search-tool-call-cached",
         messages: [],
       },
     );
@@ -182,6 +210,12 @@ describe("VideoClipAgent context", () => {
         matches: [
           {
             blockIds: ["cue-0-1"],
+            title: "",
+            reason: "One malformed candidate must not discard the rest.",
+            score: 0.99,
+          },
+          {
+            blockIds: ["cue-0-1"],
             title: "Read less code",
             reason: "Directly explains the cost of line-by-line review.",
             score: 0.95,
@@ -264,6 +298,81 @@ describe("VideoClipAgent context", () => {
     expect(
       VideoClipAgent.prototype.getSystemPrompt.call(agent),
     ).toContain("findTranscriptMoments");
+  });
+
+  it("can rank a passage that crosses a semantic batch boundary", async () => {
+    const videoId = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO source_videos (
+         id, source_type, source_ref, title, duration_seconds
+       ) VALUES (?, 'upload', ?, ?, ?)`,
+    )
+      .bind(videoId, `uploads/${videoId}.mp4`, "Long semantic video", 300)
+      .run();
+    await env.CLIPS_BUCKET.put(
+      transcriptObjectKey(videoId),
+      JSON.stringify({
+        version: 1,
+        fetchedAt: "2026-08-04T00:00:00.000Z",
+        language: "en",
+        automatic: true,
+        cues: Array.from({ length: 80 }, (_, index) => ({
+          startSeconds: index * 2,
+          endSeconds: index * 2 + 1,
+          text: `Passage ${index} ${"context ".repeat(45)}`,
+        })),
+      }),
+    );
+
+    let previousIds: string[] = [];
+    const run = vi.fn(async (_model: string, request: unknown) => {
+      const messages = (request as {
+        messages: Array<{ content: string }>;
+      }).messages;
+      const payload = JSON.parse(messages[1].content) as {
+        transcriptBlocks: Array<{ id: string }>;
+      };
+      const ids = payload.transcriptBlocks.map((block) => block.id);
+      const shared = ids.filter((id) => previousIds.includes(id));
+      const seamLeft = shared.at(-1);
+      const seamIndex = seamLeft ? ids.indexOf(seamLeft) : -1;
+      const seamRight = seamIndex >= 0 ? ids[seamIndex + 1] : undefined;
+      previousIds = ids;
+      return {
+        response: JSON.stringify({
+          matches:
+            seamLeft && seamRight
+              ? [
+                  {
+                    blockIds: [seamLeft, seamRight],
+                    title: "Boundary passage",
+                    reason: "The relevant thought spans both batches.",
+                    score: 0.9,
+                  },
+                ]
+              : [],
+        }),
+      };
+    });
+
+    const result = await findSemanticTranscriptMoments(
+      { ...env, AI: { run } } as unknown as typeof env,
+      videoId,
+      {
+        intent: "the thought spanning a batch boundary",
+        count: 5,
+        beforeSeconds: 0,
+        afterSeconds: 0,
+      },
+    );
+
+    expect(run.mock.calls.length).toBeGreaterThan(1);
+    expect(result.transcriptStatus).toBe("available");
+    if (result.transcriptStatus !== "available") {
+      throw new Error("Expected the cached transcript to be available");
+    }
+    expect(result.matches.length).toBeGreaterThan(0);
+    expect(result.matches[0].blockIds).toHaveLength(2);
   });
 
   it("automatically retries a failed transcript check after its cooldown", async () => {

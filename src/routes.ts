@@ -53,7 +53,7 @@ import {
   MAX_TRANSCRIPT_PADDING_SECONDS,
   MAX_TRANSCRIPT_QUERY_LENGTH,
   MAX_TRANSCRIPT_SEARCH_RESULTS,
-  getVideoTranscript,
+  requestVideoTranscript,
   searchVideoTranscript,
 } from "./transcript-search";
 
@@ -331,14 +331,13 @@ async function handleTranscriptSearch(
   }
 
   try {
-    return json(
-      await searchVideoTranscript(env, videoId, {
-        query,
-        beforeSeconds,
-        afterSeconds,
-        limit,
-      }),
-    );
+    const result = await searchVideoTranscript(env, videoId, {
+      query,
+      beforeSeconds,
+      afterSeconds,
+      limit,
+    });
+    return json(result, result.transcriptStatus === "checking" ? 202 : 200);
   } catch (error) {
     return json(
       {
@@ -362,7 +361,11 @@ async function handleTranscriptRead(
   }
 
   try {
-    return json(await getVideoTranscript(env, videoId));
+    const transcript = await requestVideoTranscript(env, videoId);
+    return json(
+      transcript,
+      transcript.transcriptStatus === "checking" ? 202 : 200,
+    );
   } catch (error) {
     return json(
       {

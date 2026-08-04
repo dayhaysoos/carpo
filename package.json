@@ -6,6 +6,10 @@
   "workspaces": [
     "web"
   ],
+  "overrides": {
+    "@hono/node-server": "2.1.0",
+    "undici": "7.29.0"
+  },
   "scripts": {
     "dev": "npm run build:web && wrangler dev",
     "dev:web": "npm run dev -w web",
@@ -24,16 +28,18 @@
   "dependencies": {
     "@cloudflare/containers": "^0.0.30",
     "@cloudflare/think": "^0.14.0",
-    "agents": "^0.18.0",
-    "ai": "^6.0.234",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "agents": "^0.20.1",
+    "ai": "^6.0.241",
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.18.2",
-    "@cloudflare/workers-types": "^4.20250708.0",
+    "@cloudflare/vitest-pool-workers": "^0.20.1",
+    "@cloudflare/workers-types": "^5.20260804.1",
     "@types/node": "^22.15.17",
     "typescript": "^5.8.3",
+    "vite": "^8.2.0",
     "vitest": "^4.1.0",
-    "wrangler": "^4.37.0"
+    "wrangler": "^4.118.0"
   }
 }

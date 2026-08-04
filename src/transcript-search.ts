@@ -1,31 +1,16 @@
-import {
-  fetchYoutubeTranscript,
-  transcribeSourceVideo,
-  type TranscriptCue,
-  type YoutubeTranscript,
-} from "./encoder-pool";
-import {
-  getSourceVideoById,
-  updateSourceVideoTranscriptContext,
-} from "./db";
+import { getSourceVideoById } from "./db";
 import type { Env } from "./env";
-import { transcriptObjectKey } from "./source-videos";
+import { MAX_CLIP_LENGTH_SECONDS } from "./types";
 import {
-  MAX_CLIP_LENGTH_SECONDS,
-  type SourceVideoRecord,
-} from "./types";
-import { nextTranscriptRetryAt } from "./video-context";
+  readCachedTranscript,
+  type StoredTranscript,
+} from "./transcript-store";
+import { dispatchTranscriptPreparation } from "./transcript-preparation";
 
-const TRANSCRIPT_FORMAT_VERSION = 1;
 const MAX_PHRASE_GAP_SECONDS = 2;
 export const MAX_TRANSCRIPT_SEARCH_RESULTS = 50;
 export const MAX_TRANSCRIPT_QUERY_LENGTH = 200;
 export const MAX_TRANSCRIPT_PADDING_SECONDS = 10;
-
-interface StoredTranscript extends YoutubeTranscript {
-  version: typeof TRANSCRIPT_FORMAT_VERSION;
-  fetchedAt: string;
-}
 
 export interface TranscriptSearchMatch {
   startSeconds: number;
@@ -63,6 +48,16 @@ export interface TranscriptDocumentResult {
   blocks: TranscriptBlock[];
 }
 
+export interface TranscriptPreparationResult {
+  transcriptStatus: "checking";
+  retryAfterMs: number;
+}
+
+export interface TranscriptSearchPreparationResult
+  extends TranscriptPreparationResult {
+  query: string;
+}
+
 export interface TranscriptClipRange {
   startSeconds: number;
   endSeconds: number;
@@ -73,152 +68,6 @@ export interface TranscriptSearchInput {
   beforeSeconds?: number;
   afterSeconds?: number;
   limit?: number;
-}
-
-function isTranscriptCue(value: unknown): value is TranscriptCue {
-  if (!value || typeof value !== "object") return false;
-  const cue = value as Partial<TranscriptCue>;
-  return (
-    typeof cue.startSeconds === "number" &&
-    Number.isFinite(cue.startSeconds) &&
-    cue.startSeconds >= 0 &&
-    typeof cue.endSeconds === "number" &&
-    Number.isFinite(cue.endSeconds) &&
-    cue.endSeconds > cue.startSeconds &&
-    typeof cue.text === "string" &&
-    cue.text.trim().length > 0
-  );
-}
-
-function parseStoredTranscript(value: unknown): StoredTranscript | null {
-  if (!value || typeof value !== "object") return null;
-  const transcript = value as Partial<StoredTranscript>;
-  if (
-    transcript.version !== TRANSCRIPT_FORMAT_VERSION ||
-    typeof transcript.fetchedAt !== "string" ||
-    typeof transcript.language !== "string" ||
-    typeof transcript.automatic !== "boolean" ||
-    !Array.isArray(transcript.cues) ||
-    !transcript.cues.every(isTranscriptCue)
-  ) {
-    return null;
-  }
-  return transcript as StoredTranscript;
-}
-
-async function readCachedTranscript(
-  env: Env,
-  videoId: string,
-): Promise<StoredTranscript | null> {
-  const object = await env.CLIPS_BUCKET.get(transcriptObjectKey(videoId));
-  if (!object) return null;
-  try {
-    return parseStoredTranscript(JSON.parse(await object.text()));
-  } catch {
-    return null;
-  }
-}
-
-async function loadVideoTranscript(
-  env: Env,
-  video: SourceVideoRecord,
-): Promise<{ transcript: StoredTranscript; cached: boolean }> {
-  const videoId = video.id;
-  const cached = await readCachedTranscript(env, videoId);
-  if (cached) {
-    return { transcript: cached, cached: true };
-  }
-
-  await updateSourceVideoTranscriptContext(env.DB, videoId, {
-    status: "checking",
-  });
-
-  let fetched: YoutubeTranscript;
-  if (video.source_type === "youtube") {
-    try {
-      fetched = await fetchYoutubeTranscript(env, video.source_ref);
-    } catch (captionError) {
-      try {
-        fetched = await transcribeSourceVideo(env, videoId);
-      } catch (transcriptionError) {
-        const captionMessage =
-          captionError instanceof Error
-            ? captionError.message
-            : "YouTube caption fetch failed";
-        const transcriptionMessage =
-          transcriptionError instanceof Error
-            ? transcriptionError.message
-            : "Retained-source transcription failed";
-        const message =
-          `Caption retrieval failed (${captionMessage}); ` +
-          `retained-source transcription failed (${transcriptionMessage})`;
-        await updateSourceVideoTranscriptContext(env.DB, videoId, {
-          status: "failed",
-          error: message,
-          retryAt: nextTranscriptRetryAt(),
-        });
-        throw new Error(message);
-      }
-    }
-  } else {
-    try {
-      fetched = await transcribeSourceVideo(env, videoId);
-    } catch (transcriptionError) {
-      const message =
-        transcriptionError instanceof Error
-          ? transcriptionError.message
-          : "Uploaded-source transcription failed";
-      await updateSourceVideoTranscriptContext(env.DB, videoId, {
-        status: "failed",
-        error: message,
-        retryAt: nextTranscriptRetryAt(),
-      });
-      throw new Error(message);
-    }
-  }
-
-  try {
-    if (
-      typeof fetched.language !== "string" ||
-      typeof fetched.automatic !== "boolean" ||
-      !Array.isArray(fetched.cues) ||
-      !fetched.cues.every(isTranscriptCue)
-    ) {
-      throw new Error("Transcript fetch returned invalid data");
-    }
-    const transcript: StoredTranscript = {
-      version: TRANSCRIPT_FORMAT_VERSION,
-      fetchedAt: new Date().toISOString(),
-      language: fetched.language,
-      automatic: fetched.automatic,
-      cues: fetched.cues,
-    };
-    const objectKey = transcriptObjectKey(videoId);
-    await env.CLIPS_BUCKET.put(
-      objectKey,
-      JSON.stringify(transcript),
-      {
-        httpMetadata: { contentType: "application/json" },
-      },
-    );
-    const updated = await updateSourceVideoTranscriptContext(env.DB, videoId, {
-      status: "available",
-    });
-    if (!updated) {
-      await env.CLIPS_BUCKET.delete(objectKey);
-      throw new Error("Video not found");
-    }
-    return { transcript, cached: false };
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Transcript fetch failed";
-    await updateSourceVideoTranscriptContext(env.DB, videoId, {
-      status: "failed",
-      error: message,
-      retryAt: nextTranscriptRetryAt(),
-    });
-    throw error;
-  }
 }
 
 function normalizedTokens(text: string): string[] {
@@ -414,29 +263,41 @@ function transcriptBlocks(transcript: StoredTranscript): TranscriptBlock[] {
   }));
 }
 
-export async function getVideoTranscript(
+function transcriptDocument(
+  transcript: StoredTranscript,
+  cached: boolean,
+): TranscriptDocumentResult {
+  return {
+    transcriptStatus: "available",
+    language: transcript.language,
+    automatic: transcript.automatic,
+    cached,
+    blocks: transcriptBlocks(transcript),
+  };
+}
+
+export async function requestVideoTranscript(
   env: Env,
   videoId: string,
-): Promise<TranscriptDocumentResult> {
+): Promise<TranscriptDocumentResult | TranscriptPreparationResult> {
   const video = await getSourceVideoById(env.DB, videoId);
   if (!video) {
     throw new Error("Video not found");
   }
-  const loaded = await loadVideoTranscript(env, video);
-  return {
-    transcriptStatus: "available",
-    language: loaded.transcript.language,
-    automatic: loaded.transcript.automatic,
-    cached: loaded.cached,
-    blocks: transcriptBlocks(loaded.transcript),
-  };
+  const cached = await readCachedTranscript(env, videoId);
+  if (cached) {
+    return transcriptDocument(cached, true);
+  }
+
+  await dispatchTranscriptPreparation(env, videoId);
+  return { transcriptStatus: "checking", retryAfterMs: 1_000 };
 }
 
 export async function searchVideoTranscript(
   env: Env,
   videoId: string,
   input: TranscriptSearchInput,
-): Promise<TranscriptSearchResult> {
+): Promise<TranscriptSearchResult | TranscriptSearchPreparationResult> {
   const video = await getSourceVideoById(env.DB, videoId);
   if (!video) {
     throw new Error("Video not found");
@@ -446,9 +307,17 @@ export async function searchVideoTranscript(
   const afterSeconds = input.afterSeconds ?? 2;
   const limit = input.limit ?? 20;
 
-  const loaded = await loadVideoTranscript(env, video);
+  const cached = await readCachedTranscript(env, videoId);
+  if (!cached) {
+    await dispatchTranscriptPreparation(env, videoId);
+    return {
+      transcriptStatus: "checking",
+      retryAfterMs: 1_000,
+      query,
+    };
+  }
 
-  const matches = findTranscriptMatches(loaded.transcript, query, {
+  const matches = findTranscriptMatches(cached, query, {
     beforeSeconds,
     afterSeconds,
     durationSeconds: video.duration_seconds,
@@ -456,9 +325,9 @@ export async function searchVideoTranscript(
   return {
     transcriptStatus: "available",
     query,
-    language: loaded.transcript.language,
-    automatic: loaded.transcript.automatic,
-    cached: loaded.cached,
+    language: cached.language,
+    automatic: cached.automatic,
+    cached: true,
     matches: matches.slice(0, limit),
     totalMatches: matches.length,
     truncated: matches.length > limit,
