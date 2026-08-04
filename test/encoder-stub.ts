@@ -78,6 +78,7 @@ export class EncoderStub extends DurableObject<Env> {
   private jobOutputs = new Set<string>();
   private jobEvents = new Map<string, string[]>();
   private metadataAttempts = new Map<string, number>();
+  private sourceTranscriptAttempts = new Map<string, number>();
   private containerStartCount = 0;
   private prewarmStartShouldFail = false;
 
@@ -132,6 +133,13 @@ export class EncoderStub extends DurableObject<Env> {
 
     if (url.pathname === "/__carpo/container-starts") {
       return Response.json({ count: this.containerStartCount });
+    }
+
+    if (url.pathname === "/__carpo/source-transcript-attempts") {
+      const videoId = url.searchParams.get("videoId") ?? "";
+      return Response.json({
+        attempts: this.sourceTranscriptAttempts.get(videoId) ?? 0,
+      });
     }
 
     if (
@@ -291,6 +299,12 @@ export class EncoderStub extends DurableObject<Env> {
 
     if (url.pathname === "/__carpo/source-transcript") {
       const body = (await request.json()) as { videoId?: string };
+      if (body.videoId) {
+        this.sourceTranscriptAttempts.set(
+          body.videoId,
+          (this.sourceTranscriptAttempts.get(body.videoId) ?? 0) + 1,
+        );
+      }
       const video = body.videoId
         ? await getSourceVideoById(this.env.DB, body.videoId)
         : null;
@@ -298,6 +312,12 @@ export class EncoderStub extends DurableObject<Env> {
         return Response.json(
           { errorMessage: "Video source not found" },
           { status: 404 },
+        );
+      }
+      if (video.source_ref.includes("transcript-fail")) {
+        return Response.json(
+          { errorMessage: "simulated transcript preparation failure" },
+          { status: 500 },
         );
       }
       if (

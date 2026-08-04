@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 import { JOB_SECRET_HEADER, HELPER_TOKEN_HEADER } from "../src/auth";
 import { drainArtifactDeletions } from "../src/artifact-deletions";
 import { handleRequest } from "../src/routes";
-import { getClipById, outputKeysForClip } from "../src/db";
+import { getClipById, getSourceVideoById, outputKeysForClip } from "../src/db";
 import { ENCODER_POOL_INSTANCE } from "../src/encoder-pool";
 import { dispatchEncodingJob, failClipAmbiguous } from "../src/jobs";
 import { transcriptObjectKey } from "../src/source-videos";
@@ -96,6 +96,40 @@ async function getContainerStartCount(): Promise<number> {
   const response = await container.fetch("http://encoder/__carpo/container-starts");
   const body = (await response.json()) as { count: number };
   return body.count;
+}
+
+async function getSourceTranscriptAttempts(videoId: string): Promise<number> {
+  const container = env.ENCODER_CONTAINER.getByName(ENCODER_POOL_INSTANCE);
+  const response = await container.fetch(
+    `http://encoder/__carpo/source-transcript-attempts?videoId=${encodeURIComponent(videoId)}`,
+  );
+  const body = (await response.json()) as { attempts: number };
+  return body.attempts;
+}
+
+async function waitForTranscript(videoId: string): Promise<Response> {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const response = await workerFetch(
+      `http://example.com/api/videos/${videoId}/transcript`,
+    );
+    if (response.status === 200) return response;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Transcript preparation did not finish for ${videoId}`);
+}
+
+async function waitForTranscriptStatus(
+  videoId: string,
+  expectedStatus: string,
+): Promise<void> {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const video = await getSourceVideoById(env.DB, videoId);
+    if (video?.transcript_status === expectedStatus) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(
+    `Transcript status did not become ${expectedStatus} for ${videoId}`,
+  );
 }
 
 async function setPrewarmStartFailure(enabled: boolean): Promise<void> {
@@ -2541,6 +2575,15 @@ describe("source video library", () => {
         },
       );
 
+    const preparingResponse = await search();
+    expect(preparingResponse.status).toBe(202);
+    expect(await preparingResponse.json()).toEqual({
+      transcriptStatus: "checking",
+      retryAfterMs: 1_000,
+      query: "code",
+    });
+    await waitForTranscript(videoId);
+
     const firstResponse = await search();
     expect(firstResponse.status).toBe(200);
     expect(await firstResponse.json()).toEqual({
@@ -2548,7 +2591,7 @@ describe("source video library", () => {
       query: "code",
       language: "en",
       automatic: true,
-      cached: false,
+      cached: true,
       matches: [
         {
           startSeconds: 0,
@@ -2616,6 +2659,69 @@ describe("source video library", () => {
       totalMatches: 2,
       truncated: false,
     });
+
+  });
+
+  it("returns a readable grounded transcript for the editor", async () => {
+    const videoId = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO source_videos (id, source_type, source_ref, title)
+       VALUES (?, 'youtube', ?, ?)`,
+    )
+      .bind(
+        videoId,
+        `https://www.youtube.com/watch?v=transcript-search&workspace=${videoId}`,
+        "Transcript workspace video",
+      )
+      .run();
+
+    const preparingResponse = await workerFetch(
+      `http://example.com/api/videos/${videoId}/transcript`,
+    );
+    expect(preparingResponse.status).toBe(202);
+    const response = await waitForTranscript(videoId);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      transcriptStatus: "available",
+      language: "en",
+      automatic: true,
+      cached: true,
+      blocks: [
+        {
+          id: "cue-0-3",
+          startCueId: "cue-0",
+          endCueId: "cue-3",
+          startSeconds: 0,
+          endSeconds: 1,
+          text: "Welcome to code school",
+        },
+        {
+          id: "cue-4-6",
+          startCueId: "cue-4",
+          endCueId: "cue-6",
+          startSeconds: 10,
+          endSeconds: 10.5,
+          text: "Code is useful",
+        },
+        {
+          id: "cue-7-7",
+          startCueId: "cue-7",
+          endCueId: "cue-7",
+          startSeconds: 20,
+          endSeconds: 20.5,
+          text: "Please decode this",
+        },
+        {
+          id: "cue-8-9",
+          startCueId: "cue-8",
+          endCueId: "cue-9",
+          startSeconds: 24,
+          endSeconds: 25.2,
+          text: "nearby nearby",
+        },
+      ],
+    });
   });
 
   it("prepares and searches a retained-source transcript when captions are unavailable", async () => {
@@ -2627,8 +2733,9 @@ describe("source video library", () => {
          source_ref,
          title,
          transcript_status,
-         transcript_check_error
-       ) VALUES (?, 'youtube', ?, ?, 'failed', ?)`,
+         transcript_check_error,
+         transcript_retry_at
+       ) VALUES (?, 'youtube', ?, ?, 'failed', ?, datetime('now', '-1 minute'))`,
     )
       .bind(
         videoId,
@@ -2652,6 +2759,14 @@ describe("source video library", () => {
         },
       );
 
+    const preparingResponse = await search();
+    expect(preparingResponse.status).toBe(202);
+    expect(await preparingResponse.json()).toEqual({
+      transcriptStatus: "checking",
+      retryAfterMs: 1_000,
+      query: "cuss",
+    });
+    await waitForTranscript(videoId);
     const response = await search();
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
@@ -2659,7 +2774,7 @@ describe("source video library", () => {
       query: "cuss",
       language: "en",
       automatic: true,
-      cached: false,
+      cached: true,
       matches: [
         {
           startSeconds: 3,
@@ -2700,7 +2815,7 @@ describe("source video library", () => {
     });
   });
 
-  it("reports transcript search as unsupported for uploaded videos", async () => {
+  it("prepares and searches transcripts for uploaded videos", async () => {
     const videoId = crypto.randomUUID();
     await env.DB.prepare(
       `INSERT INTO source_videos (id, source_type, source_ref, title)
@@ -2709,21 +2824,161 @@ describe("source video library", () => {
       .bind(videoId, "uploads/transcript-source.mp4", "Uploaded video")
       .run();
 
+    const preparingResponse = await workerFetch(
+      `http://example.com/api/videos/${videoId}/transcript/search`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: "cuss" }),
+      },
+    );
+
+    expect(preparingResponse.status).toBe(202);
+    expect(await preparingResponse.json()).toEqual({
+      transcriptStatus: "checking",
+      retryAfterMs: 1_000,
+      query: "cuss",
+    });
+    await waitForTranscript(videoId);
     const response = await workerFetch(
       `http://example.com/api/videos/${videoId}/transcript/search`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: "code" }),
+        body: JSON.stringify({ query: "cuss" }),
       },
     );
-
     expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
-      transcriptStatus: "unsupported",
-      matches: [],
-      totalMatches: 0,
+    expect(await response.json()).toEqual({
+      transcriptStatus: "available",
+      query: "cuss",
+      language: "en",
+      automatic: true,
+      cached: true,
+      matches: [
+        {
+          startSeconds: 3,
+          endSeconds: 6.4,
+          spokenStartSeconds: 4,
+          spokenEndSeconds: 4.4,
+          text: "cuss",
+        },
+        {
+          startSeconds: 11,
+          endSeconds: 14.4,
+          spokenStartSeconds: 12,
+          spokenEndSeconds: 12.4,
+          text: "cuss",
+        },
+      ],
+      totalMatches: 2,
+      truncated: false,
     });
+
+    const transcriptResponse = await workerFetch(
+      `http://example.com/api/videos/${videoId}/transcript`,
+    );
+    expect(transcriptResponse.status).toBe(200);
+    expect(await transcriptResponse.json()).toMatchObject({
+      transcriptStatus: "available",
+      language: "en",
+      automatic: true,
+      cached: true,
+      blocks: expect.arrayContaining([
+        expect.objectContaining({
+          id: "cue-0-0",
+          text: "cuss",
+        }),
+      ]),
+    });
+  });
+
+  it("starts uploaded transcript preparation in the background", async () => {
+    const videoId = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO source_videos (id, source_type, source_ref, title)
+       VALUES (?, 'upload', ?, ?)`,
+    )
+      .bind(videoId, `uploads/${videoId}.mp4`, "Background transcript video")
+      .run();
+
+    const { response } = await workerFetchWithoutWaitingForBackground(
+      `http://example.com/api/videos/${videoId}/transcript`,
+    );
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({
+      transcriptStatus: "checking",
+      retryAfterMs: 1_000,
+    });
+    const checking = await getSourceVideoById(env.DB, videoId);
+    expect(checking?.transcript_status).toBe("checking");
+
+    const ready = await waitForTranscript(videoId);
+    const prepared = await getSourceVideoById(env.DB, videoId);
+    expect(prepared).toMatchObject({ transcript_status: "available" });
+    expect(ready.status).toBe(200);
+    expect(await ready.json()).toMatchObject({
+      transcriptStatus: "available",
+      cached: true,
+    });
+  });
+
+  it("single-flights concurrent transcript preparation requests", async () => {
+    const videoId = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO source_videos (id, source_type, source_ref, title)
+       VALUES (?, 'upload', ?, ?)`,
+    )
+      .bind(videoId, `uploads/${videoId}.mp4`, "Single-flight transcript video")
+      .run();
+
+    const first = await workerFetchWithoutWaitingForBackground(
+      `http://example.com/api/videos/${videoId}/transcript`,
+    );
+    const second = await workerFetchWithoutWaitingForBackground(
+      `http://example.com/api/videos/${videoId}/transcript`,
+    );
+
+    expect(first.response.status).toBe(202);
+    expect(second.response.status).toBe(202);
+    await waitForTranscript(videoId);
+    expect(await getSourceTranscriptAttempts(videoId)).toBe(1);
+  });
+
+  it("surfaces background transcript failures without polling retries", async () => {
+    const videoId = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO source_videos (id, source_type, source_ref, title)
+       VALUES (?, 'upload', ?, ?)`,
+    )
+      .bind(
+        videoId,
+        `uploads/${videoId}-transcript-fail.mp4`,
+        "Failed transcript video",
+      )
+      .run();
+
+    const preparing = await workerFetch(
+      `http://example.com/api/videos/${videoId}/transcript`,
+    );
+    expect(preparing.status).toBe(202);
+    await waitForTranscriptStatus(videoId, "failed");
+
+    const failed = await workerFetch(
+      `http://example.com/api/videos/${videoId}/transcript`,
+    );
+    expect(failed.status).toBe(502);
+    expect(await failed.json()).toEqual({
+      error: "simulated transcript preparation failure",
+    });
+    expect(await getSourceTranscriptAttempts(videoId)).toBe(1);
+
+    const repeated = await workerFetch(
+      `http://example.com/api/videos/${videoId}/transcript`,
+    );
+    expect(repeated.status).toBe(502);
+    expect(await getSourceTranscriptAttempts(videoId)).toBe(1);
   });
 
   it("deletes a retained transcript with its video", async () => {

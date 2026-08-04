@@ -53,6 +53,7 @@ import {
   MAX_TRANSCRIPT_PADDING_SECONDS,
   MAX_TRANSCRIPT_QUERY_LENGTH,
   MAX_TRANSCRIPT_SEARCH_RESULTS,
+  requestVideoTranscript,
   searchVideoTranscript,
 } from "./transcript-search";
 
@@ -120,6 +121,13 @@ export async function handleRequest(
       transcriptSearchMatch[1],
       env,
     );
+  }
+
+  const transcriptReadMatch = url.pathname.match(
+    /^\/api\/videos\/([^/]+)\/transcript$/,
+  );
+  if (request.method === "GET" && transcriptReadMatch) {
+    return handleTranscriptRead(transcriptReadMatch[1], env);
   }
 
   const videoMatch = url.pathname.match(/^\/api\/videos\/([^/]+)$/);
@@ -323,14 +331,13 @@ async function handleTranscriptSearch(
   }
 
   try {
-    return json(
-      await searchVideoTranscript(env, videoId, {
-        query,
-        beforeSeconds,
-        afterSeconds,
-        limit,
-      }),
-    );
+    const result = await searchVideoTranscript(env, videoId, {
+      query,
+      beforeSeconds,
+      afterSeconds,
+      limit,
+    });
+    return json(result, result.transcriptStatus === "checking" ? 202 : 200);
   } catch (error) {
     return json(
       {
@@ -338,6 +345,34 @@ async function handleTranscriptSearch(
           error instanceof Error
             ? error.message
             : "Transcript search failed",
+      },
+      502,
+    );
+  }
+}
+
+async function handleTranscriptRead(
+  videoId: string,
+  env: Env,
+): Promise<Response> {
+  const existing = await getSourceVideoById(env.DB, videoId);
+  if (!existing) {
+    return json({ error: "Video not found" }, 404);
+  }
+
+  try {
+    const transcript = await requestVideoTranscript(env, videoId);
+    return json(
+      transcript,
+      transcript.transcriptStatus === "checking" ? 202 : 200,
+    );
+  } catch (error) {
+    return json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Transcript preparation failed",
       },
       502,
     );

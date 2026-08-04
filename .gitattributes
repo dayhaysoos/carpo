@@ -1,0 +1,2 @@
+# Bundled assets may contain intentional whitespace inside template literals.
+public/assets/*.js -whitespace

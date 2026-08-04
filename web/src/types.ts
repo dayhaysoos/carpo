@@ -133,6 +133,32 @@ export interface SourceVideoDetailResponse {
   clips: ClipResponse[];
 }
 
+export interface TranscriptBlock {
+  id: string;
+  startCueId: string;
+  endCueId: string;
+  startSeconds: number;
+  endSeconds: number;
+  text: string;
+}
+
+export interface TranscriptDocumentResponse {
+  transcriptStatus: "available";
+  language: string;
+  automatic: boolean;
+  cached: boolean;
+  blocks: TranscriptBlock[];
+}
+
+export interface TranscriptPreparationResponse {
+  transcriptStatus: "checking";
+  retryAfterMs: number;
+}
+
+export type TranscriptResponse =
+  | TranscriptDocumentResponse
+  | TranscriptPreparationResponse;
+
 export interface ClipListResponse {
   clips: ClipResponse[];
   total: number;

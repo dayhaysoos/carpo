@@ -26,8 +26,10 @@ import {
   MAX_TRANSCRIPT_PADDING_SECONDS,
   MAX_TRANSCRIPT_QUERY_LENGTH,
   MAX_TRANSCRIPT_SEARCH_RESULTS,
+  requestVideoTranscript,
   searchVideoTranscript,
 } from "./transcript-search";
+import { findSemanticTranscriptMoments } from "./semantic-transcript";
 
 const MAX_AGENT_OCCUPIED_RANGES = 200;
 
@@ -127,8 +129,7 @@ const manualClipInput = z
     }
   });
 
-const transcriptSearchInput = z.object({
-  query: z.string().trim().min(1).max(MAX_TRANSCRIPT_QUERY_LENGTH),
+const transcriptPaddingInput = {
   beforeSeconds: z
     .number()
     .finite()
@@ -141,12 +142,23 @@ const transcriptSearchInput = z.object({
     .min(0)
     .max(MAX_TRANSCRIPT_PADDING_SECONDS)
     .default(2),
+};
+
+const transcriptSearchInput = z.object({
+  query: z.string().trim().min(1).max(MAX_TRANSCRIPT_QUERY_LENGTH),
+  ...transcriptPaddingInput,
   limit: z
     .number()
     .int()
     .min(1)
     .max(MAX_TRANSCRIPT_SEARCH_RESULTS)
     .default(20),
+});
+
+const semanticTranscriptInput = z.object({
+  intent: z.string().trim().min(1).max(500),
+  count: z.number().int().min(1).max(10).default(5),
+  ...transcriptPaddingInput,
 });
 
 export async function loadAgentVideoContext(
@@ -281,14 +293,16 @@ export class VideoClipAgent extends Think<Env> {
   override getSystemPrompt() {
     return [
       "You are Carpo's clip assistant. This conversation is scoped to exactly one existing video.",
-      "Help with manual timestamp clipping and exact spoken-word or phrase clipping. Do not claim you can understand visual scenes or inspect anything beyond transcript search results.",
+      "Help with manual timestamp clipping, exact spoken-word searches, and grounded semantic transcript clipping. Do not claim you can understand visual scenes.",
       "Convert timestamps such as 1:20, 01:20.500, or 'one minute twenty seconds' into numeric seconds.",
       "When the user gives a start and end time, call createClip with the exact range. The interface will show a preview and let the user adjust the range before anything is created.",
       "The current video context is injected into every turn. Keep every proposed range inside durationSeconds and avoid overlapping existing clips unless the user asks for overlap.",
       "For a random-clips request without a requested length, use 10 seconds per clip. Choose non-overlapping ranges spread across the video and avoid existing clips when possible.",
       "When asked whether a transcript or captions are available, call checkTranscriptAvailability.",
-      "When asked to clip every time a word or exact phrase is spoken, always call searchTranscript—even when the current transcript status is failed or unavailable. The tool automatically tries captions, then prepares and transcribes the retained source when needed. It returns pre-merged clip ranges. Use only its exact startSeconds/endSeconds and call createClip once for every returned range so the user can preview and approve the batch. Never guess spoken timestamps or ask the user to retry before calling the tool.",
-      "If transcript preparation fails after searchTranscript is called, explain the returned error without claiming the user must create a clip first. If it is unsupported, explain that uploaded-video transcription is not available yet. If an available transcript has no matches, say the phrase was not found. Do not propose clips for any of those empty results.",
+      "When asked to clip every time a word or exact phrase is spoken, always call searchTranscript—even when the current transcript status is failed or unavailable. The tool automatically tries captions, then prepares and transcribes the retained source when needed. When it returns available results, use only its exact startSeconds/endSeconds and call createClip once for every returned range so the user can preview and approve the batch. Never guess spoken timestamps.",
+      "When the user asks for ideas, arguments, explanations, highlights, or other meaning-based moments, call findTranscriptMoments. It uses only grounded transcript block IDs. When it returns available results, call createClip once for every returned match using its exact startSeconds, endSeconds, and title so the user can preview and approve the batch.",
+      "A transcript tool can return transcriptStatus checking while durable background preparation continues. In that case, say preparation has started and ask the user to retry shortly. Do not call createClip or claim there were no matches.",
+      "If transcript preparation fails after a transcript tool is called, explain the returned error without claiming the user must create a clip first. If an available transcript has no matches, say the phrase or idea was not found. Do not propose clips for any empty result.",
       "If transcript search reports truncated results, clearly say that only the returned matches were proposed.",
       "Use 1080p unless the user asks for 720p. Add a caption only when requested. If no title is supplied, make a concise title from the video title and timestamp range.",
       "If either timestamp is missing or ambiguous, ask one short clarifying question. Never invent a missing timestamp.",
@@ -305,6 +319,7 @@ export class VideoClipAgent extends Think<Env> {
         "getVideoContext",
         "checkTranscriptAvailability",
         "searchTranscript",
+        "findTranscriptMoments",
         "createClip",
       ],
       temperature: 0,
@@ -326,14 +341,23 @@ export class VideoClipAgent extends Think<Env> {
       }),
       checkTranscriptAvailability: tool({
         description:
-          "Check whether the selected YouTube video exposes subtitles or automatic captions. This does not fetch or search transcript text.",
+          "Check whether the selected video has usable speech text. For uploads, this prepares the transcript when needed. This does not search transcript text.",
         inputSchema: z.object({}),
         execute: async () => {
           try {
-            const video = await checkSourceVideoTranscript(
-              this.env,
+            const existing = await getSourceVideoById(
+              this.env.DB,
               this.name,
             );
+            if (!existing) {
+              return { error: "Video not found" };
+            }
+            if (existing.source_type === "upload") {
+              await requestVideoTranscript(this.env, this.name);
+            } else {
+              await checkSourceVideoTranscript(this.env, this.name);
+            }
+            const video = await getSourceVideoById(this.env.DB, this.name);
             if (!video) {
               return { error: "Video not found" };
             }
@@ -366,10 +390,17 @@ export class VideoClipAgent extends Think<Env> {
       }),
       searchTranscript: tool({
         description:
-          "Prepare and search the selected video's speech for an exact word or phrase. Uses cached captions when possible; otherwise it retains the YouTube source, transcribes it, and caches the result. Call this even when current transcript status is failed or unavailable. Returns deterministic timestamp ranges with padding for clip proposals. Use these exact ranges with createClip.",
+          "Prepare and search the selected video's speech for an exact word or phrase. Uses cached captions when possible; otherwise it transcribes the retained source and caches the result. Works for YouTube and uploaded videos. Returns deterministic timestamp ranges with padding for clip proposals. Use these exact ranges with createClip.",
         inputSchema: transcriptSearchInput,
         execute: async (input) =>
           searchVideoTranscript(this.env, this.name, input),
+      }),
+      findTranscriptMoments: tool({
+        description:
+          "Find meaning-based moments in the selected video's transcript, such as arguments, explanations, themes, or highlights. Every returned timestamp is grounded in validated transcript block IDs. Works for YouTube and uploaded videos. Use the exact returned ranges with createClip.",
+        inputSchema: semanticTranscriptInput,
+        execute: async (input) =>
+          findSemanticTranscriptMoments(this.env, this.name, input),
       }),
       createClip: tool({
         description:

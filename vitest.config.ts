@@ -17,6 +17,7 @@ export default defineConfig({
         main: "./test/worker.ts",
         additionalExports: {
           EncoderContainer: "DurableObject",
+          TranscriptPreparation: "DurableObject",
           VideoClipAgent: "DurableObject",
         },
         wrangler: { configPath: "./wrangler.test.jsonc" },
