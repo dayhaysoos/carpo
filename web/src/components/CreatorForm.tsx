@@ -3,8 +3,8 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
-  useState,
 } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
@@ -49,6 +49,104 @@ interface CreatorFormProps {
 
 const DEFAULT_MAX_UPLOAD_BYTES = 95 * 1024 * 1024;
 
+interface CreatorFormState {
+  sourceMode: SourceMode;
+  clipCreatedNotice: boolean;
+  url: string;
+  title: string;
+  caption: string;
+  quality: ClipQuality;
+  urlTouched: boolean;
+  selectedFile: File | null;
+  uploadKey: string | null;
+  uploadError: string | null;
+  uploadProgress: string | null;
+  maxUploadBytes: number;
+  sourceActivationError: string | null;
+}
+
+type CreatorFormAction =
+  | { type: "update"; patch: Partial<CreatorFormState> }
+  | { type: "select-source-mode"; mode: SourceMode }
+  | {
+      type: "load-reusable-video";
+      source: CreateSourceVideoRequest["source"];
+    }
+  | { type: "choose-another" }
+  | { type: "select-file"; file: File | null }
+  | { type: "clip-created" }
+  | { type: "hide-clip-created-notice" };
+
+const INITIAL_CREATOR_FORM_STATE: CreatorFormState = {
+  sourceMode: "upload",
+  clipCreatedNotice: false,
+  url: "",
+  title: "",
+  caption: "",
+  quality: DEFAULT_CLIP_QUALITY,
+  urlTouched: false,
+  selectedFile: null,
+  uploadKey: null,
+  uploadError: null,
+  uploadProgress: null,
+  maxUploadBytes: DEFAULT_MAX_UPLOAD_BYTES,
+  sourceActivationError: null,
+};
+
+function creatorFormReducer(
+  state: CreatorFormState,
+  action: CreatorFormAction,
+): CreatorFormState {
+  switch (action.type) {
+    case "update":
+      return { ...state, ...action.patch };
+    case "select-source-mode":
+      return {
+        ...state,
+        sourceMode: action.mode,
+        urlTouched: false,
+        uploadError: null,
+        uploadProgress: null,
+        sourceActivationError: null,
+        ...(action.mode === "youtube"
+          ? { selectedFile: null, uploadKey: null }
+          : { url: "" }),
+      };
+    case "load-reusable-video":
+      return {
+        ...state,
+        sourceMode: action.source.type,
+        selectedFile: null,
+        uploadKey: null,
+        url: action.source.type === "youtube" ? action.source.url : "",
+      };
+    case "choose-another":
+      return {
+        ...state,
+        url: "",
+        selectedFile: null,
+        uploadKey: null,
+      };
+    case "select-file":
+      return {
+        ...state,
+        selectedFile: action.file,
+        uploadKey: null,
+        uploadError: null,
+        uploadProgress: null,
+      };
+    case "clip-created":
+      return {
+        ...state,
+        title: "",
+        caption: "",
+        clipCreatedNotice: true,
+      };
+    case "hide-clip-created-notice":
+      return { ...state, clipCreatedNotice: false };
+  }
+}
+
 export function CreatorForm({
   onClipCreated,
   onVideoActivated,
@@ -56,26 +154,30 @@ export function CreatorForm({
 }: CreatorFormProps) {
   const [searchParams] = useSearchParams();
   const reusableVideoId = searchParams.get("video") ?? "";
-  const [sourceMode, setSourceMode] = useState<SourceMode>("upload");
-  const [clipCreatedNotice, setClipCreatedNotice] = useState(false);
-  const [url, setUrl] = useState("");
-  const [title, setTitle] = useState("");
-  const [caption, setCaption] = useState("");
-  const [quality, setQuality] = useState<ClipQuality>(DEFAULT_CLIP_QUALITY);
-  const [urlTouched, setUrlTouched] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [uploadKey, setUploadKey] = useState<string | null>(null);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const [uploadProgress, setUploadProgress] = useState<string | null>(null);
-  const [maxUploadBytes, setMaxUploadBytes] = useState(DEFAULT_MAX_UPLOAD_BYTES);
+  const [form, dispatch] = useReducer(
+    creatorFormReducer,
+    INITIAL_CREATOR_FORM_STATE,
+  );
+  const {
+    sourceMode,
+    clipCreatedNotice,
+    url,
+    title,
+    caption,
+    quality,
+    urlTouched,
+    selectedFile,
+    uploadKey,
+    uploadError,
+    uploadProgress,
+    maxUploadBytes,
+    sourceActivationError,
+  } = form;
   const appliedClipWindowRequest = useRef<number | null>(null);
   const durationUpdateKey = useRef<string | null>(null);
   const sourceActivationKey = useRef<string | null>(null);
   const uploadGeneration = useRef(0);
   const youtubeMetadata = useRef({ title: "", duration: 0 });
-  const [sourceActivationError, setSourceActivationError] = useState<
-    string | null
-  >(null);
   const activateVideo = useCallback(
     async (
       request: CreateSourceVideoRequest,
@@ -159,9 +261,20 @@ export function CreatorForm({
     sourceMode === "youtube" ? youtube.currentTime : native.currentTime;
   const seekTo = sourceMode === "youtube" ? youtube.seekTo : native.seekTo;
   const trim = useTrimRange({ duration, onSeek: seekTo });
+  const durationMatchesActiveSource =
+    sourceMode === "youtube" ||
+    (nativePreviewUrl !== null &&
+      native.mediaStateSourceUrl === nativePreviewUrl);
 
   useEffect(() => {
-    if (!reusableVideoId || !ready || duration <= 0) return;
+    if (
+      !reusableVideoId ||
+      !ready ||
+      duration <= 0 ||
+      !durationMatchesActiveSource
+    ) {
+      return;
+    }
     if (
       reusableVideo?.durationSeconds &&
       Math.abs(reusableVideo.durationSeconds - duration) < 0.01
@@ -180,6 +293,7 @@ export function CreatorForm({
     });
   }, [
     duration,
+    durationMatchesActiveSource,
     ready,
     reusableVideo?.durationSeconds,
     reusableVideoId,
@@ -199,7 +313,10 @@ export function CreatorForm({
     let cancelled = false;
     const timeout = window.setTimeout(() => {
       sourceActivationKey.current = activationKey;
-      setSourceActivationError(null);
+      dispatch({
+        type: "update",
+        patch: { sourceActivationError: null },
+      });
       const metadata = youtubeMetadata.current;
       void activateVideo(
         {
@@ -218,9 +335,15 @@ export function CreatorForm({
         .catch((error) => {
           if (cancelled) return;
           sourceActivationKey.current = null;
-          setSourceActivationError(
-            error instanceof Error ? error.message : "Failed to prepare video",
-          );
+          dispatch({
+            type: "update",
+            patch: {
+              sourceActivationError:
+                error instanceof Error
+                  ? error.message
+                  : "Failed to prepare video",
+            },
+          });
         });
     }, 300);
     return () => {
@@ -276,9 +399,7 @@ export function CreatorForm({
     },
     onSuccess: () => {
       onClipCreated();
-      setTitle("");
-      setCaption("");
-      setClipCreatedNotice(true);
+      dispatch({ type: "clip-created" });
     },
   });
 
@@ -286,36 +407,22 @@ export function CreatorForm({
     if (!clipCreatedNotice) {
       return;
     }
-    const timeout = setTimeout(() => setClipCreatedNotice(false), 5000);
+    const timeout = setTimeout(
+      () => dispatch({ type: "hide-clip-created-notice" }),
+      5000,
+    );
     return () => clearTimeout(timeout);
   }, [clipCreatedNotice]);
 
   const handleSourceModeChange = (mode: SourceMode) => {
     uploadGeneration.current += 1;
-    setSourceMode(mode);
-    setUrlTouched(false);
-    setUploadError(null);
-    setUploadProgress(null);
-    setSourceActivationError(null);
+    dispatch({ type: "select-source-mode", mode });
     sourceActivationKey.current = null;
-    if (mode === "youtube") {
-      setSelectedFile(null);
-      setUploadKey(null);
-    } else {
-      setUrl("");
-    }
   };
 
   useEffect(() => {
     if (!reusableVideo) return;
-    setSourceMode(reusableVideo.source.type);
-    setSelectedFile(null);
-    setUploadKey(null);
-    if (reusableVideo.source.type === "youtube") {
-      setUrl(reusableVideo.source.url);
-    } else {
-      setUrl("");
-    }
+    dispatch({ type: "load-reusable-video", source: reusableVideo.source });
   }, [reusableVideo]);
 
   useEffect(() => {
@@ -328,10 +435,7 @@ export function CreatorForm({
     const generation = uploadGeneration.current + 1;
     uploadGeneration.current = generation;
     const isCurrentUpload = () => uploadGeneration.current === generation;
-    setSelectedFile(file);
-    setUploadKey(null);
-    setUploadError(null);
-    setUploadProgress(null);
+    dispatch({ type: "select-file", file });
 
     if (!file) {
       return;
@@ -339,30 +443,41 @@ export function CreatorForm({
 
     const validationError = validateUploadFile(file, maxUploadBytes);
     if (validationError) {
-      setUploadError(validationError);
+      dispatch({ type: "update", patch: { uploadError: validationError } });
       return;
     }
 
     const contentType = contentTypeForFile(file);
     if (!contentType) {
-      setUploadError("Unsupported video file type");
+      dispatch({
+        type: "update",
+        patch: { uploadError: "Unsupported video file type" },
+      });
       return;
     }
 
     try {
-      setUploadProgress("Preparing upload…");
+      dispatch({
+        type: "update",
+        patch: { uploadProgress: "Preparing upload…" },
+      });
       const slot = await requestUploadUrl({
         contentType,
         sizeBytes: file.size,
         filename: file.name,
       });
       if (!isCurrentUpload()) return;
-      setMaxUploadBytes(slot.maxSizeBytes);
+      dispatch({
+        type: "update",
+        patch: { maxUploadBytes: slot.maxSizeBytes },
+      });
 
       const slotValidation = validateUploadFile(file, slot.maxSizeBytes);
       if (slotValidation) {
-        setUploadError(slotValidation);
-        setUploadProgress(null);
+        dispatch({
+          type: "update",
+          patch: { uploadError: slotValidation, uploadProgress: null },
+        });
         return;
       }
 
@@ -372,14 +487,19 @@ export function CreatorForm({
         slot.contentType,
         (loaded, total) => {
           if (isCurrentUpload()) {
-            setUploadProgress(formatUploadProgress(loaded, total));
+            dispatch({
+              type: "update",
+              patch: { uploadProgress: formatUploadProgress(loaded, total) },
+            });
           }
         },
       );
       if (!isCurrentUpload()) return;
 
-      setUploadKey(slot.key);
-      setUploadProgress("Upload complete");
+      dispatch({
+        type: "update",
+        patch: { uploadKey: slot.key, uploadProgress: "Upload complete" },
+      });
       await activateVideo(
         {
           source: { type: "upload", key: slot.key },
@@ -389,10 +509,14 @@ export function CreatorForm({
       );
     } catch (error) {
       if (!isCurrentUpload()) return;
-      setUploadError(
-        error instanceof Error ? error.message : "Upload failed",
-      );
-      setUploadProgress(null);
+      dispatch({
+        type: "update",
+        patch: {
+          uploadError:
+            error instanceof Error ? error.message : "Upload failed",
+          uploadProgress: null,
+        },
+      });
     }
   };
 
@@ -471,9 +595,7 @@ export function CreatorForm({
             to="/"
             className="btn-ghost"
             onClick={() => {
-              setUrl("");
-              setSelectedFile(null);
-              setUploadKey(null);
+              dispatch({ type: "choose-another" });
               sourceActivationKey.current = null;
               uploadGeneration.current += 1;
             }}
@@ -513,8 +635,15 @@ export function CreatorForm({
             type="url"
             placeholder="https://www.youtube.com/watch?v=…"
             value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            onBlur={() => setUrlTouched(true)}
+            onChange={(event) =>
+              dispatch({
+                type: "update",
+                patch: { url: event.target.value },
+              })
+            }
+            onBlur={() =>
+              dispatch({ type: "update", patch: { urlTouched: true } })
+            }
             autoComplete="off"
             spellCheck={false}
           />
@@ -567,7 +696,9 @@ export function CreatorForm({
                 type="button"
                 className={`quality-option ${quality === "1080p" ? "active" : ""}`}
                 aria-pressed={quality === "1080p"}
-                onClick={() => setQuality("1080p")}
+                onClick={() =>
+                  dispatch({ type: "update", patch: { quality: "1080p" } })
+                }
               >
                 1080p
               </button>
@@ -575,7 +706,9 @@ export function CreatorForm({
                 type="button"
                 className={`quality-option ${quality === "720p" ? "active" : ""}`}
                 aria-pressed={quality === "720p"}
-                onClick={() => setQuality("720p")}
+                onClick={() =>
+                  dispatch({ type: "update", patch: { quality: "720p" } })
+                }
               >
                 720p
               </button>
@@ -617,7 +750,9 @@ export function CreatorForm({
                 type="button"
                 className={`quality-option ${quality === "1080p" ? "active" : ""}`}
                 aria-pressed={quality === "1080p"}
-                onClick={() => setQuality("1080p")}
+                onClick={() =>
+                  dispatch({ type: "update", patch: { quality: "1080p" } })
+                }
               >
                 1080p
               </button>
@@ -625,7 +760,9 @@ export function CreatorForm({
                 type="button"
                 className={`quality-option ${quality === "720p" ? "active" : ""}`}
                 aria-pressed={quality === "720p"}
-                onClick={() => setQuality("720p")}
+                onClick={() =>
+                  dispatch({ type: "update", patch: { quality: "720p" } })
+                }
               >
                 720p
               </button>
@@ -652,7 +789,12 @@ export function CreatorForm({
           type="text"
           placeholder="Name this clip"
           value={title}
-          onChange={(e) => setTitle(e.target.value)}
+          onChange={(event) =>
+            dispatch({
+              type: "update",
+              patch: { title: event.target.value },
+            })
+          }
           maxLength={200}
         />
       </label>
@@ -663,7 +805,12 @@ export function CreatorForm({
           type="text"
           placeholder="Burn text into the clip"
           value={caption}
-          onChange={(e) => setCaption(e.target.value)}
+          onChange={(event) =>
+            dispatch({
+              type: "update",
+              patch: { caption: event.target.value },
+            })
+          }
           maxLength={MAX_CAPTION_LENGTH}
         />
       </label>

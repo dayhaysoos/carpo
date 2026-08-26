@@ -6,7 +6,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { VideoAgentChat } from "./VideoAgentChat";
 
@@ -22,11 +22,33 @@ const player = vi.hoisted(() => ({
   pauseVideo: vi.fn(),
   seekTo: vi.fn(),
 }));
+const agentConnections = vi.hoisted(() => ({
+  nextId: 1,
+  namesByConnection: new Map<number, Set<string>>(),
+  closed: [] as number[],
+}));
 
 vi.mock("agents/react", () => ({
-  useAgent: (options: { onOpen?: () => void }) => {
+  useAgent: (options: { name: string; onOpen?: () => void }) => {
+    const connectionId = useRef<number | null>(null);
+    if (connectionId.current === null) {
+      connectionId.current = agentConnections.nextId++;
+      agentConnections.namesByConnection.set(connectionId.current, new Set());
+    }
+    agentConnections.namesByConnection
+      .get(connectionId.current)
+      ?.add(options.name);
+
     useEffect(() => options.onOpen?.(), [options.onOpen]);
-    return {};
+    useEffect(
+      () => () => {
+        if (connectionId.current !== null) {
+          agentConnections.closed.push(connectionId.current);
+        }
+      },
+      [],
+    );
+    return { connectionId: connectionId.current };
   },
 }));
 
@@ -121,6 +143,9 @@ describe("VideoAgentChat", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+    agentConnections.nextId = 1;
+    agentConnections.namesByConnection.clear();
+    agentConnections.closed = [];
   });
 
   it("stays visible while waiting for a source video", () => {
@@ -266,6 +291,78 @@ describe("VideoAgentChat", () => {
     ).toBeNull();
     expect(screen.getByText("3 clips ready to review")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Review clips" })).toBeTruthy();
+  });
+
+  it("keeps an unfinished review scoped to its originating video", async () => {
+    const originalMessages = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [proposal("approval-video-1", "Video one clip", 3, 6)],
+      },
+    ];
+    chat.messages = originalMessages;
+    const view = render(
+      <VideoAgentChat
+        videoId="video-1"
+        onClipCreated={vi.fn()}
+        onTimestampSelect={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "Review clips" })).toBeTruthy();
+
+    chat.messages = [];
+    view.rerender(
+      <VideoAgentChat
+        videoId="video-2"
+        onClipCreated={vi.fn()}
+        onTimestampSelect={vi.fn()}
+      />,
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("heading", { name: "Review clips" }),
+      ).toBeNull(),
+    );
+    expect(screen.queryByText("1 clip ready to review")).toBeNull();
+
+    chat.messages = originalMessages;
+    view.rerender(
+      <VideoAgentChat
+        videoId="video-1"
+        onClipCreated={vi.fn()}
+        onTimestampSelect={vi.fn()}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("heading", { name: "Review clips" })).toBeTruthy(),
+    );
+  });
+
+  it("opens a fresh agent connection when the video identity changes", () => {
+    chat.messages = [];
+    const view = render(
+      <VideoAgentChat
+        videoId="video-1"
+        onClipCreated={vi.fn()}
+        onTimestampSelect={vi.fn()}
+      />,
+    );
+
+    view.rerender(
+      <VideoAgentChat
+        videoId="video-2"
+        onClipCreated={vi.fn()}
+        onTimestampSelect={vi.fn()}
+      />,
+    );
+
+    expect(
+      [...agentConnections.namesByConnection.values()].map((names) => [
+        ...names,
+      ]),
+    ).toEqual([["video-1"], ["video-2"]]);
+    expect(agentConnections.closed).toContain(1);
   });
 
   it("keeps an uploaded preview mounted while advancing clips", async () => {
@@ -442,6 +539,13 @@ describe("VideoAgentChat", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "Approve all" }));
+    expect(api.createClipFromSourceVideo).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: "Create 2 approved clips" }),
+    ).toBeTruthy();
+    await user.click(
+      screen.getByRole("button", { name: "Create 2 approved clips" }),
+    );
 
     await waitFor(() =>
       expect(api.createClipFromSourceVideo).toHaveBeenCalledTimes(2),
@@ -481,13 +585,66 @@ describe("VideoAgentChat", () => {
 
     await user.click(screen.getByRole("button", { name: "Reject all" }));
 
-    expect(chat.addToolApprovalResponse.mock.calls).toEqual([
-      [{ id: "approval-first", approved: false }],
-      [{ id: "approval-second", approved: false }],
-    ]);
+    expect(chat.addToolApprovalResponse).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Finish review" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Finish review" }));
+
+    await waitFor(() =>
+      expect(chat.addToolApprovalResponse.mock.calls).toEqual([
+        [{ id: "approval-first", approved: false }],
+        [{ id: "approval-second", approved: false }],
+      ]),
+    );
     expect(
       screen.queryByRole("heading", { name: "Review clips" }),
     ).toBeNull();
+  });
+
+  it("reports a failed proposal and retries only that clip", async () => {
+    const user = userEvent.setup();
+    api.createClipFromSourceVideo.mockRejectedValueOnce(
+      new Error("temporary clip failure"),
+    );
+    chat.messages = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [clientProposal("tool-retry", "Retry clip", 20, 24)],
+      },
+    ];
+
+    render(
+      <VideoAgentChat
+        videoId="video-1"
+        onClipCreated={vi.fn()}
+        onTimestampSelect={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Approve clip" }));
+    await user.click(
+      screen.getByRole("button", { name: "Create 1 approved clip" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByRole("alert")
+          .some((alert) =>
+            alert.textContent?.includes("Retry clip: temporary clip failure"),
+          ),
+      ).toBe(true),
+    );
+    expect(api.createClipFromSourceVideo).toHaveBeenCalledTimes(1);
+
+    await user.click(
+      screen.getByRole("button", { name: "Create 1 approved clip" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("heading", { name: "Review clips" }),
+      ).toBeNull(),
+    );
+    expect(api.createClipFromSourceVideo).toHaveBeenCalledTimes(2);
   });
 
   it("seeks YouTube previews to fractional proposal timestamps", async () => {

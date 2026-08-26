@@ -4,6 +4,9 @@ import type { UIMessage } from "ai";
 import { useAgent } from "agents/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClipFromSourceVideo } from "../api";
+import { ClipProposalReview } from "../clip-proposal-review";
+import { useClipProposalReview } from "../hooks/useClipProposalReview";
+import { extractThinkClipProposals } from "../think-clip-proposals";
 import type { ClipSource } from "../types";
 import {
   extractTimestampEntities,
@@ -11,11 +14,7 @@ import {
   type TimestampWindow,
 } from "../timestamp-windows";
 import type { ExistingClipRange } from "../timeline";
-import {
-  ClipReviewModal,
-  type ManualClipInput,
-  type PendingClipApproval,
-} from "./ClipReviewModal";
+import { ClipReviewModal } from "./ClipReviewModal";
 
 interface VideoAgentChatProps {
   videoId: string;
@@ -27,20 +26,7 @@ interface VideoAgentChatProps {
 }
 
 const DEFAULT_TIMESTAMP_WINDOW_SECONDS = 10;
-
-function isManualClipInput(value: unknown): value is ManualClipInput {
-  if (!value || typeof value !== "object") return false;
-  const input = value as Record<string, unknown>;
-  return (
-    typeof input.title === "string" &&
-    typeof input.startSeconds === "number" &&
-    typeof input.endSeconds === "number" &&
-    (input.caption === undefined || typeof input.caption === "string") &&
-    (input.quality === undefined ||
-      input.quality === "720p" ||
-      input.quality === "1080p")
-  );
-}
+const EMPTY_EXISTING_CLIPS: ExistingClipRange[] = [];
 
 function messageText(parts: Array<{ type: string; text?: string }>): string {
   return parts
@@ -50,6 +36,39 @@ function messageText(parts: Array<{ type: string; text?: string }>): string {
 }
 
 export function VideoAgentChat(props: VideoAgentChatProps) {
+  const [proposalReview] = useState(
+    () =>
+      new ClipProposalReview({
+        create: async (proposal, input) => {
+          const clip = await createClipFromSourceVideo(
+            proposal.videoId,
+            {
+              title: input.title,
+              trimStart: input.startSeconds,
+              trimEnd: input.endSeconds,
+              quality: input.quality ?? "1080p",
+              filters: input.caption
+                ? [{ type: "caption", text: input.caption }]
+                : [],
+            },
+            proposal.idempotencyKey,
+          );
+          return {
+            id: clip.id,
+            title: clip.title,
+            startSeconds: clip.trimStart,
+            endSeconds: clip.trimEnd,
+            quality: clip.quality,
+            status: clip.status,
+          };
+        },
+      }),
+  );
+
+  useEffect(() => {
+    proposalReview.activate(props.videoId);
+  }, [proposalReview, props.videoId]);
+
   if (!props.videoId) {
     return (
       <section className="agent-chat card" aria-label="Clip with Think">
@@ -91,7 +110,13 @@ export function VideoAgentChat(props: VideoAgentChatProps) {
     );
   }
 
-  return <ConnectedVideoAgentChat {...props} />;
+  return (
+    <ConnectedVideoAgentChat
+      key={props.videoId}
+      {...props}
+      proposalReview={proposalReview}
+    />
+  );
 }
 
 function ConnectedVideoAgentChat({
@@ -100,29 +125,13 @@ function ConnectedVideoAgentChat({
   retainedSourceReady = false,
   onClipCreated,
   onTimestampSelect,
-  existingClips = [],
-}: VideoAgentChatProps) {
+  existingClips = EMPTY_EXISTING_CLIPS,
+  proposalReview,
+}: VideoAgentChatProps & { proposalReview: ClipProposalReview }) {
   const [input, setInput] = useState("");
   const [connected, setConnected] = useState(false);
-  const completedClipIds = useRef(new Set<string>());
   const lastAutoAppliedTimestamp = useRef<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
-  const [reviewOpen, setReviewOpen] = useState(false);
-  const [activeReviewIndex, setActiveReviewIndex] = useState(0);
-  const [reviewDecisions, setReviewDecisions] = useState<
-    Record<string, boolean>
-  >({});
-  const [reviewInputs, setReviewInputs] = useState<
-    Record<string, ManualClipInput>
-  >({});
-  const [reviewSubmitting, setReviewSubmitting] = useState(false);
-  const [reviewSubmitError, setReviewSubmitError] = useState<string | null>(
-    null,
-  );
-  const [submittedReviewBatch, setSubmittedReviewBatch] = useState<
-    string | null
-  >(null);
-  const openedReviewIds = useRef(new Set<string>());
 
   const agent = useAgent({
     agent: "VideoClipAgent",
@@ -140,45 +149,16 @@ function ConnectedVideoAgentChat({
     error,
   } = useAgentChat({ agent });
   const chatMessages = messages as UIMessage[];
-  const pendingApprovals = useMemo(() => {
-    const approvals: PendingClipApproval[] = [];
-    for (const message of chatMessages) {
-      for (const part of message.parts) {
-        if (!isToolUIPart(part) || getToolName(part) !== "createClip") continue;
-        if (!isManualClipInput(part.input)) {
-          continue;
-        }
-        if (part.state === "input-available") {
-          approvals.push({
-            approvalId: part.toolCallId,
-            toolCallId: part.toolCallId,
-            resolution: "client",
-            input: part.input,
-          });
-          continue;
-        }
-        if (part.state !== "approval-requested") continue;
-        const approval = "approval" in part
-          ? (part.approval as { id?: unknown })
-          : undefined;
-        if (typeof approval?.id !== "string") continue;
-        approvals.push({
-          approvalId: approval.id,
-          toolCallId: part.toolCallId,
-          resolution: "approval",
-          input: part.input,
-        });
-      }
-    }
-    return approvals.sort(
-      (left, right) =>
-        left.input.startSeconds - right.input.startSeconds ||
-        left.input.endSeconds - right.input.endSeconds,
-    );
-  }, [chatMessages]);
-  const reviewBatchKey = pendingApprovals
-    .map((approval) => approval.approvalId)
-    .join(":");
+  const reviewState = useClipProposalReview(proposalReview);
+  const hasActiveVideoReview = reviewState.videoId === videoId;
+  const thinkProposals = useMemo(
+    () =>
+      extractThinkClipProposals(chatMessages, videoId, {
+        addToolApprovalResponse,
+        addToolOutput,
+      }),
+    [addToolApprovalResponse, addToolOutput, chatMessages, videoId],
+  );
   const timestampEntities = useMemo(
     () => extractTimestampEntities(input, DEFAULT_TIMESTAMP_WINDOW_SECONDS),
     [input],
@@ -188,116 +168,8 @@ function ConnectedVideoAgentChat({
   const working = status === "submitted" || status === "streaming";
 
   useEffect(() => {
-    if (pendingApprovals.length === 0) {
-      openedReviewIds.current.clear();
-      return;
-    }
-    const belongsToOpenReview = pendingApprovals.every((approval) =>
-      openedReviewIds.current.has(approval.approvalId),
-    );
-    if (
-      working ||
-      belongsToOpenReview
-    ) {
-      return;
-    }
-    openedReviewIds.current = new Set(
-      pendingApprovals.map((approval) => approval.approvalId),
-    );
-    setActiveReviewIndex(0);
-    setReviewDecisions({});
-    setReviewInputs(
-      Object.fromEntries(
-        pendingApprovals.map((approval) => [
-          approval.approvalId,
-          approval.input,
-        ]),
-      ),
-    );
-    setReviewSubmitError(null);
-    setSubmittedReviewBatch(null);
-    setReviewOpen(true);
-  }, [pendingApprovals, working]);
-
-  useEffect(() => {
-    setActiveReviewIndex((current) =>
-      Math.min(current, Math.max(0, pendingApprovals.length - 1)),
-    );
-  }, [pendingApprovals.length]);
-
-  const submitReview = async (
-    decisions: Readonly<Record<string, boolean>>,
-  ) => {
-    setReviewSubmitting(true);
-    setReviewSubmitError(null);
-    try {
-      for (const approval of pendingApprovals) {
-        if (!Object.hasOwn(decisions, approval.approvalId)) continue;
-        const approved = decisions[approval.approvalId];
-        if (!approved) {
-          if (approval.resolution === "approval") {
-            addToolApprovalResponse({
-              id: approval.approvalId,
-              approved: false,
-            });
-          } else {
-            addToolOutput({
-              toolCallId: approval.toolCallId,
-              output: {
-                status: "rejected",
-                reason: "User rejected this proposed clip.",
-              },
-            });
-          }
-          continue;
-        }
-
-        const input = reviewInputs[approval.approvalId] ?? approval.input;
-        const clip = await createClipFromSourceVideo(
-          videoId,
-          {
-            title: input.title,
-            trimStart: input.startSeconds,
-            trimEnd: input.endSeconds,
-            quality: input.quality ?? "1080p",
-            filters: input.caption
-              ? [{ type: "caption", text: input.caption }]
-              : [],
-          },
-          approval.toolCallId,
-        );
-        addToolOutput({
-          toolCallId: approval.toolCallId,
-          output: {
-            clipId: clip.id,
-            title: clip.title,
-            startSeconds: clip.trimStart,
-            endSeconds: clip.trimEnd,
-            quality: clip.quality,
-            status: clip.status,
-          },
-        });
-      }
-      setSubmittedReviewBatch(reviewBatchKey);
-      setReviewOpen(false);
-    } catch (submissionError) {
-      setReviewSubmitError(
-        submissionError instanceof Error
-          ? submissionError.message
-          : "The approved clips could not be created.",
-      );
-    } finally {
-      setReviewSubmitting(false);
-    }
-  };
-
-  const submitAll = (approved: boolean) => {
-    const decisions = Object.fromEntries(
-      pendingApprovals.map((approval) => [approval.approvalId, approved]),
-    );
-    setReviewDecisions(decisions);
-    void submitReview(decisions);
-  };
+    if (!working) proposalReview.synchronize(videoId, thinkProposals);
+  }, [proposalReview, thinkProposals, videoId, working]);
 
   useEffect(() => {
     const entity = timestampEntities.at(-1);
@@ -324,18 +196,7 @@ function ConnectedVideoAgentChat({
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    for (const message of chatMessages) {
-      for (const part of message.parts) {
-        if (!isToolUIPart(part) || getToolName(part) !== "createClip") continue;
-        if (part.state !== "output-available") continue;
-        const output = part.output as { clipId?: unknown } | undefined;
-        if (typeof output?.clipId !== "string") continue;
-        if (completedClipIds.current.has(output.clipId)) continue;
-        completedClipIds.current.add(output.clipId);
-        onClipCreated();
-      }
-    }
-  }, [chatMessages, onClipCreated]);
+  }, [chatMessages]);
 
   const submit = (event: React.FormEvent) => {
     event.preventDefault();
@@ -437,20 +298,19 @@ function ConnectedVideoAgentChat({
             </div>
           );
         })}
-        {pendingApprovals.length > 0 &&
-        submittedReviewBatch !== reviewBatchKey ? (
+        {hasActiveVideoReview && reviewState.items.length > 0 ? (
           <div className="agent-review-ready">
             <div>
               <strong>
-                {pendingApprovals.length} clip
-                {pendingApprovals.length === 1 ? "" : "s"} ready to review
+                {reviewState.items.length} clip
+                {reviewState.items.length === 1 ? "" : "s"} ready to review
               </strong>
               <span>Nothing will be created until you finish reviewing.</span>
             </div>
             <button
               type="button"
               className="btn-primary"
-              onClick={() => setReviewOpen(true)}
+              onClick={() => proposalReview.dispatch({ type: "open" })}
             >
               Review clips
             </button>
@@ -510,34 +370,15 @@ function ConnectedVideoAgentChat({
         </div>
       </form>
 
-      {reviewOpen && pendingApprovals.length > 0 ? (
+      {hasActiveVideoReview &&
+      reviewState.isOpen &&
+      reviewState.items.length > 0 ? (
         <ClipReviewModal
+          review={proposalReview}
           videoId={videoId}
           source={source}
           retainedSourceReady={retainedSourceReady}
-          approvals={pendingApprovals}
-          activeIndex={activeReviewIndex}
-          decisions={reviewDecisions}
-          inputs={reviewInputs}
-          submitting={reviewSubmitting}
-          submitError={reviewSubmitError}
-          onActiveIndexChange={setActiveReviewIndex}
-          onInputChange={(approvalId, nextInput) =>
-            setReviewInputs((current) => ({
-              ...current,
-              [approvalId]: nextInput,
-            }))
-          }
-          onDecision={(approvalId, approved) =>
-            setReviewDecisions((current) => ({
-              ...current,
-              [approvalId]: approved,
-            }))
-          }
-          onSubmit={() => void submitReview(reviewDecisions)}
-          onApproveAll={() => submitAll(true)}
-          onRejectAll={() => submitAll(false)}
-          onDismiss={() => setReviewOpen(false)}
+          onClipCreated={onClipCreated}
           existingClips={existingClips}
         />
       ) : null}

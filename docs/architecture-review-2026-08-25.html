@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Carpo Architecture Review</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            ink: "#15231f",
+            paper: "#f4f0e7",
+            moss: "#496957",
+            acid: "#d8ff70",
+            ember: "#e56f45",
+            fog: "#d9ded6"
+          },
+          fontFamily: {
+            sans: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+            mono: ["SFMono-Regular", "ui-monospace", "monospace"]
+          },
+          boxShadow: {
+            card: "0 18px 45px rgba(21,35,31,.08)"
+          }
+        }
+      }
+    };
+  </script>
+  <style>
+    body { background-image: radial-gradient(rgba(21,35,31,.08) .7px, transparent .7px); background-size: 13px 13px; }
+    .candidate { scroll-margin-top: 2rem; }
+    .file { font-family: SFMono-Regular, ui-monospace, monospace; font-size: .72rem; }
+    .mermaid { min-height: 170px; display: grid; place-items: center; }
+    .mermaid svg { max-width: 100% !important; height: auto !important; }
+    .rule { height: 1px; background: linear-gradient(90deg, #15231f, transparent); }
+    @media print { body { background: #fff; } .candidate { break-inside: avoid; } }
+  </style>
+</head>
+<body class="text-ink antialiased">
+  <main class="mx-auto max-w-7xl px-5 py-10 md:px-10 md:py-16">
+    <header class="border-y border-ink py-6 md:flex md:items-end md:justify-between">
+      <div>
+        <div class="mb-3 font-mono text-xs uppercase tracking-[.28em] text-moss">Carpo · architecture review · 2026-08-25</div>
+        <h1 class="max-w-4xl text-4xl font-black tracking-[-.045em] md:text-7xl">Deepen the human approval path.</h1>
+      </div>
+      <div class="mt-6 grid grid-cols-2 gap-x-8 gap-y-2 font-mono text-xs uppercase md:mt-0 md:text-right">
+        <span class="text-moss">Typecheck</span><span>pass</span>
+        <span class="text-moss">Tests</span><span>194 pass</span>
+        <span class="text-moss">Doctor diff</span><span>10 fixed</span>
+        <span class="text-moss">ADRs</span><span>none</span>
+      </div>
+    </header>
+
+    <section class="grid gap-px border-b border-ink bg-ink md:grid-cols-4">
+      <div class="bg-paper px-5 py-5">
+        <div class="font-mono text-[10px] uppercase tracking-[.2em] text-moss">Recent pressure</div>
+        <div class="mt-2 text-2xl font-black">WebMCP path</div>
+        <div class="mt-1 text-sm">Think · review · editor</div>
+      </div>
+      <div class="bg-paper px-5 py-5">
+        <div class="font-mono text-[10px] uppercase tracking-[.2em] text-moss">Doctor evidence</div>
+        <div class="mt-2 text-2xl font-black">47 diagnostics</div>
+        <div class="mt-1 text-sm">13 frontend files</div>
+      </div>
+      <div class="bg-paper px-5 py-5">
+        <div class="font-mono text-[10px] uppercase tracking-[.2em] text-moss">Highest hotspot</div>
+        <div class="mt-2 text-2xl font-black">test/api.test.ts</div>
+        <div class="mt-1 text-sm">51 touches · 5,378 lines</div>
+      </div>
+      <div class="bg-paper px-5 py-5">
+        <div class="font-mono text-[10px] uppercase tracking-[.2em] text-moss">Decision rule</div>
+        <div class="mt-2 text-2xl font-black">Deletion test</div>
+        <div class="mt-1 text-sm">Complexity must return</div>
+      </div>
+    </section>
+
+    <nav class="my-8 flex flex-wrap gap-2 font-mono text-xs">
+      <a href="#proposal-review" class="border border-ink bg-acid px-3 py-2">01 Proposal review</a>
+      <a href="#render-lifecycle" class="border border-ink px-3 py-2">02 Render lifecycle</a>
+      <a href="#video-context" class="border border-ink px-3 py-2">03 Video context</a>
+      <a href="#transcript-discovery" class="border border-ink px-3 py-2">04 Transcript discovery</a>
+      <a href="#active-workspace" class="border border-ink px-3 py-2">05 Active workspace</a>
+    </nav>
+
+    <section class="space-y-8">
+      <article id="proposal-review" class="candidate overflow-hidden border border-ink bg-white shadow-card">
+        <div class="grid md:grid-cols-[9rem_1fr_auto]">
+          <div class="flex items-center justify-center bg-ink p-6 text-5xl font-black text-paper">01</div>
+          <div class="p-6 md:p-8">
+            <div class="mb-3 flex flex-wrap gap-2 font-mono text-[10px] uppercase tracking-[.18em]">
+              <span class="bg-acid px-2 py-1">Tackled · accepted</span>
+              <span class="border border-ink px-2 py-1">ports &amp; adapters</span>
+            </div>
+            <h2 class="text-3xl font-black tracking-[-.035em] md:text-5xl">Clip Proposal Review</h2>
+          </div>
+          <div class="border-t border-ink p-6 font-mono text-xs md:w-72 md:border-l md:border-t-0">
+            <div class="text-moss">FILES</div>
+            <div class="file mt-2 space-y-1">
+              <div>VideoAgentChat.tsx</div>
+              <div>ClipReviewModal.tsx</div>
+              <div>VideoAgentChat.test.tsx</div>
+              <div>api.ts · video-clip-agent.ts</div>
+              <div>clip-service.ts</div>
+            </div>
+          </div>
+        </div>
+        <div class="border-t border-ink bg-acid px-6 py-4 font-mono text-xs uppercase tracking-[.12em] md:flex md:items-center md:justify-between">
+          <span>Outcome · Think migrated to the deep module</span>
+          <span class="mt-2 block md:mt-0">2 review loops clean · ADR 0001</span>
+        </div>
+        <div class="rule"></div>
+        <div class="grid lg:grid-cols-[1fr_1.25fr]">
+          <div class="space-y-6 p-6 md:p-8">
+            <div>
+              <div class="font-mono text-[10px] uppercase tracking-[.2em] text-ember">Problem</div>
+              <ul class="mt-3 space-y-2 text-sm leading-6">
+                <li>Think message parts define the review model.</li>
+                <li>Nine state holders coordinate one batch.</li>
+                <li>Persistence and acknowledgement share one React loop.</li>
+                <li>The modal interface mirrors implementation state.</li>
+                <li>Tests mock both Think and HTTP.</li>
+              </ul>
+            </div>
+            <div>
+              <div class="font-mono text-[10px] uppercase tracking-[.2em] text-moss">Deepening direction</div>
+              <div class="mt-3 border-l-4 border-moss pl-4 text-lg font-semibold leading-7">One module owns normalized proposals, chronological batches, edits, decisions, idempotent Clip persistence, and result acknowledgement.</div>
+            </div>
+            <div>
+              <div class="font-mono text-[10px] uppercase tracking-[.2em] text-moss">Wins</div>
+              <div class="mt-3 flex flex-wrap gap-2 text-xs font-semibold">
+                <span class="bg-fog px-3 py-2">One approval gate</span>
+                <span class="bg-fog px-3 py-2">Provider-independent tests</span>
+                <span class="bg-fog px-3 py-2">WebMCP-ready seam</span>
+                <span class="bg-fog px-3 py-2">Smaller React surface</span>
+              </div>
+            </div>
+          </div>
+          <div class="border-t border-ink bg-paper p-4 lg:border-l lg:border-t-0 md:p-8">
+            <div class="mermaid">
+flowchart LR
+  T[Think] --> TA[Think adapter]
+  W[WebMCP] --> WA[WebMCP adapter]
+  TA --> R[Deep Proposal Review module]
+  WA --> R
+  R --> H{Human review}
+  H -->|approve| C[Clip persistence port]
+  H -->|reject| A[Result acknowledgement]
+  C --> A
+  classDef deep fill:#15231f,color:#f4f0e7,stroke:#15231f,stroke-width:2px;
+  classDef accent fill:#d8ff70,color:#15231f,stroke:#15231f;
+  class R deep;
+  class H accent;
+            </div>
+            <div class="mt-4 border-t border-ink pt-4">
+              <div class="font-mono text-[10px] uppercase tracking-[.2em] text-ember">Deletion test</div>
+              <div class="mt-2 text-sm font-semibold">Remove it → normalization, review state, commit policy, and acknowledgement spread into both adapters.</div>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article id="render-lifecycle" class="candidate overflow-hidden border border-ink bg-white shadow-card">
+        <div class="grid md:grid-cols-[9rem_1fr_auto]">
+          <div class="flex items-center justify-center bg-ember p-6 text-5xl font-black text-white">02</div>
+          <div class="p-6 md:p-8">
+            <div class="mb-3 flex flex-wrap gap-2 font-mono text-[10px] uppercase tracking-[.18em]">
+              <span class="bg-ember px-2 py-1 text-white">Strong · higher risk</span>
+              <span class="border border-ink px-2 py-1">ports &amp; adapters</span>
+            </div>
+            <h2 class="text-3xl font-black tracking-[-.035em] md:text-5xl">Clip Rendering Lifecycle</h2>
+          </div>
+          <div class="border-t border-ink p-6 font-mono text-xs md:w-72 md:border-l md:border-t-0">
+            <div class="text-moss">FILES</div>
+            <div class="file mt-2 space-y-1">
+              <div>jobs.ts · helper.ts</div>
+              <div>encoder-container.ts</div>
+              <div>db.ts · routes.ts</div>
+              <div>test/api.test.ts</div>
+            </div>
+          </div>
+        </div>
+        <div class="rule"></div>
+        <div class="grid lg:grid-cols-[1fr_1.1fr]">
+          <div class="space-y-6 p-6 md:p-8">
+            <div>
+              <div class="font-mono text-[10px] uppercase tracking-[.2em] text-ember">Problem</div>
+              <ul class="mt-3 space-y-2 text-sm leading-6">
+                <li>Legal transitions live across jobs, SQL, and adapters.</li>
+                <li>Reads trigger recovery and stale-state mutation.</li>
+                <li>Two renderers advance one Clip lifecycle.</li>
+                <li>Integration tests arrange internal database states.</li>
+              </ul>
+            </div>
+            <div>
+              <div class="font-mono text-[10px] uppercase tracking-[.2em] text-moss">Deepening direction</div>
+              <div class="mt-3 border-l-4 border-moss pl-4 text-lg font-semibold leading-7">One module owns legal transitions, ambiguous outcomes, helper fallback, cleanup policy, and terminal recovery.</div>
+            </div>
+            <div class="flex flex-wrap gap-2 text-xs font-semibold">
+              <span class="bg-fog px-3 py-2">Transition locality</span>
+              <span class="bg-fog px-3 py-2">Concurrency confidence</span>
+              <span class="bg-fog px-3 py-2">Compact state tests</span>
+              <span class="bg-fog px-3 py-2">Two-adapter leverage</span>
+            </div>
+          </div>
+          <div class="border-t border-ink bg-paper p-6 lg:border-l lg:border-t-0 md:p-8">
+            <div class="grid grid-cols-[1fr_auto_1.2fr_auto_1fr] items-center gap-2 text-center text-xs font-bold">
+              <div class="border border-ink bg-white px-2 py-5">Cloudflare<br/>encoder</div>
+              <div>→</div>
+              <div class="border-2 border-ink bg-ink px-2 py-8 text-paper">DEEP<br/>LIFECYCLE<br/>MODULE</div>
+              <div>←</div>
+              <div class="border border-ink bg-white px-2 py-5">Residential<br/>helper</div>
+            </div>
+            <div class="mt-6 grid grid-cols-3 gap-px bg-ink text-center text-[11px] font-semibold">
+              <div class="bg-acid px-2 py-3">Persistence adapter</div>
+              <div class="bg-acid px-2 py-3">Artifact adapter</div>
+              <div class="bg-acid px-2 py-3">Recovery clock</div>
+            </div>
+            <div class="mt-6 border-t border-ink pt-4 text-sm font-semibold"><span class="font-mono text-[10px] uppercase tracking-[.2em] text-ember">Sequence</span><br/>After WebMCP submission path stabilizes.</div>
+          </div>
+        </div>
+      </article>
+
+      <article id="video-context" class="candidate overflow-hidden border border-ink bg-white shadow-card">
+        <div class="grid md:grid-cols-[9rem_1fr_auto]">
+          <div class="flex items-center justify-center bg-moss p-6 text-5xl font-black text-white">03</div>
+          <div class="p-6 md:p-8">
+            <div class="mb-3 flex flex-wrap gap-2 font-mono text-[10px] uppercase tracking-[.18em]">
+              <span class="bg-acid px-2 py-1">Strong</span>
+              <span class="border border-ink px-2 py-1">ports &amp; adapters</span>
+            </div>
+            <h2 class="text-3xl font-black tracking-[-.035em] md:text-5xl">Video Clipping Context</h2>
+          </div>
+          <div class="border-t border-ink p-6 font-mono text-xs md:w-72 md:border-l md:border-t-0">
+            <div class="text-moss">FILES</div>
+            <div class="file mt-2 space-y-1">
+              <div>video-clip-agent.ts</div>
+              <div>video-context.ts</div>
+              <div>db.ts · encoder-pool.ts</div>
+              <div>transcript-search.ts</div>
+            </div>
+          </div>
+        </div>
+        <div class="rule"></div>
+        <div class="grid lg:grid-cols-[1fr_1.25fr]">
+          <div class="space-y-6 p-6 md:p-8">
+            <div>
+              <div class="font-mono text-[10px] uppercase tracking-[.2em] text-ember">Problem</div>
+              <ul class="mt-3 space-y-2 text-sm leading-6">
+                <li>Domain work lives inside the Think adapter.</li>
+                <li>Context assembly also repairs metadata.</li>
+                <li>Retry claiming and scheduling leak provider-side.</li>
+                <li>Tests name domain behavior after the provider.</li>
+              </ul>
+            </div>
+            <div>
+              <div class="font-mono text-[10px] uppercase tracking-[.2em] text-moss">Deepening direction</div>
+              <div class="mt-3 border-l-4 border-moss pl-4 text-lg font-semibold leading-7">One module owns authoritative Video context assembly and refresh behavior; adapters project it.</div>
+            </div>
+            <div class="flex flex-wrap gap-2 text-xs font-semibold">
+              <span class="bg-fog px-3 py-2">Authoritative context</span>
+              <span class="bg-fog px-3 py-2">Shared retry semantics</span>
+              <span class="bg-fog px-3 py-2">Direct domain tests</span>
+              <span class="bg-fog px-3 py-2">WebMCP reuse</span>
+            </div>
+          </div>
+          <div class="border-t border-ink bg-paper p-4 lg:border-l lg:border-t-0 md:p-8">
+            <div class="mermaid">
+flowchart TB
+  subgraph Now[Current seam]
+    A[Think adapter] --> D[DB lookup]
+    A --> M[Metadata repair]
+    A --> R[Transcript retry]
+    A --> O[Overlap projection]
+  end
+  subgraph After[Deepened seam]
+    T[Think] --> C[Video Clipping Context]
+    W[WebMCP] --> C
+    C --> P[Persistence + media ports]
+  end
+  classDef deep fill:#15231f,color:#f4f0e7,stroke:#15231f,stroke-width:2px;
+  class C deep;
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article id="transcript-discovery" class="candidate overflow-hidden border border-ink bg-white shadow-card">
+        <div class="grid md:grid-cols-[9rem_1fr_auto]">
+          <div class="flex items-center justify-center bg-fog p-6 text-5xl font-black">04</div>
+          <div class="p-6 md:p-8">
+            <div class="mb-3 flex flex-wrap gap-2 font-mono text-[10px] uppercase tracking-[.18em]">
+              <span class="border border-ink px-2 py-1">Worth exploring</span>
+              <span class="border border-ink px-2 py-1">ports &amp; adapters</span>
+            </div>
+            <h2 class="text-3xl font-black tracking-[-.035em] md:text-5xl">Transcript Discovery</h2>
+          </div>
+          <div class="border-t border-ink p-6 font-mono text-xs md:w-72 md:border-l md:border-t-0">
+            <div class="text-moss">FILES</div>
+            <div class="file mt-2 space-y-1">
+              <div>transcript-search.ts</div>
+              <div>semantic-transcript.ts</div>
+              <div>transcript-store.ts</div>
+              <div>routes.ts · video-clip-agent.ts</div>
+              <div>TranscriptPanel.tsx</div>
+            </div>
+          </div>
+        </div>
+        <div class="rule"></div>
+        <div class="grid lg:grid-cols-[1fr_1.1fr]">
+          <div class="space-y-6 p-6 md:p-8">
+            <div>
+              <div class="font-mono text-[10px] uppercase tracking-[.2em] text-ember">Problem</div>
+              <ul class="mt-3 space-y-2 text-sm leading-6">
+                <li>HTTP and Think validate the same constraints twice.</li>
+                <li>Preparation states repeat across callers.</li>
+                <li>WebMCP would become a third validator.</li>
+                <li>Server and browser represent blocks separately.</li>
+              </ul>
+            </div>
+            <div>
+              <div class="font-mono text-[10px] uppercase tracking-[.2em] text-moss">Deepening direction</div>
+              <div class="mt-3 border-l-4 border-moss pl-4 text-lg font-semibold leading-7">One caller-facing module normalizes preparation, constraints, and grounded results while preserving deep search implementations.</div>
+            </div>
+            <div class="flex flex-wrap gap-2 text-xs font-semibold">
+              <span class="bg-fog px-3 py-2">One constraint source</span>
+              <span class="bg-fog px-3 py-2">Grounded result shape</span>
+              <span class="bg-fog px-3 py-2">Shared failure semantics</span>
+              <span class="bg-fog px-3 py-2">Adapter leverage</span>
+            </div>
+          </div>
+          <div class="border-t border-ink bg-paper p-6 lg:border-l lg:border-t-0 md:p-8">
+            <div class="grid gap-3 sm:grid-cols-3">
+              <div class="border border-ink bg-white p-4 text-center text-sm font-bold">HTTP<br/><span class="font-mono text-[10px] font-normal">adapter</span></div>
+              <div class="border border-ink bg-white p-4 text-center text-sm font-bold">Think<br/><span class="font-mono text-[10px] font-normal">adapter</span></div>
+              <div class="border border-ink bg-white p-4 text-center text-sm font-bold">WebMCP<br/><span class="font-mono text-[10px] font-normal">adapter</span></div>
+            </div>
+            <div class="mx-auto h-8 w-px bg-ink"></div>
+            <div class="border-2 border-ink bg-ink p-5 text-center font-black text-paper">DEEP DISCOVERY MODULE</div>
+            <div class="mx-auto h-8 w-px bg-ink"></div>
+            <div class="grid grid-cols-2 gap-3 text-center text-xs font-semibold">
+              <div class="bg-acid p-3">Exact implementation</div>
+              <div class="bg-acid p-3">Semantic implementation</div>
+            </div>
+            <div class="mt-5 text-xs font-semibold text-ember">Risk: a combined interface can become wide.</div>
+          </div>
+        </div>
+      </article>
+
+      <article id="active-workspace" class="candidate overflow-hidden border border-ink bg-white shadow-card">
+        <div class="grid md:grid-cols-[9rem_1fr_auto]">
+          <div class="flex items-center justify-center bg-fog p-6 text-5xl font-black">05</div>
+          <div class="p-6 md:p-8">
+            <div class="mb-3 flex flex-wrap gap-2 font-mono text-[10px] uppercase tracking-[.18em]">
+              <span class="border border-ink px-2 py-1">Worth exploring</span>
+              <span class="border border-ink px-2 py-1">local-substitutable</span>
+            </div>
+            <h2 class="text-3xl font-black tracking-[-.035em] md:text-5xl">Active Video Workspace</h2>
+          </div>
+          <div class="border-t border-ink p-6 font-mono text-xs md:w-72 md:border-l md:border-t-0">
+            <div class="text-moss">FILES</div>
+            <div class="file mt-2 space-y-1">
+              <div>CreatorPage.tsx</div>
+              <div>CreatorForm.tsx</div>
+              <div>VideoAgentChat.tsx</div>
+              <div>TranscriptPanel.tsx</div>
+              <div>queries.ts · api.ts</div>
+            </div>
+          </div>
+        </div>
+        <div class="rule"></div>
+        <div class="grid lg:grid-cols-[1fr_1.1fr]">
+          <div class="space-y-6 p-6 md:p-8">
+            <div>
+              <div class="font-mono text-[10px] uppercase tracking-[.2em] text-ember">Problem</div>
+              <ul class="mt-3 space-y-2 text-sm leading-6">
+                <li>Page and form read the active Video independently.</li>
+                <li>Activation races use local refs and effects.</li>
+                <li>URL, query, readiness, and trim state cross callbacks.</li>
+                <li>WebMCP open-video behavior needs the same knowledge.</li>
+              </ul>
+            </div>
+            <div>
+              <div class="font-mono text-[10px] uppercase tracking-[.2em] text-moss">Deepening direction</div>
+              <div class="mt-3 border-l-4 border-moss pl-4 text-lg font-semibold leading-7">One browser module owns choosing, opening, loading, and exposing the active Video workspace.</div>
+            </div>
+            <div class="flex flex-wrap gap-2 text-xs font-semibold">
+              <span class="bg-fog px-3 py-2">Transition locality</span>
+              <span class="bg-fog px-3 py-2">Race-focused tests</span>
+              <span class="bg-fog px-3 py-2">Shared active state</span>
+              <span class="bg-fog px-3 py-2">Fewer callback chains</span>
+            </div>
+          </div>
+          <div class="border-t border-ink bg-paper p-6 lg:border-l lg:border-t-0 md:p-8">
+            <div class="flex flex-col items-center gap-3 text-center text-xs font-bold">
+              <div class="grid w-full grid-cols-3 gap-2">
+                <div class="border border-ink bg-white p-3">Creator</div>
+                <div class="border border-ink bg-white p-3">Think</div>
+                <div class="border border-ink bg-white p-3">WebMCP</div>
+              </div>
+              <div class="text-2xl">↓</div>
+              <div class="w-full border-2 border-ink bg-ink p-6 text-base text-paper">ACTIVE VIDEO WORKSPACE</div>
+              <div class="text-2xl">↓</div>
+              <div class="grid w-full grid-cols-3 gap-2">
+                <div class="bg-acid p-3">Router</div>
+                <div class="bg-acid p-3">Query cache</div>
+                <div class="bg-acid p-3">HTTP client</div>
+              </div>
+            </div>
+            <div class="mt-5 text-xs font-semibold text-ember">Risk: shallow if it only wraps React state.</div>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <section class="mt-10 border border-ink bg-ink p-6 text-paper md:p-8">
+      <div class="font-mono text-[10px] uppercase tracking-[.22em] text-acid">Protected depth · do not split by line count</div>
+      <div class="mt-5 grid gap-px bg-paper/30 md:grid-cols-3">
+        <div class="bg-ink p-5"><div class="text-xl font-black">routes.ts</div><div class="mt-2 text-sm text-paper/70">One HTTP adapter interface.</div></div>
+        <div class="bg-ink p-5"><div class="text-xl font-black">encoder-container.ts</div><div class="mt-2 text-sm text-paper/70">Small fetch interface, broad implementation.</div></div>
+        <div class="bg-ink p-5"><div class="text-xl font-black">semantic-transcript.ts</div><div class="mt-2 text-sm text-paper/70">Grounding hidden behind one operation.</div></div>
+      </div>
+      <div class="mt-5 grid gap-px bg-paper/30 md:grid-cols-3">
+        <div class="bg-ink p-5"><div class="text-xl font-black">transcript-search.ts</div><div class="mt-2 text-sm text-paper/70">Deep algorithm; improve its seam.</div></div>
+        <div class="bg-ink p-5"><div class="text-xl font-black">CreatorForm.tsx</div><div class="mt-2 text-sm text-paper/70">Extract workflow, not fragments.</div></div>
+        <div class="bg-ink p-5"><div class="text-xl font-black">db.ts</div><div class="mt-2 text-sm text-paper/70">Keep SQL locality; narrow callers.</div></div>
+      </div>
+    </section>
+
+    <footer class="mt-10 border-y border-ink bg-acid px-6 py-8 md:flex md:items-center md:justify-between">
+      <div class="font-mono text-[10px] uppercase tracking-[.22em]">Next architecture grill</div>
+      <div class="mt-3 max-w-4xl text-2xl font-black tracking-[-.025em] md:mt-0 md:text-right">Deepen Video Clipping Context so Think and WebMCP share one authoritative view of the active Video.</div>
+    </footer>
+  </main>
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: "base",
+      themeVariables: {
+        fontFamily: "Inter, ui-sans-serif, system-ui, sans-serif",
+        primaryColor: "#f4f0e7",
+        primaryTextColor: "#15231f",
+        primaryBorderColor: "#15231f",
+        lineColor: "#496957",
+        secondaryColor: "#d8ff70",
+        tertiaryColor: "#ffffff",
+        clusterBkg: "#ffffff",
+        clusterBorder: "#15231f"
+      },
+      flowchart: { curve: "basis", htmlLabels: true }
+    });
+  </script>
+</body>
+</html>

@@ -6,6 +6,9 @@ export function useNativeVideoPlayer(sourceUrl: string | null) {
   const [duration, setDuration] = useState(0);
   const [currentTime, setCurrentTime] = useState(0);
   const [error, setError] = useState(false);
+  const [mediaStateSourceUrl, setMediaStateSourceUrl] = useState<string | null>(
+    null,
+  );
 
   useEffect(() => {
     const video = videoRef.current;
@@ -14,6 +17,7 @@ export function useNativeVideoPlayer(sourceUrl: string | null) {
       setDuration(0);
       setCurrentTime(0);
       setError(false);
+      setMediaStateSourceUrl(null);
       return;
     }
 
@@ -22,6 +26,7 @@ export function useNativeVideoPlayer(sourceUrl: string | null) {
     const handleLoadedMetadata = () => {
       if (cancelled) return;
       const nextDuration = Number.isFinite(video.duration) ? video.duration : 0;
+      setMediaStateSourceUrl(sourceUrl);
       setDuration(nextDuration);
       setReady(nextDuration > 0);
     };
@@ -36,6 +41,7 @@ export function useNativeVideoPlayer(sourceUrl: string | null) {
       if (!cancelled) {
         setReady(false);
         setError(true);
+        setMediaStateSourceUrl(sourceUrl);
       }
     };
 
@@ -43,6 +49,7 @@ export function useNativeVideoPlayer(sourceUrl: string | null) {
     setDuration(0);
     setCurrentTime(0);
     setError(false);
+    setMediaStateSourceUrl(null);
     video.src = sourceUrl;
     video.load();
 
@@ -68,12 +75,16 @@ export function useNativeVideoPlayer(sourceUrl: string | null) {
     setCurrentTime(seconds);
   };
 
+  const sourceIsCurrent =
+    sourceUrl !== null && mediaStateSourceUrl === sourceUrl;
+
   return {
     videoRef,
-    ready,
-    duration,
-    currentTime,
-    error,
+    ready: sourceIsCurrent && ready,
+    duration: sourceIsCurrent ? duration : 0,
+    currentTime: sourceIsCurrent ? currentTime : 0,
+    error: sourceIsCurrent && error,
+    mediaStateSourceUrl,
     seekTo,
   };
 }

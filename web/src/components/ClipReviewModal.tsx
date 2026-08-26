@@ -6,11 +6,15 @@ import {
   type CSSProperties,
 } from "react";
 import { sourceVideoUploadUrl } from "../api";
+import type {
+  ClipProposalInput,
+  ClipProposalReview,
+} from "../clip-proposal-review";
+import { useClipProposalReview } from "../hooks/useClipProposalReview";
 import { useYoutubePlayer } from "../hooks/useYoutubePlayer";
 import {
   MAX_CLIP_LENGTH_SECONDS,
   MIN_TRIM_GAP_SECONDS,
-  type ClipQuality,
   type ClipSource,
 } from "../types";
 import { extractYoutubeVideoId, formatTimestamp } from "../youtube";
@@ -18,38 +22,12 @@ import { rangesOverlap, type ExistingClipRange } from "../timeline";
 import { ModalDialog } from "./ModalDialog";
 import { ExistingClipRail } from "./TrimSlider";
 
-export interface ManualClipInput {
-  title: string;
-  startSeconds: number;
-  endSeconds: number;
-  caption?: string;
-  quality?: ClipQuality;
-}
-
-export interface PendingClipApproval {
-  approvalId: string;
-  toolCallId: string;
-  resolution: "approval" | "client";
-  input: ManualClipInput;
-}
-
 interface ClipReviewModalProps {
+  review: ClipProposalReview;
   videoId: string;
   source?: ClipSource;
   retainedSourceReady?: boolean;
-  approvals: PendingClipApproval[];
-  activeIndex: number;
-  decisions: Readonly<Record<string, boolean>>;
-  inputs: Readonly<Record<string, ManualClipInput>>;
-  submitting: boolean;
-  submitError: string | null;
-  onActiveIndexChange: (index: number) => void;
-  onInputChange: (approvalId: string, input: ManualClipInput) => void;
-  onDecision: (approvalId: string, approved: boolean) => void;
-  onSubmit: () => void;
-  onApproveAll: () => void;
-  onRejectAll: () => void;
-  onDismiss: () => void;
+  onClipCreated: () => void;
   existingClips?: ExistingClipRange[];
 }
 
@@ -64,7 +42,7 @@ function YouTubeClipPreview({
   onDurationChange,
 }: {
   youtubeId: string;
-  input: ManualClipInput;
+  input: ClipProposalInput;
   onDurationChange: (duration: number) => void;
 }) {
   const {
@@ -118,7 +96,7 @@ function ClipSourcePreview({
   videoId: string;
   source?: ClipSource;
   retainedSourceReady: boolean;
-  input: ManualClipInput;
+  input: ClipProposalInput;
   onDurationChange: (duration: number) => void;
 }) {
   if (!source) {
@@ -163,7 +141,7 @@ function UploadClipPreview({
   onDurationChange,
 }: {
   videoId: string;
-  input: ManualClipInput;
+  input: ClipProposalInput;
   onDurationChange: (duration: number) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -207,11 +185,11 @@ function ClipRangeEditor({
   onChange,
 }: {
   approvalId: string;
-  originalInput: ManualClipInput;
-  input: ManualClipInput;
+  originalInput: ClipProposalInput;
+  input: ClipProposalInput;
   sourceDuration: number;
   existingClips: ExistingClipRange[];
-  onChange: (input: ManualClipInput) => void;
+  onChange: (input: ClipProposalInput) => void;
 }) {
   const window = useMemo(() => {
     const padding = 30;
@@ -308,65 +286,54 @@ function ClipRangeEditor({
 }
 
 export function ClipReviewModal({
+  review,
   videoId,
   source,
   retainedSourceReady = false,
-  approvals,
-  activeIndex,
-  decisions,
-  inputs,
-  submitting,
-  submitError,
-  onActiveIndexChange,
-  onInputChange,
-  onDecision,
-  onSubmit,
-  onApproveAll,
-  onRejectAll,
-  onDismiss,
+  onClipCreated,
   existingClips = [],
 }: ClipReviewModalProps) {
+  const state = useClipProposalReview(review);
   const [sourceDuration, setSourceDuration] = useState(0);
   const [hasNavigated, setHasNavigated] = useState(false);
-  const approval = approvals[activeIndex];
+  const approval = state.items[state.activeIndex];
   if (!approval) return null;
 
-  const input = inputs[approval.approvalId] ?? approval.input;
+  const input = approval.input;
   const duration = Math.max(0, input.endSeconds - input.startSeconds);
-  const reviewedCount = approvals.filter((item) =>
-    Object.hasOwn(decisions, item.approvalId),
-  ).length;
-  const approvedCount = approvals.filter(
-    (item) => decisions[item.approvalId] === true,
-  ).length;
-  const allReviewed = reviewedCount === approvals.length;
-  const currentDecision = Object.hasOwn(decisions, approval.approvalId)
-    ? decisions[approval.approvalId]
-    : null;
+  const currentDecision = approval.decision;
 
   const decide = (approved: boolean) => {
-    onDecision(approval.approvalId, approved);
-    if (activeIndex < approvals.length - 1) {
+    review.dispatch({
+      type: "decide",
+      proposalId: approval.proposalId,
+      approved,
+    });
+    if (state.activeIndex < state.items.length - 1) {
       setHasNavigated(true);
-      onActiveIndexChange(activeIndex + 1);
+      review.dispatch({ type: "navigate", index: state.activeIndex + 1 });
     }
   };
   const moveTo = (index: number) => {
     setHasNavigated(true);
-    onActiveIndexChange(index);
+    review.dispatch({ type: "navigate", index });
+  };
+  const finishReview = async () => {
+    const result = await review.finish();
+    if (result.created.length > 0) onClipCreated();
   };
 
   return (
     <ModalDialog
       labelledBy="clip-review-title"
       className="clip-review-modal"
-      onDismiss={onDismiss}
+      onDismiss={() => review.dispatch({ type: "dismiss" })}
     >
       <header className="modal-header clip-review-header">
         <div>
           <h2 id="clip-review-title">Review clips</h2>
           <p
-            key={`progress-${approval.approvalId}`}
+            key={`progress-${approval.proposalId}`}
             className={
               hasNavigated
                 ? "clip-review-progress clip-review-progress-advance"
@@ -374,14 +341,14 @@ export function ClipReviewModal({
             }
             aria-live="polite"
           >
-            <strong>{activeIndex + 1} of {approvals.length}</strong>
+            <strong>{state.activeIndex + 1} of {state.items.length}</strong>
           </p>
         </div>
         <button
           type="button"
           className="btn-icon"
           aria-label="Close clip review"
-          onClick={onDismiss}
+          onClick={() => review.dispatch({ type: "dismiss" })}
         >
           ×
         </button>
@@ -399,7 +366,7 @@ export function ClipReviewModal({
         </div>
 
         <div
-          key={`details-${approval.approvalId}`}
+          key={`details-${approval.proposalId}`}
           className={
             hasNavigated
               ? "clip-review-details clip-review-details-advance"
@@ -407,13 +374,17 @@ export function ClipReviewModal({
           }
         >
           <ClipRangeEditor
-            approvalId={approval.approvalId}
-            originalInput={approval.input}
+            approvalId={approval.proposalId}
+            originalInput={approval.originalInput}
             input={input}
             sourceDuration={sourceDuration}
             existingClips={existingClips}
             onChange={(nextInput) =>
-              onInputChange(approval.approvalId, nextInput)
+              review.dispatch({
+                type: "edit",
+                proposalId: approval.proposalId,
+                input: nextInput,
+              })
             }
           />
           <div className="clip-review-meta">
@@ -431,12 +402,17 @@ export function ClipReviewModal({
               {input.caption}
             </p>
           ) : null}
+          {approval.error ? (
+            <div className="clip-review-error" role="alert">
+              <strong>{input.title}</strong>: {approval.error}
+            </div>
+          ) : null}
         </div>
       </div>
 
-      {submitError ? (
+      {state.submitError ? (
         <div className="clip-review-error" role="alert">
-          {submitError}
+          {state.submitError}
         </div>
       ) : null}
 
@@ -444,18 +420,20 @@ export function ClipReviewModal({
         <button
           type="button"
           className="btn-ghost"
-          disabled={submitting}
+          disabled={state.submitting}
           onClick={() => decide(false)}
         >
-          {activeIndex < approvals.length - 1 ? "Reject and next" : "Reject clip"}
+          {state.activeIndex < state.items.length - 1
+            ? "Reject and next"
+            : "Reject clip"}
         </button>
         <button
           type="button"
           className="btn-primary"
-          disabled={submitting}
+          disabled={state.submitting}
           onClick={() => decide(true)}
         >
-          {activeIndex < approvals.length - 1
+          {state.activeIndex < state.items.length - 1
             ? "Approve and next"
             : "Approve clip"}
         </button>
@@ -466,50 +444,58 @@ export function ClipReviewModal({
           <button
             type="button"
             className="btn-ghost"
-            disabled={submitting || activeIndex === 0}
-            onClick={() => moveTo(activeIndex - 1)}
+            disabled={state.submitting || state.activeIndex === 0}
+            onClick={() => moveTo(state.activeIndex - 1)}
           >
             Previous clip
           </button>
           <button
             type="button"
             className="btn-ghost"
-            disabled={submitting || activeIndex === approvals.length - 1}
-            onClick={() => moveTo(activeIndex + 1)}
+            disabled={
+              state.submitting || state.activeIndex === state.items.length - 1
+            }
+            onClick={() => moveTo(state.activeIndex + 1)}
           >
             Next clip
           </button>
         </div>
         <div className="clip-review-bulk-actions">
-          <span>{reviewedCount} of {approvals.length} reviewed</span>
+          <span>{state.reviewedCount} of {state.items.length} reviewed</span>
           <button
             type="button"
             className="btn-ghost"
-            disabled={submitting}
-            onClick={onRejectAll}
+            disabled={state.submitting}
+            onClick={() =>
+              review.dispatch({ type: "decide-all", approved: false })
+            }
           >
             Reject all
           </button>
           <button
             type="button"
             className="btn-ghost"
-            disabled={submitting}
-            onClick={onApproveAll}
+            disabled={state.submitting}
+            onClick={() =>
+              review.dispatch({ type: "decide-all", approved: true })
+            }
           >
             Approve all
           </button>
-          {allReviewed ? (
+          {state.allReviewed ? (
             <button
               type="button"
               className="btn-primary"
-              disabled={submitting}
-              onClick={onSubmit}
+              disabled={state.submitting}
+              onClick={() => void finishReview()}
             >
-              {submitting
+              {state.submitting
                 ? "Creating…"
-                : approvedCount === 0
+                : state.approvedCount === 0
                 ? "Finish review"
-                : `Create ${approvedCount} approved clip${approvedCount === 1 ? "" : "s"}`}
+                : `Create ${state.approvedCount} approved clip${
+                    state.approvedCount === 1 ? "" : "s"
+                  }`}
             </button>
           ) : null}
         </div>

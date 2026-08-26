@@ -12,6 +12,10 @@ _Avoid_: Project, folder, source asset
 A rendered excerpt associated with exactly one video. Deleting a clip does not affect its video or sibling clips.
 _Avoid_: Video, project output
 
+**Clip Proposal**:
+An agent-suggested excerpt awaiting explicit user review. A clip proposal is not a clip and may be edited or rejected before any clip is created.
+_Avoid_: Pending clip, draft clip
+
 **Archived Video**:
 A video hidden from the default library view while its original and clips remain retained and reusable.
 _Avoid_: Closed project, inactive video
