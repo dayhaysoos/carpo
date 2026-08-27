@@ -2,7 +2,7 @@ import type { Env } from "./env";
 
 const EVIDENCE_PATH_PREFIX = "/api/review/evidence/";
 const EVIDENCE_KEY_PATTERN =
-  /^pull-requests\/[1-9][0-9]{0,9}\/(?:[0-9a-f]{40}|[0-9a-f]{64})\/executions\/(?:actions-[1-9][0-9]{0,19}-[1-9][0-9]{0,2}|manual-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8})\/(?:create|library|archived|failure)\.png$/;
+  /^pull-requests\/[1-9][0-9]{0,9}\/(?:[0-9a-f]{40}|[0-9a-f]{64})\/executions\/(?:actions-[1-9][0-9]{0,19}-[1-9][0-9]{0,2}|manual-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8})\/(?:(?:before-|after-)?(?:create|library|archived)|failure|agentic-(?:0[1-9]|1[0-2]|failure))\.png$/;
 
 type ReviewEvidenceObject = Pick<
   R2Object,

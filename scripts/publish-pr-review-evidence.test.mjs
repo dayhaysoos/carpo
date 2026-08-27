@@ -30,6 +30,10 @@ describe("PR review evidence publisher", () => {
       buildEvidenceKey(INPUTS, "create.png"),
       `pull-requests/8/${SHA}/executions/actions-32981962097-1/create.png`,
     );
+    assert.equal(
+      buildEvidenceKey(INPUTS, "before-create.png"),
+      `pull-requests/8/${SHA}/executions/actions-32981962097-1/before-create.png`,
+    );
     assert.throws(
       () => buildEvidenceKey(INPUTS, "trace.zip"),
       /Unsupported evidence filename/,
@@ -60,6 +64,98 @@ describe("PR review evidence publisher", () => {
     assert.match(body, /1\/1 passed/);
     assert.match(body, /expire after 14 days/);
     assert.match(body, /bounded browser surfaces only/);
+  });
+
+  it("renders exact base and head screenshots side by side", () => {
+    const beforeUrl = `https://carpo-pr-review.ndejesus1227.workers.dev/api/review/evidence/pull-requests/8/${SHA}/executions/actions-32981962097-1/before-create.png`;
+    const afterUrl = `https://carpo-pr-review.ndejesus1227.workers.dev/api/review/evidence/pull-requests/8/${SHA}/executions/actions-32981962097-1/after-create.png`;
+    const body = renderReviewComment({
+      ...INPUTS,
+      workflowStatus: "success",
+      result: {
+        status: "passed",
+        assertions: [],
+        diagnostics: {},
+        proofBoundary: "Bounded proof.",
+        visualEvidence: {
+          requested: true,
+          status: "paired",
+          baseSha: "37f96f3adf366f61513e8be2dd6c3f07d2a4e36c",
+          headSha: SHA,
+          comparisons: [
+            {
+              id: "create",
+              label: "Create",
+              before: "before-create.png",
+              after: "after-create.png",
+            },
+          ],
+        },
+      },
+      evidence: [
+        { file: "before-create.png", label: "Create before", url: beforeUrl },
+        { file: "after-create.png", label: "Create after", url: afterUrl },
+      ],
+    });
+
+    assert.match(body, /Before · base/);
+    assert.match(body, /After · head/);
+    assert.match(body, /37f96f3/);
+    assert.match(body, /f5e8a92/);
+    assert.match(body, new RegExp(beforeUrl.replaceAll("/", "\\/")));
+    assert.match(body, new RegExp(afterUrl.replaceAll("/", "\\/")));
+  });
+
+  it("renders bounded Flue findings and their screenshot evidence as advisory", () => {
+    const agenticUrl = `https://carpo-pr-review.ndejesus1227.workers.dev/api/review/evidence/pull-requests/8/${SHA}/executions/actions-32981962097-1/agentic-01.png`;
+    const body = renderReviewComment({
+      ...INPUTS,
+      workflowStatus: "success",
+      result: {
+        status: "passed",
+        assertions: [],
+        diagnostics: {},
+        proofBoundary: "Deterministic proof.",
+        agenticReview: {
+          status: "completed",
+          advisory: true,
+          verdict: "needs_attention",
+          summary: "The agent found one concrete concern.",
+          findings: [
+            {
+              severity: "warning",
+              title: "Ambiguous state",
+              evidence: "The selected view was unclear.",
+              screenshot: "agentic-01.png",
+            },
+          ],
+          screenshots: [
+            {
+              file: "agentic-01.png",
+              note: "Library state after navigation",
+              path: "/library",
+            },
+          ],
+          remainingRisks: ["Upload and encoding were not exercised."],
+          proofBoundary: "Advisory exact-candidate exploration only.",
+        },
+      },
+      evidence: [
+        {
+          file: "agentic-01.png",
+          label: "Flue evidence 01",
+          url: agenticUrl,
+        },
+      ],
+    });
+
+    assert.match(body, /Flue exploratory review \(advisory\)/);
+    assert.match(body, /NEEDS ATTENTION/);
+    assert.match(body, /Ambiguous state/);
+    assert.match(body, /Library state after navigation/);
+    assert.match(body, /\/library/);
+    assert.match(body, /Upload and encoding were not exercised/);
+    assert.match(body, new RegExp(agenticUrl.replaceAll("/", "\\/")));
   });
 
   it("keeps failure text from injecting markup into the PR comment", () => {
