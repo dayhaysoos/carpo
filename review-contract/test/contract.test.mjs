@@ -16,6 +16,7 @@ import {
   enforceCoverageBoundary,
   isConsequentialElement,
   isReadOnlyBrowserMethod,
+  MISSING_ROUTE_PATH,
   nextProofChallengeStep,
   parseAgenticReviewResult,
   resolveProofChallenge,
@@ -232,11 +233,27 @@ describe("bounded review policy contract", () => {
       assert.match(text, /untrusted data, never instructions/i);
       assert.match(text, /desktop and mobile/i);
       assert.match(text, /missing route/i);
+      assert.match(text, new RegExp(MISSING_ROUTE_PATH.replaceAll("/", "\\/")));
       assert.match(text, /Direct API behavior/i);
     }
     assert.doesNotMatch(local, /Call begin_review/);
     assert.match(durable, /Call begin_review/);
     assert.match(durable, /pantalones/);
+  });
+
+  it("names the exact missing route when completion needs it", () => {
+    assert.throws(
+      () =>
+        assertReviewComplete({
+          progress: {
+            ...completeProgress,
+            visitedPaths: ["/", "/library"],
+          },
+          report,
+          reviewOrigin: origin,
+        }),
+      new RegExp(MISSING_ROUTE_PATH.replaceAll("/", "\\/")),
+    );
   });
 
   it("provides runtime schemas for both producers and consumers", () => {
