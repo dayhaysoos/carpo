@@ -16,6 +16,26 @@ _Avoid_: Video, project output
 An agent-suggested excerpt awaiting explicit user review. A clip proposal is not a clip and may be edited or rejected before any clip is created.
 _Avoid_: Pending clip, draft clip
 
+**Source Captions**:
+Timed text acquired with a video that can seed transcript and caption work. Source captions are input material, not a finished clip's caption output.
+_Avoid_: Output captions, closed-caption artifact
+
+**Timed Caption Track**:
+An editable, time-aligned sequence of caption cues associated with a video or clip. It is the shared source for open-caption and closed-caption outputs.
+_Avoid_: Transcript, caption file
+
+**Overlay Text**:
+A single static message displayed throughout a clip without time alignment.
+_Avoid_: Caption, subtitle
+
+**Themed Open Captions**:
+Timed caption text permanently rendered into a clip's picture using a chosen visual presentation. Viewers cannot turn open captions off.
+_Avoid_: TikTok captions, closed captions
+
+**Closed Caption Artifact**:
+A toggleable timed-text output associated with a clip rather than permanently rendered into its picture.
+_Avoid_: Open captions, overlay text
+
 **Archived Video**:
 A video hidden from the default library view while its original and clips remain retained and reusable.
 _Avoid_: Closed project, inactive video

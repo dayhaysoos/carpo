@@ -25,17 +25,36 @@ explicitly deleted.
 
 ## Transcript-aware clipping
 
-Think can search YouTube and uploaded videos for an exact spoken word or phrase.
+Carpo can search YouTube and uploaded videos for an exact spoken word or phrase.
 Carpo uses YouTube subtitles when available, falls back to speech-to-text over
 the retained source, normalizes the timestamped cues once, and retains the
 transcript in R2. Exact searches are case-insensitive and token-based, so `code`
 does not match `decode`.
 
 The editor exposes that same grounded transcript for searching, seeking, and
-selecting a trim range. Think can also find meaning-based moments such as an
+selecting a trim range. An agent can also find meaning-based moments such as an
 argument or explanation. Semantic results must reference real transcript block
 IDs; Carpo derives the proposed timestamps from those blocks before sending them
 through the same adjustable clip-review flow used for manual timestamps.
+
+## Optional intelligence and WebMCP
+
+Carpo's manual UI, built-in Think assistant, and external WebMCP agents are
+clients of the same application capabilities. Think is an optional first-party
+client and has no privileged domain access. Every meaningful Think capability
+must also be available manually and through WebMCP, while Carpo continues to own
+validation, authorization, human review, and recoverable manual correction. See
+[ADR 0002](docs/adr/0002-keep-capabilities-independent-from-intelligence-provider.md)
+and the [WebMCP capability contract](docs/webmcp-capability-contract.md).
+
+## Caption outputs
+
+The current editor can burn one static text overlay into an entire Clip. Carpo's
+caption contract extends this with one editable Timed Caption Track that can
+produce both themed social-video captions permanently rendered into the picture
+and toggleable WebVTT/SubRip closed-caption artifacts for browser and publishing
+workflows such as YouTube. Manual, Think, and WebMCP clients must all be able to
+generate, correct, configure, preview, and export the applicable caption forms.
 
 ## Status
 
