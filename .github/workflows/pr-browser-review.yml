@@ -1,0 +1,79 @@
+name: PR browser review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: write
+
+# V0 deliberately uses one shared review stack. A newer PR supersedes an older
+# run so candidates cannot race through shared D1, R2, Durable Object, or
+# Container state.
+concurrency:
+  group: carpo-pr-review
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.author_association == 'OWNER'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CARPO_PR_REVIEW_AUTH_TOKEN: ${{ secrets.CARPO_PR_REVIEW_AUTH_TOKEN }}
+      REVIEW_URL: ${{ vars.CARPO_PR_REVIEW_URL }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      EXPECTED_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+
+    steps:
+      - name: Check out the exact PR candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Run the backend-neutral exact-candidate review
+        run: >-
+          npm run review:pr --
+          --repository "$GITHUB_REPOSITORY"
+          --pr "$PR_NUMBER"
+          --current-checkout
+          --expected-base-sha "$EXPECTED_BASE_SHA"
+          --expected-head-sha "$EXPECTED_HEAD_SHA"
+          --execution-id "actions-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          --source-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          --review-url "$REVIEW_URL"
+          --output test-output/pr-review
+
+      - name: Publish the review summary
+        if: always()
+        run: |
+          if test -f test-output/pr-review/summary.md; then
+            cat test-output/pr-review/summary.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '%s\n' '## Carpo PR browser review did not produce a summary.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload trace, plan, diagnostics, and R2 manifest
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pr-browser-review-${{ github.event.pull_request.head.sha }}
+          path: test-output/pr-review/
+          if-no-files-found: warn
+          retention-days: 14

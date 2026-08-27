@@ -16,4 +16,8 @@ export interface Env {
   HELPER_TOKEN?: string;
   HELPER_CLAIM_WINDOW_SECONDS?: string;
   YOUTUBE_TITLE_TIMEOUT_MS?: string;
+  PR_REVIEW_AUTH_TOKEN?: string;
+  PR_REVIEW_MODE?: string;
+  PR_REVIEW_EVIDENCE_BUCKET?: R2Bucket;
+  CF_VERSION_METADATA?: WorkerVersionMetadata;
 }

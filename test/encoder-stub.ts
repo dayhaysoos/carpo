@@ -66,6 +66,8 @@ export const STUB_DEFERRED_AMBIGUOUS_FAILURE_UPLOAD_KEY =
 export class EncoderStub extends DurableObject<Env> {
   private lastDispatch: EncoderJobSpec | null = null;
   private dispatchesByJobId = new Map<string, EncoderJobSpec>();
+  private dispatchCompletions = new Map<string, Promise<void>>();
+  private dispatchRegistrationWaiters = new Map<string, Set<() => void>>();
   private jobChain: Promise<void> = Promise.resolve();
   private concurrentRuns = 0;
   private maxConcurrentRuns = 0;
@@ -387,8 +389,39 @@ export class EncoderStub extends DurableObject<Env> {
           { status: 400 },
         );
       }
-      void this.runQueuedDispatch(job as EncoderJobSpec);
+      const encoderJob = job as EncoderJobSpec;
+      const completion = this.runQueuedDispatch(encoderJob);
+      this.dispatchCompletions.set(encoderJob.jobId, completion);
+      const registrationWaiters = this.dispatchRegistrationWaiters.get(
+        encoderJob.jobId,
+      );
+      if (registrationWaiters) {
+        for (const resolve of registrationWaiters) resolve();
+        this.dispatchRegistrationWaiters.delete(encoderJob.jobId);
+      }
+      void completion.catch(() => undefined);
       return new Response(null, { status: 202 });
+    }
+
+    if (url.pathname === "/__carpo/wait-for-dispatch") {
+      const jobId = url.searchParams.get("jobId");
+      if (!jobId || !/^[A-Za-z0-9-]+$/.test(jobId)) {
+        return new Response("jobId query parameter required", { status: 400 });
+      }
+      let completion = this.dispatchCompletions.get(jobId);
+      if (!completion) {
+        await new Promise<void>((resolve) => {
+          const waiters = this.dispatchRegistrationWaiters.get(jobId) ?? new Set();
+          waiters.add(resolve);
+          this.dispatchRegistrationWaiters.set(jobId, waiters);
+        });
+        completion = this.dispatchCompletions.get(jobId);
+      }
+      if (!completion) {
+        return new Response("dispatch registration failed", { status: 500 });
+      }
+      await completion;
+      return new Response(null, { status: 204 });
     }
 
     if (url.pathname === "/__carpo/gif-run") {

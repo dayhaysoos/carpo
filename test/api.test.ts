@@ -91,6 +91,14 @@ async function getEncoderJobEvents(jobId: string): Promise<string[]> {
   return body.events;
 }
 
+async function waitForEncoderDispatch(jobId: string): Promise<void> {
+  const container = env.ENCODER_CONTAINER.getByName(ENCODER_POOL_INSTANCE);
+  const response = await container.fetch(
+    `http://encoder/__carpo/wait-for-dispatch?jobId=${encodeURIComponent(jobId)}`,
+  );
+  expect(response.status).toBe(204);
+}
+
 async function getContainerStartCount(): Promise<number> {
   const container = env.ENCODER_CONTAINER.getByName(ENCODER_POOL_INSTANCE);
   const response = await container.fetch("http://encoder/__carpo/container-starts");
@@ -1427,14 +1435,8 @@ describe("terminal status stickiness", () => {
     const clipId = created.id;
     const keys = outputKeysForClip(clipId);
 
-    let failedRecord: Awaited<ReturnType<typeof getClipById>> = null;
-    for (let attempt = 0; attempt < 40; attempt += 1) {
-      failedRecord = await getClipById(env.DB, clipId);
-      if (failedRecord?.status === "failed") {
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
+    await waitForEncoderDispatch(clipId);
+    const failedRecord = await getClipById(env.DB, clipId);
 
     expect(failedRecord?.status).toBe("failed");
     expect(failedRecord?.failure_mode).toBe("ambiguous");
@@ -1491,14 +1493,8 @@ describe("terminal status stickiness", () => {
     const clipId = created.id;
     const keys = outputKeysForClip(clipId);
 
-    let failedRecord: Awaited<ReturnType<typeof getClipById>> = null;
-    for (let attempt = 0; attempt < 40; attempt += 1) {
-      failedRecord = await getClipById(env.DB, clipId);
-      if (failedRecord?.status === "failed") {
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
+    await waitForEncoderDispatch(clipId);
+    const failedRecord = await getClipById(env.DB, clipId);
 
     expect(failedRecord?.status).toBe("failed");
     expect(failedRecord?.failure_mode).toBe("ambiguous");

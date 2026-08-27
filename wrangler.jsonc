@@ -66,5 +66,72 @@
       "tag": "v3",
       "new_sqlite_classes": ["TranscriptPreparation"]
     }
-  ]
+  ],
+  "env": {
+    // One serialized, full-stack environment for automated PR review. These
+    // bindings intentionally never point at production data.
+    "pr-review": {
+      "name": "carpo-pr-review",
+      "workers_dev": true,
+      "preview_urls": false,
+      "routes": [],
+      "ai": { "binding": "AI", "remote": true },
+      "assets": {
+        "directory": "./public",
+        "binding": "ASSETS",
+        "not_found_handling": "single-page-application",
+        "run_worker_first": true
+      },
+      "version_metadata": { "binding": "CF_VERSION_METADATA" },
+      "secrets": { "required": ["PR_REVIEW_AUTH_TOKEN"] },
+      "vars": {
+        "MAX_CLIP_LENGTH_SECONDS": "60",
+        "R2_PUBLIC_PREFIX": "/artifacts",
+        "PR_REVIEW_MODE": "enabled"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "carpo-pr-review",
+          "database_id": "27981ced-fd12-49ea-9ce8-e71205e3f36e",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "CLIPS_BUCKET",
+          "bucket_name": "carpo-clips-pr-review"
+        },
+        {
+          "binding": "PR_REVIEW_EVIDENCE_BUCKET",
+          "bucket_name": "carpo-pr-review-evidence"
+        }
+      ],
+      "containers": [
+        {
+          "name": "carpo-pr-review-encodercontainer",
+          "class_name": "EncoderContainer",
+          "image": "./container/Dockerfile",
+          "instance_type": "standard-4",
+          "max_instances": 1
+        }
+      ],
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "ENCODER_CONTAINER",
+            "class_name": "EncoderContainer"
+          },
+          {
+            "name": "VideoClipAgent",
+            "class_name": "VideoClipAgent"
+          },
+          {
+            "name": "TRANSCRIPT_PREPARATION",
+            "class_name": "TranscriptPreparation"
+          }
+        ]
+      }
+    }
+  }
 }

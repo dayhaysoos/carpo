@@ -12,6 +12,9 @@ declare module "cloudflare:workers" {
     R2_BUCKET_NAME?: string;
     WORKER_BASE_URL?: string;
     YOUTUBE_TITLE_TIMEOUT_MS?: string;
+    PR_REVIEW_AUTH_TOKEN?: string;
+    PR_REVIEW_MODE?: string;
+    CF_VERSION_METADATA?: WorkerVersionMetadata;
     TEST_MIGRATIONS: import("cloudflare:test").D1Migration[];
   }
 }
