@@ -15,3 +15,6 @@ fixtures/*.png
 __pycache__/
 *.pyc
 .dev.vars
+review-service/.flue-vite/
+review-service/.flue-vite.wrangler.jsonc
+review-service/dist/

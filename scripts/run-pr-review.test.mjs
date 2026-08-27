@@ -4,7 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import {
-  agenticReviewEnabled,
   assembleVisualComparison,
   attachAgenticReview,
   createManualExecutionId,
@@ -73,35 +72,6 @@ describe("backend-neutral PR review runner", () => {
     );
   });
 
-  it("enables Flue by default with explicit command and environment escape hatches", () => {
-    assert.equal(agenticReviewEnabled({}, {}), true);
-    assert.equal(agenticReviewEnabled({ agentic: true }, {}), true);
-    assert.equal(agenticReviewEnabled({ "no-agentic": true }, {}), false);
-    assert.equal(
-      agenticReviewEnabled(
-        { "no-agentic": true },
-        { CARPO_PR_REVIEW_AGENTIC: "true" },
-      ),
-      false,
-    );
-    assert.equal(
-      agenticReviewEnabled({}, { CARPO_PR_REVIEW_AGENTIC: "true" }),
-      true,
-    );
-    assert.equal(
-      agenticReviewEnabled({}, { CARPO_PR_REVIEW_AGENTIC: "false" }),
-      false,
-    );
-    assert.throws(
-      () => agenticReviewEnabled({ agentic: true, "no-agentic": true }, {}),
-      /cannot be used together/,
-    );
-    assert.throws(
-      () => agenticReviewEnabled({}, { CARPO_PR_REVIEW_AGENTIC: "yes" }),
-      /must be true or false/,
-    );
-  });
-
   it("selects only the repository-owned one-time proof challenge path", () => {
     assert.equal(
       selectProofChallenge([
@@ -150,7 +120,12 @@ describe("backend-neutral PR review runner", () => {
         ),
       ]);
 
-      await attachAgenticReview({ outputDir });
+      await attachAgenticReview({
+        outputDir,
+        agenticReview: JSON.parse(
+          await readFile(path.join(outputDir, "agentic-result.json"), "utf8"),
+        ),
+      });
       const result = JSON.parse(
         await readFile(path.join(outputDir, "result.json"), "utf8"),
       );
@@ -193,13 +168,77 @@ describe("backend-neutral PR review runner", () => {
         ),
       ]);
 
-      await attachAgenticReview({ outputDir });
+      await attachAgenticReview({
+        outputDir,
+        agenticReview: JSON.parse(
+          await readFile(path.join(outputDir, "agentic-result.json"), "utf8"),
+        ),
+      });
       const summary = await readFile(path.join(outputDir, "summary.md"), "utf8");
       assert.doesNotMatch(summary, /^# Forged/m);
       assert.doesNotMatch(summary, /!\[forged\]\(/);
       assert.doesNotMatch(summary, /<img src=/);
       assert.match(summary, /\\# Forged heading/);
       assert.match(summary, /&lt;img src=x onerror=alert/);
+    } finally {
+      await rm(outputDir, { recursive: true, force: true });
+    }
+  });
+
+  it("includes sanitized Flue provider diagnostics in the execution summary", async () => {
+    const outputDir = await mkdtemp(path.join(os.tmpdir(), "carpo-agentic-diagnostics-"));
+    try {
+      await Promise.all([
+        writeFile(
+          path.join(outputDir, "result.json"),
+          JSON.stringify({ status: "passed", assertions: [], diagnostics: {} }),
+        ),
+        writeFile(path.join(outputDir, "summary.md"), "## Deterministic PASS\n"),
+        writeFile(
+          path.join(outputDir, "agentic-result.json"),
+          JSON.stringify({
+            schemaVersion: "carpo.pr-browser-review.agentic.v1",
+            status: "failed",
+            advisory: true,
+            verdict: "inconclusive",
+            summary: "The Flue exploratory review did not complete.",
+            failure: "[flue] Agent run failed.",
+            findings: [],
+            providerDiagnostics: {
+              turns: [
+                {
+                  providerId: "cloudflare-workers-ai",
+                  requestedModel: "@cf/meta/llama-4-scout-17b-16e-instruct",
+                  finishReason: "error",
+                  error: {
+                    type: "_OTHER",
+                    message: "Workers AI upstream unavailable.",
+                  },
+                },
+              ],
+              settlement: {
+                outcome: "failed",
+                error: {
+                  type: "operation_failed",
+                  message: "Agent operation failed.",
+                },
+              },
+            },
+            proofBoundary: "Advisory only.",
+          }),
+        ),
+      ]);
+
+      await attachAgenticReview({
+        outputDir,
+        agenticReview: JSON.parse(
+          await readFile(path.join(outputDir, "agentic-result.json"), "utf8"),
+        ),
+      });
+      const summary = await readFile(path.join(outputDir, "summary.md"), "utf8");
+      assert.match(summary, /Failure diagnostics/);
+      assert.match(summary, /Workers AI upstream unavailable/);
+      assert.match(summary, /operation\\_failed/);
     } finally {
       await rm(outputDir, { recursive: true, force: true });
     }

@@ -1,0 +1,36 @@
+{
+  "name": "@carpo/review-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "deploy": "npm run build && wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config vitest.config.ts",
+    "cf-typegen": "wrangler types worker-configuration.d.ts"
+  },
+  "dependencies": {
+    "@carpo/review-contract": "0.1.0",
+    "@flue/runtime": "^2.0.3",
+    "agents": "^0.20.1",
+    "hono": "^4.13.5",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "rrweb-player": "^1.0.0-alpha.4",
+    "valibot": "^1.4.2"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.49.1",
+    "@cloudflare/workers-types": "^5.20260804.1",
+    "@flue/vite": "^2.0.3",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^6.0.1",
+    "typescript": "^5.8.3",
+    "vite": "^8.2.0",
+    "vitest": "^4.1.0",
+    "wrangler": "^4.127.0"
+  }
+}

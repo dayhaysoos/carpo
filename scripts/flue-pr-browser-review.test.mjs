@@ -35,6 +35,10 @@ describe("bounded Flue browser review", () => {
       resolveSafeReviewPath("/?video=8a8dfc12-2917-4331-92db-8ae8a45e7621"),
       "/?video=8a8dfc12-2917-4331-92db-8ae8a45e7621",
     );
+    assert.equal(
+      resolveSafeReviewPath("/__carpo-review-missing"),
+      "/__carpo-review-missing",
+    );
     assert.throws(() => resolveSafeReviewPath("https://attacker.example/"), /same-origin path/);
     assert.throws(() => resolveSafeReviewPath("/api/videos"), /outside the bounded/);
     assert.throws(() => resolveSafeReviewPath("/artifacts/clip.mp4"), /outside the bounded/);
@@ -192,6 +196,37 @@ describe("bounded Flue browser review", () => {
     });
 
     await assert.rejects(() => adapter.fill("e1", "New title"), /route catalog/);
+  });
+
+  it("only exposes host-defined viewport presets", async () => {
+    const sizes = [];
+    const adapter = new BoundedPlaywrightReviewAdapter({
+      page: {
+        async setViewportSize(size) {
+          sizes.push(size);
+        },
+      },
+      contextText: "",
+      diffText: "",
+      outputDir: "unused",
+      diagnostics: {},
+    });
+
+    assert.deepEqual(await adapter.setViewport("desktop"), {
+      preset: "desktop",
+      width: 1440,
+      height: 1000,
+    });
+    assert.deepEqual(await adapter.setViewport("mobile"), {
+      preset: "mobile",
+      width: 390,
+      height: 844,
+    });
+    await assert.rejects(() => adapter.setViewport("custom"), /Unknown review viewport/);
+    assert.deepEqual(sizes, [
+      { width: 1440, height: 1000 },
+      { width: 390, height: 844 },
+    ]);
   });
 
   it("host-enforces the ordered multilingual Title proof and its screenshots", async () => {

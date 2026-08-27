@@ -4,6 +4,26 @@ import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import {
+  ADVISORY_REVIEW_PROOF_BOUNDARY,
+  AGENTIC_REVIEW_SCHEMA_VERSION,
+  appendDiagnosticsFinding,
+  assertProofChallengeEvidence,
+  assertProofChallengeFill,
+  assertReviewComplete,
+  assertReviewElementId,
+  assertSafeReviewClick,
+  assertSafeReviewFill,
+  enforceCoverageBoundary,
+  hasUnsupportedCoverageClaim,
+  isConsequentialElement,
+  isReadOnlyBrowserMethod,
+  MAX_REVIEW_SCREENSHOTS,
+  normalizeEvidenceNote,
+  readBoundedReviewMaterial as readContractReviewMaterial,
+  resolveSafeReviewPath as resolveContractReviewPath,
+  VIEWPORT_PRESETS,
+} from "@carpo/review-contract";
 import { chromium } from "playwright-core";
 import { cloudflareWorkersAIProvider } from "@earendil-works/pi-ai/providers/cloudflare-workers-ai";
 import {
@@ -11,7 +31,6 @@ import {
   runFlueAgenticReview,
 } from "./flue-pr-review-agent.mjs";
 import {
-  browserDiagnosticCount,
   createBrowserDiagnostics,
   observeBrowserDiagnostics,
   readCandidateIdentity,
@@ -23,56 +42,22 @@ import { redactSecrets } from "./pr-browser-review-utils.mjs";
 import { resolveProofChallenge } from "./pr-review-proof-challenges.mjs";
 
 const execFileAsync = promisify(execFile);
-const MAX_SCREENSHOTS = 12;
-const MAX_MATERIAL_CHUNK = 12_000;
-const BLOCKED_PATH_PREFIXES = [
-  "/api",
-  "/artifacts",
-  "/agents",
-  "/auth",
-  "/login",
-  "/logout",
-  "/oauth",
-  "/sign-in",
-  "/signin",
-  "/cdn-cgi",
-];
-const VIDEO_ID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const CONSEQUENTIAL_ACTION =
-  /\b(?:create\s+clip|archive|restore|delete|remove|publish|share|approve|reject|submit|confirm|save\s+changes?)\b/i;
-const COVERAGE_VERB =
-  "(?:tested|verified|validated|exercised|confirmed|completed|passed|succeeded|works?|working)";
-const UNAVAILABLE_COVERAGE =
-  "(?:(?:direct|read-only)\\s+)?api(?:\\s+(?:smoke|checks?|tests?))?|(?:actual\\s+)?upload(?:ing|\\s+flow)?|clip\\s+creat(?:e|ion)|encod(?:e|ing)|media\\s+playback|youtube(?:\\s+reliability)?|production(?:\\s+behavior)?";
-const UNSUPPORTED_COVERAGE_CLAIM = new RegExp(
-  `(?:\\b${COVERAGE_VERB}\\b[^.!?\\n]{0,100}\\b${UNAVAILABLE_COVERAGE}\\b|\\b${UNAVAILABLE_COVERAGE}\\b[^.!?\\n]{0,100}\\b${COVERAGE_VERB}\\b)`,
-  "i",
-);
-const UNSUPPORTED_TESTED_AREA =
-  /\b(?:api|clip\s+creat(?:e|ion)|encoding|media\s+playback|youtube|production)\b/i;
 
-export function isReadOnlyBrowserMethod(method) {
-  return ["GET", "HEAD", "OPTIONS"].includes(String(method).toUpperCase());
-}
+export {
+  enforceCoverageBoundary,
+  hasUnsupportedCoverageClaim,
+  isConsequentialElement,
+  isReadOnlyBrowserMethod,
+  normalizeEvidenceNote,
+};
 
 export function readBoundedReviewMaterial({ source, material, offset }) {
-  if (!Number.isInteger(offset) || offset < 0) {
-    throw new Error("Review material offset must be a non-negative integer");
-  }
-  if (offset > material.length || (material.length > 0 && offset === material.length)) {
-    throw new Error(`Review material offset is outside the frozen ${source}`);
-  }
-  const text = material.slice(offset, offset + MAX_MATERIAL_CHUNK);
-  return {
+  return readContractReviewMaterial({
     source,
+    material,
     offset,
-    totalChars: material.length,
-    nextOffset:
-      offset + text.length < material.length ? offset + text.length : undefined,
-    sha256: sha256(material),
-    text,
-  };
+    digest: sha256(material),
+  });
 }
 
 export function cloudflareInferenceEnv({ model, env, auth, whoami }) {
@@ -138,135 +123,8 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function trimText(value, maxLength) {
-  const text = String(value ?? "").replace(/\s+/g, " ").trim();
-  return text.length <= maxLength ? text : `${text.slice(0, maxLength)}…`;
-}
-
 export function resolveSafeReviewPath(value) {
-  if (typeof value !== "string" || !value.startsWith("/")) {
-    throw new Error("Review navigation requires an absolute same-origin path");
-  }
-  const url = new URL(value, REVIEW_ORIGIN);
-  if (
-    url.origin !== REVIEW_ORIGIN ||
-    url.username ||
-    url.password ||
-    url.hash ||
-    BLOCKED_PATH_PREFIXES.some(
-      (prefix) => url.pathname === prefix || url.pathname.startsWith(`${prefix}/`),
-    )
-  ) {
-    throw new Error("The requested route is outside the bounded user-facing review surface");
-  }
-
-  const entries = [...url.searchParams.entries()];
-  const rootVideoId =
-    url.pathname === "/" && entries.length === 1 && entries[0][0] === "video"
-      ? entries[0][1]
-      : undefined;
-  const libraryView =
-    url.pathname === "/library" &&
-    entries.length === 1 &&
-    entries[0][0] === "view"
-      ? entries[0][1]
-      : undefined;
-  const videoPageMatch = url.pathname.match(/^\/library\/videos\/([^/]+)$/);
-  const allowed =
-    (url.pathname === "/" &&
-      (entries.length === 0 || VIDEO_ID_PATTERN.test(rootVideoId ?? ""))) ||
-    (url.pathname === "/library" &&
-      (entries.length === 0 || libraryView === "archived")) ||
-    (videoPageMatch &&
-      entries.length === 0 &&
-      VIDEO_ID_PATTERN.test(videoPageMatch[1]));
-  if (!allowed) {
-    throw new Error("The requested route is not in the read-only review route catalog");
-  }
-  return `${url.pathname}${url.search}`;
-}
-
-export function isConsequentialElement(element) {
-  const type = String(element?.type ?? "").toLowerCase();
-  const tag = String(element?.tag ?? "").toLowerCase();
-  const role = String(element?.role ?? "").toLowerCase();
-  if (["file", "password", "hidden", "submit", "reset"].includes(type)) {
-    return true;
-  }
-  if ((tag === "button" || role === "button") && role !== "tab") {
-    return true;
-  }
-  return CONSEQUENTIAL_ACTION.test(
-    [element?.name, element?.text, element?.ariaLabel].filter(Boolean).join(" "),
-  );
-}
-
-export function hasUnsupportedCoverageClaim(report) {
-  if (UNSUPPORTED_COVERAGE_CLAIM.test(String(report?.summary ?? ""))) {
-    return true;
-  }
-  if (
-    (report?.testedAreas ?? []).some((area) =>
-      UNSUPPORTED_TESTED_AREA.test(String(area)),
-    )
-  ) {
-    return true;
-  }
-  return (report?.findings ?? []).some((finding) =>
-    UNSUPPORTED_COVERAGE_CLAIM.test(
-      `${String(finding?.title ?? "")} ${String(finding?.evidence ?? "")}`,
-    ),
-  );
-}
-
-export function enforceCoverageBoundary(report) {
-  if (!hasUnsupportedCoverageClaim(report)) return report;
-
-  return {
-    ...report,
-    verdict: "inconclusive",
-    summary:
-      "The bounded browser exploration completed, but the model submitted a coverage claim outside the available evidence. The host omitted that claim.",
-    testedAreas: (report.testedAreas ?? []).filter(
-      (area) => !UNSUPPORTED_TESTED_AREA.test(String(area)),
-    ),
-    findings: [
-      ...(report.findings ?? [])
-        .filter(
-          (finding) =>
-            !UNSUPPORTED_COVERAGE_CLAIM.test(
-              `${String(finding?.title ?? "")} ${String(finding?.evidence ?? "")}`,
-            ),
-        )
-        .slice(0, 19),
-      {
-        severity: "warning",
-        title: "Model coverage claim exceeded browser authority",
-        evidence:
-          "The host removed the unsupported claim and marked this advisory result inconclusive. Deterministic checks remain authoritative.",
-      },
-    ],
-    remainingRisks: [
-      ...(report.remainingRisks ?? [])
-        .filter((risk) => !UNSUPPORTED_COVERAGE_CLAIM.test(String(risk)))
-        .slice(0, 19),
-      "Direct API behavior, upload execution, clip creation, encoding, media playback, YouTube reliability, and production behavior remain unverified.",
-    ],
-  };
-}
-
-export function normalizeEvidenceNote(note) {
-  const bounded = trimText(note, 240);
-  if (
-    hasUnsupportedCoverageClaim({
-      summary: bounded,
-      testedAreas: [],
-      findings: [],
-    })
-  ) {
-    return "The host omitted an unsupported coverage claim from this screenshot note.";
-  }
-  return bounded;
+  return resolveContractReviewPath(value, REVIEW_ORIGIN);
 }
 
 export class BoundedPlaywrightReviewAdapter {
@@ -286,6 +144,8 @@ export class BoundedPlaywrightReviewAdapter {
     this.screenshots = [];
     this.screenshotHashes = new Set();
     this.visitedPaths = new Set();
+    this.navigationStatuses = new Map();
+    this.layoutChecks = new Set();
     this.readSources = new Set();
     this.diagnosticsRead = false;
     this.proofChallenge = resolveProofChallenge(
@@ -361,6 +221,31 @@ export class BoundedPlaywrightReviewAdapter {
         url: window.location.href,
         title: document.title,
         heading: document.querySelector("h1, h2")?.textContent?.trim(),
+        viewport: {
+          width: window.innerWidth,
+          height: window.innerHeight,
+        },
+        layout: {
+          clientWidth: document.documentElement.clientWidth,
+          scrollWidth: document.documentElement.scrollWidth,
+          hasHorizontalOverflow:
+            document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
+          overflowingElements: Array.from(document.querySelectorAll("body *"))
+            .filter((element) => {
+              const rect = element.getBoundingClientRect();
+              return rect.right > document.documentElement.clientWidth + 1 || rect.left < -1;
+            })
+            .slice(0, 12)
+            .map((element) => ({
+              tag: element.tagName.toLowerCase(),
+              id: element.id || undefined,
+              className:
+                typeof element.className === "string"
+                  ? element.className.replace(/\s+/g, " ").trim().slice(0, 160)
+                  : undefined,
+              text: (element.textContent || "").replace(/\s+/g, " ").trim().slice(0, 160),
+            })),
+        },
         visibleText: (document.body?.innerText || "")
           .replace(/\s+/g, " ")
           .trim()
@@ -369,24 +254,40 @@ export class BoundedPlaywrightReviewAdapter {
       };
     });
     this.elements = new Map(state.elements.map((element) => [element.id, element]));
+    for (const [preset, dimensions] of Object.entries(VIEWPORT_PRESETS)) {
+      if (
+        state.viewport.width === dimensions.width &&
+        state.viewport.height === dimensions.height
+      ) {
+        this.layoutChecks.add(preset);
+      }
+    }
     return state;
   }
 
   async navigate(requestedPath) {
     const safePath = resolveSafeReviewPath(requestedPath);
-    await this.page.goto(new URL(safePath, REVIEW_ORIGIN).href, {
+    const response = await this.page.goto(new URL(safePath, REVIEW_ORIGIN).href, {
       waitUntil: "domcontentloaded",
       timeout: 30_000,
     });
     this.recordCurrentPath();
+    const status = typeof response?.status === "function" ? response.status() : undefined;
+    this.navigationStatuses.set(new URL(this.page.url()).pathname, status);
     this.elements.clear();
-    return { url: this.page.url(), path: safePath };
+    return { url: this.page.url(), path: safePath, status };
+  }
+
+  async setViewport(preset) {
+    const viewport = VIEWPORT_PRESETS[preset];
+    if (!viewport) throw new Error("Unknown review viewport preset");
+    await this.page.setViewportSize(viewport);
+    this.elements.clear();
+    return { preset, ...viewport };
   }
 
   requireElement(elementId) {
-    if (!/^e[1-9][0-9]{0,2}$/.test(elementId)) {
-      throw new Error("The browser element id has an invalid format");
-    }
+    assertReviewElementId(elementId);
     const element = this.elements.get(elementId);
     if (!element) {
       throw new Error("The browser element id is stale; inspect the page again");
@@ -397,19 +298,7 @@ export class BoundedPlaywrightReviewAdapter {
 
   async click(elementId) {
     const element = this.requireElement(elementId);
-    if (isConsequentialElement(element)) {
-      throw new Error("The requested click is outside the advisory review authority");
-    }
-    if (!element.href && element.role !== "link" && element.role !== "tab") {
-      throw new Error("Only same-origin navigation links and tabs are clickable");
-    }
-    if (element.href) {
-      const href = new URL(element.href);
-      if (href.origin !== REVIEW_ORIGIN) {
-        throw new Error("External links are outside the bounded review origin");
-      }
-      resolveSafeReviewPath(`${href.pathname}${href.search}`);
-    }
+    assertSafeReviewClick(element, REVIEW_ORIGIN);
     await this.page.locator(`[data-carpo-agentic-id="${elementId}"]`).click({
       timeout: 15_000,
     });
@@ -421,27 +310,15 @@ export class BoundedPlaywrightReviewAdapter {
 
   async fill(elementId, value) {
     const element = this.requireElement(elementId);
-    if (isConsequentialElement(element) || !["input", "textarea"].includes(element.tag)) {
-      throw new Error("The requested field is outside the advisory review authority");
-    }
-    if (value.length > 1_000) throw new Error("The review field value is too long");
-    const nextProofStep = this.proofChallenge?.steps[this.proofChallengeSteps.length];
-    if (nextProofStep) {
-      const currentUrl = new URL(this.page.url());
-      const isTitleField =
-        currentUrl.pathname === "/" &&
-        element.tag === "input" &&
-        element.type === "text" &&
-        element.name.trim().toLowerCase() === "title";
-      if (!isTitleField || value !== nextProofStep.value) {
-        throw new Error(
-          `Complete proof challenge step ${this.proofChallengeSteps.length + 1} by filling the Create Title field with the exact ${nextProofStep.language} value`,
-        );
-      }
-      if (this.pendingProofChallengeStep) {
-        throw new Error("Capture evidence for the current proof challenge value before filling again");
-      }
-    }
+    assertSafeReviewFill(element, value);
+    const nextProofStep = assertProofChallengeFill({
+      challengeId: this.proofChallenge?.id,
+      completedCount: this.proofChallengeSteps.length,
+      pending: this.pendingProofChallengeStep,
+      currentPath: new URL(this.page.url()).pathname,
+      element,
+      value,
+    });
     await this.page.locator(`[data-carpo-agentic-id="${elementId}"]`).fill(value, {
       timeout: 15_000,
     });
@@ -468,22 +345,23 @@ export class BoundedPlaywrightReviewAdapter {
   }
 
   async captureEvidence(note) {
-    if (this.screenshots.length >= MAX_SCREENSHOTS) {
-      throw new Error(`The review already captured its ${MAX_SCREENSHOTS}-screenshot budget`);
+    if (this.screenshots.length >= MAX_REVIEW_SCREENSHOTS) {
+      throw new Error(
+        `The review already captured its ${MAX_REVIEW_SCREENSHOTS}-screenshot budget`,
+      );
     }
     this.recordCurrentPath();
     const pendingProof = this.pendingProofChallengeStep;
     if (pendingProof) {
       const currentPath = new URL(this.page.url()).pathname;
-      if (currentPath !== "/") {
-        throw new Error("Proof challenge evidence must be captured on the Create route");
-      }
       const visibleValue = await this.page
         .locator(`[data-carpo-agentic-id="${pendingProof.elementId}"]`)
         .inputValue();
-      if (visibleValue !== pendingProof.value) {
-        throw new Error("The proof challenge value changed before evidence capture");
-      }
+      assertProofChallengeEvidence({
+        pending: pendingProof,
+        currentPath,
+        observedValue: visibleValue,
+      });
     }
     const file = `agentic-${String(this.screenshots.length + 1).padStart(2, "0")}.png`;
     const filePath = path.join(this.outputDir, file);
@@ -543,53 +421,29 @@ export class BoundedPlaywrightReviewAdapter {
   }
 
   async finishReview(report) {
-    if (this.proofChallenge) {
-      const challengeResult = this.proofChallengeResult();
-      if (challengeResult.status !== "completed") {
-        throw new Error(
-          `Complete all ${this.proofChallenge.steps.length} host proof challenge steps before finishing`,
-        );
-      }
-    }
-    if (!this.readSources.has("context") || !this.readSources.has("diff")) {
-      throw new Error("Read both frozen context and exact diff before finishing");
-    }
-    if (!this.visitedPaths.has("/") || !this.visitedPaths.has("/library")) {
-      throw new Error("Inspect both the Create and Library entry points before finishing");
-    }
-    if (!this.diagnosticsRead) {
-      throw new Error("Read browser diagnostics before finishing");
-    }
-    const evidenceFiles = new Set(this.screenshots.map(({ file }) => file));
-    const evidencePaths = new Set(this.screenshots.map(({ path: filePath }) => filePath));
-    if (!evidencePaths.has("/") || !evidencePaths.has("/library")) {
-      throw new Error("Capture evidence on both the Create and Library entry points");
-    }
+    assertReviewComplete({
+      progress: {
+        readSources: this.readSources,
+        visitedPaths: this.visitedPaths,
+        navigationStatuses: this.navigationStatuses,
+        layoutChecks: this.layoutChecks,
+        currentPath: new URL(this.page.url()).pathname,
+        diagnosticsRead: this.diagnosticsRead,
+        screenshots: this.screenshots,
+        proofChallengeSteps: this.proofChallengeSteps,
+        pendingProofChallenge: this.pendingProofChallengeStep,
+      },
+      report,
+      reviewOrigin: REVIEW_ORIGIN,
+      proofChallengeId: this.proofChallenge?.id,
+    });
     const boundedReport = enforceCoverageBoundary(report);
-    for (const finding of boundedReport.findings) {
-      if (finding.screenshot && !evidenceFiles.has(finding.screenshot)) {
-        throw new Error(`Finding references unknown screenshot ${finding.screenshot}`);
-      }
-    }
     return boundedReport;
   }
 }
 
 export function appendHostDiagnosticsFinding(report, diagnostics) {
-  const count = browserDiagnosticCount(diagnostics);
-  if (count === 0) return report;
-  return {
-    ...report,
-    verdict: "needs_attention",
-    findings: [
-      ...report.findings.slice(0, 19),
-      {
-        severity: "error",
-        title: "Browser diagnostics were not clean",
-        evidence: `The host recorded ${count} console, page, request, or server diagnostic entries during exploratory review.`,
-      },
-    ],
-  };
+  return appendDiagnosticsFinding(report, diagnostics);
 }
 
 async function runAgenticBrowserReview(args) {
@@ -739,7 +593,7 @@ async function runAgenticBrowserReview(args) {
 
   const report = agentResult?.report;
   const result = {
-    schemaVersion: "carpo.pr-browser-review.agentic.v1",
+    schemaVersion: AGENTIC_REVIEW_SCHEMA_VERSION,
     status: failure ? "failed" : "completed",
     advisory: true,
     verdict: failure ? "inconclusive" : report.verdict,
@@ -767,10 +621,10 @@ async function runAgenticBrowserReview(args) {
     diagnostics,
     toolCalls: agentResult?.toolCalls ?? 0,
     timeline: agentResult?.timeline ?? [],
+    providerDiagnostics: agentResult?.providerDiagnostics,
     trace,
     failure,
-    proofBoundary:
-      "This is advisory Flue exploration of one exact tagged Worker through bounded same-origin tools. It cannot approve the candidate and does not prove upload, encoding, media playback, YouTube reliability, production behavior, or correctness outside the inspected paths.",
+    proofBoundary: ADVISORY_REVIEW_PROOF_BOUNDARY,
   };
   await writeFile(
     path.join(outputDir, "agentic-result.json"),

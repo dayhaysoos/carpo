@@ -1,11 +1,15 @@
 # Carpo PR Browser Review Harness
 
-**Status:** exact-candidate deterministic harness green; bounded Flue adapter implemented and working-tree Cloudflare smoke green, 2026-08-27
+**Status:** exact-candidate deterministic harness green; local bounded Flue adapter green; durable Cloudflare-native Flue service implemented and awaiting operator provisioning, 2026-08-27
 **Branch:** `feature/flue-agentic-pr-review`
 
 Current checkpoint: PR #8 produced the first green end-to-end CI run, then the backend-neutral manual adapter completed a second exact-candidate run during a GitHub Actions outage. The manual execution passed all repository checks and 17 Browser Run assertions, held one Worker version fixed, uploaded three `1440×1000` PNGs plus a manifest to `carpo-pr-review-evidence`, and created [the inline evidence comment](https://github.com/dayhaysoos/carpo/pull/8#issuecomment-5428391133). Direct reads returned `200 image/png`, the remote and local manifest SHA-256 values matched, and GitHub rendered all three images through its image proxy. The bucket has a 14-day expiration lifecycle.
 
 The next slice now runs by default after the deterministic exact-head checks pass. `--no-agentic` (or `CARPO_PR_REVIEW_AGENTIC=false`) is the explicit emergency/cost escape hatch. A backend-neutral Flue agent reads bounded chunks of the same frozen context and diff, then chooses safe browser actions against the same exact tagged review Worker. The host serializes its tools, pins one origin and Worker version, rejects duplicate screenshots, strips and downgrades unsupported coverage claims to `inconclusive`, and requires Create and Library evidence, browser diagnostics, explicit remaining risks, and a structured finish. The latest working-tree smoke used Cloudflare Workers AI through local Wrangler OAuth, completed 20 bounded tool calls against exact version tag `flue-smoke-20260827T045743Z`, captured three distinct `1440×1000` PNGs for Archived, Library, and Create, and recorded zero browser diagnostics or blocked mutations. That proves the adapter works; it is not committed-PR proof and does not add upload/encoding coverage.
+
+The implementation now also includes an opt-in durable backend in [`review-service/`](../../review-service). It deploys separately from candidate code, runs Flue inside a generated SQLite-backed Durable Object, uses the Worker AI binding, and creates recorded Browser Run sessions. Its browser capabilities remain narrow host-authored tools—read frozen material, inspect, navigate a positive route catalog, select desktop/mobile viewports, click safe links/tabs, fill safe text fields, capture private screenshots, and read diagnostics. It does **not** expose Flue Code Mode, arbitrary CDP source, a shell, or general network tools to the model. Reports and screenshots are stored in the dedicated evidence R2 bucket and available through an authenticated dossier with rrweb replay. Flue tracing is installed with `content: false`, so Workers traces preserve operational spans without prompts, diffs, tool arguments, or page content.
+
+Both execution backends now import the same provider-neutral [`review-contract/`](../../review-contract) workspace. It owns the unchanged v1 schemas and every rule whose drift could change reviewer authority or proof quality: route and action safety, proof challenges, completion and evidence validation, coverage downgrades, diagnostics verdicts, and shared instruction facts. Local Playwright/Workers AI and Durable Browser Run/Flue remain thin integration adapters around that contract.
 
 This branch also carries one repository-owned committed-PR proof challenge. The exact changed path `review-challenges/multilingual-pants.json` selects a hardcoded host task: replace the Create Title with `pants`, then Spanish `pantalones`, French `pantalon`, and Japanese `ズボン`, capturing each visible state without submitting. The runner ignores the marker's contents and all PR prose when selecting or defining the task. The browser host independently enforces the Title field, Create route, exact values, order, and immediate screenshot sequence. Because selection depends on this path appearing in the frozen base/head diff, the challenge does not run on ordinary later PRs after this marker has merged unchanged.
 
@@ -20,7 +24,7 @@ When a pull request is opened or updated, GitHub Actions normally invokes the ru
 5. The candidate is deployed to one isolated Cloudflare environment named `pr-review`, with the exact head SHA attached as its Worker version tag.
 6. When the exact changed-path map contains `web/` files and the frozen base contains the review harness, the runner deploys that base first and captures advisory "Before" screenshots. It then deploys the exact head and repeats the same selected steps at the same `1440×1000` viewport for "After" screenshots. A base that predates the harness is reported explicitly as after-only evidence rather than being approximated.
 7. A Cloudflare Browser Run session authenticates to each selected deployment, proves the observed Worker tag matches the expected SHA, performs bounded browser checks selected from Carpo's permanent smoke tests plus known diff and PR/Issue context signals, proves the Worker version ID did not change during each traversal, and records screenshots plus a credential-audited Playwright trace. Head assertions remain the release signal; the base capture is comparative evidence, not a second gate.
-8. By default, a Flue agent independently selects bounded same-origin browser actions after the deterministic gate. It can read frozen review material, inspect, navigate only within a positive catalog of Create, Library, Archived, and UUID-addressed video-detail routes, click safe controls, fill non-consequential text fields, capture evidence, and read diagnostics. The browser host aborts every network method except `GET`, `HEAD`, and `OPTIONS`, even if candidate code attaches a write to a superficially safe control. The agent has no shell, filesystem, arbitrary network, deployment, GitHub, credential, upload, clip-creation, or destructive authority. Its result is advisory and cannot turn a deterministic failure green. Operators can use `--no-agentic` for a bounded deterministic-only fallback.
+8. By default, a Flue agent independently selects bounded same-origin browser actions after the deterministic gate. The proven `local` backend remains the default. `--agent-backend durable` (or `CARPO_PR_REVIEW_AGENT_BACKEND=durable`) delegates the same frozen package to the separately deployed durable service and downloads its private screenshots back into the ordinary evidence bundle. Both backends can read frozen review material, inspect, navigate only within a positive catalog of Create, Library, Archived, the host-defined missing route, and UUID-addressed video-detail routes, switch between exact desktop/mobile presets, click safe controls, fill non-consequential text fields, capture evidence, and read diagnostics. The browser host blocks every network method except `GET`, `HEAD`, and `OPTIONS`, even if candidate code attaches a write to a superficially safe control. The agent has no shell, filesystem, arbitrary network, deployment, GitHub, credential, upload, clip-creation, or destructive authority. Its result is advisory and cannot turn a deterministic failure green. Operators can use `--no-agentic` for a bounded deterministic-only fallback.
    For this branch's one-time multilingual proof marker only, the same host also requires four ordered Title fills and four corresponding screenshots before it will accept the structured finish. This demonstrates novel model-directed interaction without granting broader authority or turning PR text into executable instructions.
 9. PNG screenshots are written under an immutable PR/SHA/run-specific prefix in the dedicated evidence R2 bucket. Paired deterministic evidence is rendered as `Before · base` and `After · head`; Flue captures appear in a separate advisory section with the host-observed route, agent note, findings, remaining boundaries, and proof boundary. The review Worker exposes only tightly validated PNG paths, while the application and clip buckets remain private.
 10. The active GitHub reporting identity creates or updates its marker-based PR comment with the exact reviewed SHA, assertion and diagnostic counts, inline screenshots, execution-source link, retention, and proof boundary. Actions also retains the trace and frozen evidence as an artifact; a manual run keeps them in its local output directory. The R2 manifest is uploaded before comment publication, so a GitHub reporting failure does not discard the evidence. The runner then releases the lease with an owner-checked delete; a crashed run's lease expires after 45 minutes.
@@ -36,9 +40,12 @@ flowchart LR
     RUNNER --> DEPLOY[carpo-pr-review]
     DEPLOY --> CF[Cloudflare Browser Run]
     CF --> GATE[Deterministic gate]
-    GATE -->|default after pass| FLUE[Bounded Flue exploration]
+    GATE -->|default after pass| FLUE[Local bounded Flue exploration]
+    GATE -->|opt-in durable backend| SERVICE[Durable Flue QA Worker]
+    SERVICE --> RECORDING[Private Browser Run recording]
     GATE --> EVIDENCE[Screenshots + trace + result]
     FLUE --> EVIDENCE
+    SERVICE --> EVIDENCE
     EVIDENCE --> R2[14-day evidence R2]
     R2 --> COMMENT[Inline PR evidence comment]
     EVIDENCE --> TRIGGER
@@ -107,16 +114,28 @@ It captures and publishes:
 
 The artifact is evidence, not a blanket certification. Side-by-side screenshots make intended UI changes easier to inspect, but v0 does not perform pixel-diff gating and does not claim that unchanged pixels prove behavior. The default Flue pass proves only that one model completed the host-enforced bounded traversal without a concrete reported issue; deterministic assertions remain the release signal. Neither path yet proves upload, encoding, clip playback, YouTube reliability, production behavior, accessibility, visual quality, or correctness outside the inspected routes.
 
+## Durable service boundary
+
+The durable service is a thin second execution host for the same review contract, not a replacement release system:
+
+- `POST /agents/carpo-durable-reviewer/<execution-id>` accepts one frozen context/diff/base/head package behind `AUDIT_API_TOKEN`.
+- Flue stores the conversation, tool state, and structured result in one generated SQLite Durable Object per execution ID.
+- The target review origin and candidate identity are host settings and exact runtime checks; neither comes from model tool arguments.
+- Browser Run starts with `recording: true`. Screenshots and `agentic-result.json` are written to `durable-reviews/<execution-id>/`; the recording is fetched only after session close with a separate Browser Rendering read token.
+- `/reports/<execution-id>` requires `REVIEW_VIEW_TOKEN` through a Secure, HttpOnly, SameSite cookie. Evidence and recording APIs accept that cookie or the runner's bearer token. No viewer token is placed in a URL.
+- The local/manual runner remains usable when the service is unavailable. The durable backend is selected explicitly; GitHub Actions is never required.
+
+The optional Queue adapter accepts either a compact `carpo.review.candidate-ready.v1` pointer containing one full head SHA or a Cloudflare Workers Builds success event. Before a durable run, the local runner stages the exact package at `durable-inputs/<head-sha>.json`. A trigger is ignored unless it has a full matching commit SHA and finds that staged package; a Builds event must additionally name `carpo-pr-review`. This keeps large context/diffs out of Queue messages and prevents a notification from inventing or refetching mutable review context. GitHub fields and tokens are absent from this core path; a future reporting adapter may use them without changing execution.
+
 ## What is deliberately deferred
 
 Do not add these until the basic loop has run successfully on real PRs:
 
-- a separate verifier Worker;
 - Cloudflare Workflows orchestration;
-- an evidence dashboard beyond the single PR comment;
+- a searchable evidence dashboard beyond the private per-run dossier and PR comment;
 - per-PR infrastructure stacks;
 - an LLM-authored release gate or autonomous merge verdict;
-- Stagehand, WebMCP, or broader Agents SDK orchestration beyond the bounded Flue adapter;
+- Stagehand, WebMCP, unrestricted Code Mode, or broader Agents SDK orchestration beyond the bounded Flue adapter;
 - managed Cloudflare Access identity in front of the review URL (v0 already uses a scoped review-secret cookie gate);
 - automatic merge, promotion, rollback, or production deployment;
 - browser/device matrices;
@@ -173,6 +192,17 @@ Each is a possible upgrade, not a prerequisite.
 
 **Exit:** a committed PR demonstrates that the agent broadens inspection without becoming the release oracle.
 
+### Checkpoint 5 — durable Cloudflare-native execution
+
+- [x] Add a separate Flue Worker using the Workers AI binding and generated SQLite Durable Object persistence.
+- [x] Preserve host-authored narrow browser tools, exact candidate identity checks, desktop/mobile inspection, missing-route status, structured findings, and the advisory proof boundary.
+- [x] Start Browser Run with recording enabled and provide authenticated screenshot, report, and rrweb replay routes.
+- [x] Add an authenticated local runner adapter and an optional GitHub-free Queue/Workers Builds adapter over the same frozen package.
+- [x] Keep content out of Workers traces with `createCloudflareTracing({ content: false })`.
+- [ ] Provision service secrets, deploy the service, and run one real exact-candidate review with `--agent-backend durable`.
+
+**Exit:** one committed candidate produces the ordinary PR evidence plus a private durable report and replay without relying on GitHub Actions.
+
 Run the current slice locally with:
 
 ```bash
@@ -180,6 +210,16 @@ npm run review:pr -- --pr <number>
 ```
 
 Use `npm run review:pr -- --pr <number> --no-agentic` or `CARPO_PR_REVIEW_AGENTIC=false` for a deterministic-only run. The default agentic model is Cloudflare Workers AI model `@cf/meta/llama-4-scout-17b-16e-instruct`; `CARPO_PR_REVIEW_MODEL` may select another registered `provider/model` when its credentials are configured. Local Cloudflare-native inference resolves the account and current OAuth token through Wrangler, scopes them to the Flue run, restores the process environment afterward, and never writes them into evidence. Agent failure is reported as advisory `inconclusive` and does not replace the deterministic verdict.
+
+After provisioning the separate service, exercise the durable backend with:
+
+```bash
+CARPO_PR_REVIEW_AGENT_BACKEND=durable npm run review:pr -- --pr <number>
+```
+
+`CARPO_REVIEW_SERVICE_TOKEN` must match the service's `AUDIT_API_TOKEN`. A stable `CARPO_PR_REVIEW_AUTH_TOKEN` must be supplied locally and match both the target Worker's `PR_REVIEW_AUTH_TOKEN` and the service's `TARGET_REVIEW_AUTH_TOKEN`; the durable service cannot follow the local runner's legacy per-run token rotation. The runner validates that configuration before deterministic candidate checks. After that gate, Durable package staging, service execution, settlement, and screenshot download are all advisory: failures produce a normalized `inconclusive` agentic result without changing a deterministic pass. Failure to persist that trusted local result artifact still fails the harness. `REVIEW_VIEW_TOKEN` protects the dossier, while `CLOUDFLARE_READ_TOKEN` needs Browser Rendering read access only for replay retrieval. See [`review-service/README.md`](../../review-service/README.md) for provisioning and validation.
+
+Failed Flue runs retain a bounded `providerDiagnostics` record in `agentic-result.json` and the R2 evidence manifest. It includes model/provider identity, normalized and provider-native finish reasons, turn duration and token usage, AI Gateway log correlation when supplied, failed operation or recovery summaries, terminal settlement, and the serialized `AgentRunError` cause. The PR comment and execution summary render these diagnostics under the advisory failure. Prompts, model output, tool arguments/results, stack traces, and literal credentials are excluded from this record; diagnostic strings are length-bounded and secret-redacted before persistence.
 
 ## Upgrade triggers
 

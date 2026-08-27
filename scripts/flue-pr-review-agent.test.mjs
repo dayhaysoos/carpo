@@ -44,6 +44,12 @@ function fakeAdapter() {
       calls.push(["navigate", path]);
       return { url: `https://carpo-pr-review.ndejesus1227.workers.dev${path}` };
     },
+    async setViewport(preset) {
+      calls.push(["setViewport", preset]);
+      return preset === "mobile"
+        ? { preset, width: 390, height: 844 }
+        : { preset, width: 1440, height: 1000 };
+    },
     async click(elementId) {
       calls.push(["click", elementId]);
       return { clicked: elementId };
@@ -93,12 +99,9 @@ describe("Flue PR review agent", () => {
       expectedVersionTag: "abc123",
       proofChallenge: "multilingual-pants",
     });
-    assert.match(challengePrompt, /Trusted host proof challenge/);
-    assert.match(challengePrompt, /English = "pants"/);
-    assert.match(challengePrompt, /Spanish = "pantalones"/);
-    assert.match(challengePrompt, /French = "pantalon"/);
-    assert.match(challengePrompt, /Japanese = "ズボン"/);
-    assert.match(challengePrompt, /Do not submit/);
+    assert.match(challengePrompt, /selected proof challenge multilingual-pants/);
+    assert.match(challengePrompt, /system instructions and host-enforced sequence/);
+    assert.doesNotMatch(challengePrompt, /pantalones/);
     assert.equal(AGENTIC_REVIEW_LIMITS.maxToolCalls, 30);
     assert.equal(AGENTIC_REVIEW_LIMITS.maxFinishReminders, 8);
   });
@@ -160,8 +163,12 @@ describe("Flue PR review agent", () => {
             findings: [
               {
                 severity: "info",
+                category: "content",
                 title: "Create shell rendered",
+                description: "The upload-first Create shell was visible.",
                 evidence: "Observed the upload-first Create surface.",
+                path: "/",
+                reproduction: ["Open the Create route."],
                 screenshot: "agentic-01.png",
               },
             ],
@@ -198,6 +205,12 @@ describe("Flue PR review agent", () => {
     );
     assert.equal(adapter.maxConcurrentReads, 1);
     assert.equal(result.toolCalls, 6);
+    assert.equal(result.providerDiagnostics.settlement.outcome, "completed");
+    assert.equal(result.providerDiagnostics.turns.length, 5);
+    assert.doesNotMatch(
+      JSON.stringify(result.providerDiagnostics),
+      /untrusted review data/,
+    );
   });
 
   it("fails closed when the model never calls finish_review", async () => {
@@ -225,6 +238,60 @@ describe("Flue PR review agent", () => {
     } finally {
       console.error = originalConsoleError;
     }
+  });
+
+  it("retains sanitized provider and settlement diagnostics when a model turn fails", async () => {
+    const faux = fauxProvider();
+    faux.setResponses([
+      fauxAssistantMessage(
+        [fauxToolCall("inspect_page", {})],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage([], {
+        stopReason: "error",
+        errorMessage:
+          "Workers AI upstream unavailable; echoed provider-secret-123",
+      }),
+    ]);
+
+    const originalConsoleError = console.error;
+    console.error = () => {};
+    let capturedError;
+    try {
+      await assert.rejects(
+        runFlueAgenticReview({
+          executionId: "test-provider-failure",
+          expectedVersionTag: "abc123",
+          adapter: fakeAdapter(),
+          model: "faux/faux-1",
+          providers: [faux.provider],
+          runtimeEnv: {
+            CLOUDFLARE_API_KEY: "provider-secret-123",
+          },
+          timeoutMs: 10_000,
+        }),
+        (error) => {
+          capturedError = error;
+          return /Agent run failed/.test(error.message);
+        },
+      );
+    } finally {
+      console.error = originalConsoleError;
+    }
+
+    const diagnostics = capturedError.agenticProgress.providerDiagnostics;
+    assert.equal(diagnostics.turns.length, 2);
+    assert.equal(diagnostics.turns[0].finishReason, "toolUse");
+    assert.equal(diagnostics.turns[1].finishReason, "error");
+    assert.equal(diagnostics.turns[1].providerId, "faux");
+    assert.match(
+      diagnostics.turns[1].error.message,
+      /Workers AI upstream unavailable/,
+    );
+    assert.doesNotMatch(JSON.stringify(diagnostics), /provider-secret-123/);
+    assert.doesNotMatch(JSON.stringify(diagnostics), /\"stack\"/);
+    assert.equal(diagnostics.settlement.outcome, "failed");
+    assert.equal(diagnostics.cause.type, "operation_failed");
   });
 
   it("records the host-normalized screenshot note in the timeline", async () => {

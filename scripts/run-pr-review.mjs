@@ -6,12 +6,14 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
+  agenticFailureDiagnosticLines,
   inlineMarkdownText,
   prepareReviewOutput,
   redactSecrets,
 } from "./pr-browser-review-utils.mjs";
 import { createCloudflareReviewLease } from "./pr-review-lease.mjs";
 import { selectProofChallenge } from "./pr-review-proof-challenges.mjs";
+import { agenticExecution } from "./pr-review-agentic-execution.mjs";
 
 const execFileAsync = promisify(execFile);
 const EXPECTED_REPOSITORY = "dayhaysoos/carpo";
@@ -91,18 +93,6 @@ export function shouldCaptureVisualComparison(files) {
     const filePath = typeof file === "string" ? file : file?.path;
     return typeof filePath === "string" && filePath.startsWith("web/");
   });
-}
-
-export function agenticReviewEnabled(args, env = process.env) {
-  if (args.agentic === true && args["no-agentic"] === true) {
-    throw new Error("--agentic and --no-agentic cannot be used together");
-  }
-  if (args["no-agentic"] === true) return false;
-  if (args.agentic === true) return true;
-  if (env.CARPO_PR_REVIEW_AGENTIC === undefined) return true;
-  if (env.CARPO_PR_REVIEW_AGENTIC === "true") return true;
-  if (env.CARPO_PR_REVIEW_AGENTIC === "false") return false;
-  throw new Error("CARPO_PR_REVIEW_AGENTIC must be true or false");
 }
 
 function printStep(label) {
@@ -418,72 +408,7 @@ async function runBrowserEvidence({
   );
 }
 
-async function runAgenticBrowserEvidence({
-  reviewUrl,
-  expectedVersionTag,
-  executionId,
-  contextPath,
-  diffPath,
-  outputDir,
-  cwd,
-  runtimeEnv,
-  proofChallenge,
-}) {
-  const agentArgs = [
-    "run",
-    "review:pr-agent",
-    "--",
-    "--url",
-    reviewUrl,
-    "--expected-version-tag",
-    expectedVersionTag,
-    "--execution-id",
-    executionId,
-    "--context",
-    contextPath,
-    "--diff",
-    diffPath,
-    "--output",
-    outputDir,
-  ];
-  if (proofChallenge) {
-    agentArgs.push("--proof-challenge", proofChallenge);
-  }
-  await run(
-    "npm",
-    agentArgs,
-    { cwd, env: runtimeEnv },
-  );
-}
-
-export async function attachAgenticReview({ outputDir, error }) {
-  const agenticPath = path.join(outputDir, "agentic-result.json");
-  let agenticReview;
-  try {
-    agenticReview = JSON.parse(await readFile(agenticPath, "utf8"));
-  } catch (readError) {
-    if (readError?.code !== "ENOENT") throw readError;
-    const failure = redactSecrets(
-      error instanceof Error ? error.message : error ?? "Agentic review did not produce a result",
-    );
-    agenticReview = {
-      schemaVersion: "carpo.pr-browser-review.agentic.v1",
-      status: "failed",
-      advisory: true,
-      verdict: "inconclusive",
-      summary: "The Flue exploratory review did not complete.",
-      testedAreas: [],
-      findings: [],
-      remainingRisks: [],
-      screenshots: [],
-      diagnostics: {},
-      failure,
-      proofBoundary:
-        "No agentic product proof was established because the bounded Flue review did not complete.",
-    };
-    await writeFile(agenticPath, `${JSON.stringify(agenticReview, null, 2)}\n`);
-  }
-
+export async function attachAgenticReview({ outputDir, agenticReview }) {
   const resultPath = path.join(outputDir, "result.json");
   const result = JSON.parse(await readFile(resultPath, "utf8"));
   result.agenticReview = agenticReview;
@@ -494,9 +419,12 @@ export async function attachAgenticReview({ outputDir, error }) {
   const findings = Array.isArray(agenticReview.findings)
     ? agenticReview.findings.map(
         (finding) =>
-          `- ${finding.severity === "error" ? "❌" : finding.severity === "warning" ? "⚠️" : "ℹ️"} ${inlineMarkdownText(finding.title)}: ${inlineMarkdownText(finding.evidence)}`,
+          `- ${finding.severity === "error" ? "❌" : finding.severity === "warning" ? "⚠️" : "ℹ️"} ${inlineMarkdownText(finding.title)} · ${inlineMarkdownText(finding.category ?? "uncategorized")} · \`${inlineMarkdownText(finding.path ?? "unknown path")}\`: ${inlineMarkdownText(finding.evidence)}`,
       )
     : [];
+  const providerDiagnosticLines = agenticFailureDiagnosticLines(
+    agenticReview.providerDiagnostics,
+  );
   const agenticSummary = [
     "",
     "### Flue exploratory review (advisory)",
@@ -504,9 +432,15 @@ export async function attachAgenticReview({ outputDir, error }) {
     `Status: \`${agenticReview.status}\``,
     `Verdict: \`${agenticReview.verdict}\``,
     inlineMarkdownText(agenticReview.summary),
+    ...(typeof agenticReview.reportUrl === "string"
+      ? [`Private durable report: ${inlineMarkdownText(agenticReview.reportUrl)}`]
+      : []),
     ...findings,
     ...(agenticReview.failure
       ? [`Failure: ${inlineMarkdownText(agenticReview.failure)}`]
+      : []),
+    ...(providerDiagnosticLines.length > 0
+      ? ["", "#### Failure diagnostics", "", ...providerDiagnosticLines]
       : []),
     "",
     inlineMarkdownText(agenticReview.proofBoundary),
@@ -620,7 +554,9 @@ async function executeReview({
   repoRoot,
   runtimeEnv,
   executionId,
-  agentic,
+  sourceUrl,
+  agenticArgs,
+  reviewAuthOrigin,
   lease,
 }) {
   const frozen = await freezeContext({
@@ -641,6 +577,25 @@ async function executeReview({
     );
   }
   const proofChallenge = selectProofChallenge(frozen.files);
+  const agenticPlan = agenticExecution.prepare({
+    args: agenticArgs,
+    env: runtimeEnv,
+    reviewAuthOrigin,
+    request: {
+      executionId,
+      sourceUrl,
+      repository,
+      baseSha,
+      headSha,
+      reviewUrl,
+      expectedVersionTag: headSha,
+      contextPath: path.join(outputDir, "context.json"),
+      diffPath: path.join(outputDir, "diff.patch"),
+      outputDir,
+      cwd,
+      proofChallenge: proofChallenge?.id,
+    },
+  });
 
   printStep("Install and validate the exact candidate");
   await run("npm", ["ci"], { cwd });
@@ -769,28 +724,10 @@ async function executeReview({
   if (headReviewError) throw headReviewError;
   await verifyCandidateUnchanged(repository, pr, baseSha, headSha, cwd);
 
-  if (agentic) {
+  if (agenticPlan.status === "ready") {
     printStep("Run bounded Flue exploration against the exact candidate");
-    let agenticError;
-    try {
-      await runAgenticBrowserEvidence({
-        reviewUrl,
-        expectedVersionTag: headSha,
-        executionId,
-        contextPath: path.join(outputDir, "context.json"),
-        diffPath: path.join(outputDir, "diff.patch"),
-        outputDir,
-        cwd,
-        runtimeEnv,
-        proofChallenge: proofChallenge?.id,
-      });
-    } catch (error) {
-      agenticError = error;
-      process.stderr.write(
-        `Flue exploratory review was inconclusive: ${redactSecrets(error instanceof Error ? error.message : error)}\n`,
-      );
-    }
-    await attachAgenticReview({ outputDir, error: agenticError });
+    const agenticReview = await agenticExecution.execute(agenticPlan);
+    await attachAgenticReview({ outputDir, agenticReview });
     await verifyCandidateUnchanged(repository, pr, baseSha, headSha, cwd);
   }
 }
@@ -899,17 +836,24 @@ export async function runPullRequestReview(args, env = process.env) {
     throw new Error(`review URL must be exactly ${REVIEW_URL}`);
   }
   const metadata = resolveExecutionMetadata(args, env);
-  const agentic = agenticReviewEnabled(args, env);
   const repoRoot = (
     await capture("git", ["rev-parse", "--show-toplevel"], { cwd: process.cwd() })
   ).trim();
   const currentCheckout = args["current-checkout"] === true;
   const runtimeEnv = { ...process.env, ...env };
+  const reviewAuthOrigin = runtimeEnv.CARPO_PR_REVIEW_AUTH_TOKEN
+    ? "provided"
+    : "ephemeral";
   if (!runtimeEnv.CARPO_PR_REVIEW_AUTH_TOKEN) {
     if (currentCheckout || runtimeEnv.GITHUB_ACTIONS === "true") {
       throw new Error("CARPO_PR_REVIEW_AUTH_TOKEN is required for unattended review");
     }
   }
+  agenticExecution.validateConfiguration({
+    args,
+    env: runtimeEnv,
+    reviewAuthOrigin,
+  });
   const initialPr = await getPullRequest(repository, pr, repoRoot);
   const { baseSha, headSha } = assertPullRequest(initialPr, repository, {
     baseSha: args["expected-base-sha"],
@@ -970,7 +914,9 @@ export async function runPullRequestReview(args, env = process.env) {
           repoRoot,
           runtimeEnv,
           executionId: metadata.executionId,
-          agentic,
+          sourceUrl: metadata.sourceUrl,
+          agenticArgs: args,
+          reviewAuthOrigin,
           lease,
         });
       } catch (error) {

@@ -4,6 +4,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
+  agenticFailureDiagnosticLines,
   escapeHtml,
   inlineMarkdownText as inlineText,
 } from "./pr-browser-review-utils.mjs";
@@ -189,6 +190,12 @@ function renderAgenticReview(agenticReview, evidence) {
   if (agenticReview.failure) {
     lines.push("", `**Agent failure:** ${inlineText(agenticReview.failure)}`);
   }
+  const providerDiagnosticLines = agenticFailureDiagnosticLines(
+    agenticReview.providerDiagnostics,
+  );
+  if (providerDiagnosticLines.length > 0) {
+    lines.push("", "#### Failure diagnostics", "", ...providerDiagnosticLines);
+  }
   if (Array.isArray(agenticReview.findings) && agenticReview.findings.length > 0) {
     lines.push("", "#### Findings", "");
     for (const finding of agenticReview.findings.slice(0, 20)) {
@@ -199,8 +206,14 @@ function renderAgenticReview(agenticReview, evidence) {
             ? "⚠️"
             : "ℹ️";
       lines.push(
-        `- ${icon} **${inlineText(finding.title ?? "Finding")}** — ${inlineText(finding.evidence ?? "No evidence description supplied.")}`,
+        `- ${icon} **${inlineText(finding.title ?? "Finding")}** · ${inlineText(finding.category ?? "uncategorized")} · \`${inlineText(finding.path ?? "unknown path")}\` — ${inlineText(finding.description ?? finding.evidence ?? "No description supplied.")}`,
       );
+      lines.push(`  - Evidence: ${inlineText(finding.evidence ?? "No evidence description supplied.")}`);
+      if (Array.isArray(finding.reproduction) && finding.reproduction.length > 0) {
+        lines.push(
+          `  - Reproduce: ${finding.reproduction.slice(0, 8).map((step, index) => `${index + 1}. ${inlineText(step)}`).join(" ")}`,
+        );
+      }
     }
   }
   if (
@@ -243,6 +256,17 @@ function renderAgenticReview(agenticReview, evidence) {
     `> **Agentic proof boundary:** ${inlineText(agenticReview.proofBoundary ?? "The exploratory result is advisory and bounded to the inspected paths.")}`,
     "",
   );
+  if (
+    typeof agenticReview.reportUrl === "string" &&
+    /^https:\/\/carpo-pr-review-agent\.ndejesus1227\.workers\.dev\/reports\/[A-Za-z0-9._-]{1,140}$/.test(
+      agenticReview.reportUrl,
+    )
+  ) {
+    lines.push(
+      "",
+      `[Open the private durable report and Browser Run replay](${agenticReview.reportUrl})`,
+    );
+  }
   return lines;
 }
 
