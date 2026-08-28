@@ -16,6 +16,26 @@ Successor to [gfycat-machine](https://github.com/ndejesus1227/gfycat-machine), r
 
 For reliable YouTube downloads from a residential IP, see [helper/README.md](helper/README.md).
 
+## Authentication and private libraries
+
+Production is protected by a hostname-level Cloudflare Access application with
+Google as its identity provider. The Worker resolves the verified Access
+identity to an internal Carpo user and scopes every user-facing video, clip,
+upload, artifact, transcript, and video-agent entry point to that user. An
+unknown or unauthenticated production request fails closed; knowing another
+record's UUID is not sufficient to read it.
+
+Production requires `AUTH_MODE=cloudflare-access`, the HTTPS
+`ACCESS_TEAM_DOMAIN`, and the Access application's `ACCESS_AUD`. Local
+development and the isolated PR-review environment deliberately omit those
+variables and use the migration's `legacy` user so their existing deterministic
+flows remain independent of an external identity provider.
+
+The helper daemon crosses Access with a dedicated service token and continues
+to require Carpo's own `HELPER_TOKEN`. Encoder callbacks use only the narrow
+`/api/internal/jobs/*` path and remain protected by their per-job secret. Do not
+configure a broad Access bypass for either client.
+
 ## Reusable YouTube sources
 
 The first server-side clip from a YouTube video imports a complete 1080p source

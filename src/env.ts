@@ -8,6 +8,9 @@ export interface Env {
   ASSETS: Fetcher;
   MAX_CLIP_LENGTH_SECONDS: string;
   R2_PUBLIC_PREFIX: string;
+  AUTH_MODE?: string;
+  ACCESS_TEAM_DOMAIN?: string;
+  ACCESS_AUD?: string;
   R2_ENDPOINT?: string;
   R2_ACCESS_KEY_ID?: string;
   R2_SECRET_ACCESS_KEY?: string;

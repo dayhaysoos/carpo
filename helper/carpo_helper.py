@@ -538,6 +538,7 @@ def upload_file_put(
         "Content-Type": content_type,
         "Content-Length": str(file_size),
         "User-Agent": USER_AGENT,
+        HELPER_TOKEN_HEADER: config["helperToken"],
     }
     cf_id = config.get("cfAccessClientId")
     cf_secret = config.get("cfAccessClientSecret")
@@ -713,6 +714,7 @@ def process_job(
                 "sizeBytes": size_bytes,
                 "filename": source_path.name,
             },
+            include_helper_token=True,
             timeout=api_timeout_for_budget(api_budget),
         )
         if status != 200:

@@ -4,10 +4,14 @@ import {
   deleteSourceVideoRecords,
   ensureSourceVideo,
   getClipById,
+  getClipByIdForOwner,
   getSourceVideoById,
+  getSourceVideoByIdForOwner,
   isRetainedUploadSource,
+  isOwnedUploadSource,
   listClips,
   listClipsByVideoId,
+  listClipsByVideoIdForOwner,
   listSourceVideos,
   setSourceVideoArchived,
   updateSourceVideoDuration,
@@ -17,8 +21,15 @@ import {
   queueArtifactDeletion,
 } from "./db";
 import type { Env } from "./env";
+import type { AuthenticatedUser } from "./identity";
+import { isMachineRequest, LEGACY_USER_ID } from "./identity";
 import { prewarmEncoder } from "./encoder-pool";
-import { JOB_SECRET_HEADER, verifyJobSecret } from "./auth";
+import {
+  HELPER_TOKEN_HEADER,
+  JOB_SECRET_HEADER,
+  verifyHelperToken,
+  verifyJobSecret,
+} from "./auth";
 import { applyStatusUpdate, dispatchGifExportJob } from "./jobs";
 import { recordToResponse, sourceVideoRecordToResponse } from "./serialize";
 import type { ClipRecord, ClipStatus, CreateClipRequest } from "./types";
@@ -26,6 +37,7 @@ import {
   decodeUploadPathParam,
   generateUploadKey,
   isUploadSourceExpired,
+  isOwnedUploadKey,
   maxUploadSizeBytes,
   normalizeUploadContentType,
   sweepExpiredUploadSources,
@@ -61,38 +73,47 @@ export async function handleRequest(
   request: Request,
   env: Env,
   ctx: ExecutionContext,
+  user: AuthenticatedUser | null,
 ): Promise<Response> {
   const url = new URL(request.url);
   ctx.waitUntil(drainArtifactDeletions(env.DB, env.CLIPS_BUCKET));
 
+  if (!user && !isMachineRequest(request)) {
+    return json({ error: "Authentication required" }, 401);
+  }
+
+  if (request.method === "GET" && url.pathname === "/api/me") {
+    return json({ email: user!.id === LEGACY_USER_ID ? null : user!.email });
+  }
+
   if (request.method === "POST" && url.pathname === "/api/clips") {
-    return handleCreateClip(request, env, ctx);
+    return handleCreateClip(request, env, ctx, user!);
   }
 
   if (request.method === "POST" && url.pathname === "/api/upload-url") {
-    return handleRequestUploadUrl(request, env, url, ctx);
+    return handleRequestUploadUrl(request, env, url, ctx, user);
   }
 
   if (request.method === "PUT" && url.pathname.startsWith("/api/uploads/")) {
     const encodedKey = url.pathname.slice("/api/uploads/".length);
-    return handleUploadPut(request, env, encodedKey);
+    return handleUploadPut(request, env, encodedKey, user);
   }
 
   if (request.method === "GET" && url.pathname === "/api/clips") {
-    return handleListClips(url, env, ctx);
+    return handleListClips(url, env, ctx, user!);
   }
 
   if (request.method === "GET" && url.pathname === "/api/videos") {
-    return handleListSourceVideos(url, env, ctx);
+    return handleListSourceVideos(url, env, ctx, user!);
   }
 
   if (request.method === "POST" && url.pathname === "/api/videos") {
-    return handleCreateSourceVideo(request, env);
+    return handleCreateSourceVideo(request, env, user!);
   }
 
   const videoSourceMatch = url.pathname.match(/^\/api\/videos\/([^/]+)\/source$/);
   if (request.method === "GET" && videoSourceMatch) {
-    return handleSourceVideoSource(request, videoSourceMatch[1], env);
+    return handleSourceVideoSource(request, videoSourceMatch[1], env, user!);
   }
 
   const videoClipsMatch = url.pathname.match(/^\/api\/videos\/([^/]+)\/clips$/);
@@ -102,6 +123,7 @@ export async function handleRequest(
       videoClipsMatch[1],
       env,
       ctx,
+      user!,
     );
   }
 
@@ -109,7 +131,7 @@ export async function handleRequest(
     /^\/api\/videos\/([^/]+)\/transcript\/check$/,
   );
   if (request.method === "POST" && transcriptCheckMatch) {
-    return handleTranscriptCheck(transcriptCheckMatch[1], env);
+    return handleTranscriptCheck(transcriptCheckMatch[1], env, user!);
   }
 
   const transcriptSearchMatch = url.pathname.match(
@@ -120,6 +142,7 @@ export async function handleRequest(
       request,
       transcriptSearchMatch[1],
       env,
+      user!,
     );
   }
 
@@ -127,20 +150,20 @@ export async function handleRequest(
     /^\/api\/videos\/([^/]+)\/transcript$/,
   );
   if (request.method === "GET" && transcriptReadMatch) {
-    return handleTranscriptRead(transcriptReadMatch[1], env);
+    return handleTranscriptRead(transcriptReadMatch[1], env, user!);
   }
 
   const videoMatch = url.pathname.match(/^\/api\/videos\/([^/]+)$/);
   if (request.method === "GET" && videoMatch) {
-    return handleGetSourceVideo(videoMatch[1], env, ctx, url.origin);
+    return handleGetSourceVideo(videoMatch[1], env, ctx, url.origin, user!);
   }
 
   if (request.method === "PATCH" && videoMatch) {
-    return handleUpdateSourceVideo(request, videoMatch[1], env);
+    return handleUpdateSourceVideo(request, videoMatch[1], env, user!);
   }
 
   if (request.method === "DELETE" && videoMatch) {
-    return handleDeleteSourceVideo(videoMatch[1], env);
+    return handleDeleteSourceVideo(videoMatch[1], env, user!);
   }
 
   if (request.method === "POST" && url.pathname === "/api/helper/claim") {
@@ -179,17 +202,17 @@ export async function handleRequest(
     url.pathname.endsWith("/gif")
   ) {
     const clipId = url.pathname.slice("/api/clips/".length, -"/gif".length);
-    return handleRequestGifExport(clipId, env, ctx);
+    return handleRequestGifExport(clipId, env, ctx, user!);
   }
 
   if (request.method === "GET" && url.pathname.startsWith("/api/clips/")) {
     const clipId = url.pathname.slice("/api/clips/".length);
-    return handleGetClip(clipId, env, ctx, url.origin);
+    return handleGetClip(clipId, env, ctx, url.origin, user!);
   }
 
   if (request.method === "DELETE" && url.pathname.startsWith("/api/clips/")) {
     const clipId = url.pathname.slice("/api/clips/".length);
-    return handleDeleteClip(clipId, env);
+    return handleDeleteClip(clipId, env, user!);
   }
 
   if (
@@ -220,7 +243,11 @@ export async function handleRequest(
   }
 
   if (request.method === "GET" && url.pathname.startsWith("/artifacts/")) {
-    return handleArtifactRequest(url.pathname.slice("/artifacts/".length), env);
+    return handleArtifactRequest(
+      url.pathname.slice("/artifacts/".length),
+      env,
+      user!,
+    );
   }
 
   return env.ASSETS.fetch(request);
@@ -229,8 +256,9 @@ export async function handleRequest(
 async function handleTranscriptCheck(
   videoId: string,
   env: Env,
+  user: AuthenticatedUser,
 ): Promise<Response> {
-  const existing = await getSourceVideoById(env.DB, videoId);
+  const existing = await getSourceVideoByIdForOwner(env.DB, videoId, user.id);
   if (!existing) {
     return json({ error: "Video not found" }, 404);
   }
@@ -258,8 +286,9 @@ async function handleTranscriptSearch(
   request: Request,
   videoId: string,
   env: Env,
+  user: AuthenticatedUser,
 ): Promise<Response> {
-  const existing = await getSourceVideoById(env.DB, videoId);
+  const existing = await getSourceVideoByIdForOwner(env.DB, videoId, user.id);
   if (!existing) {
     return json({ error: "Video not found" }, 404);
   }
@@ -354,8 +383,9 @@ async function handleTranscriptSearch(
 async function handleTranscriptRead(
   videoId: string,
   env: Env,
+  user: AuthenticatedUser,
 ): Promise<Response> {
-  const existing = await getSourceVideoById(env.DB, videoId);
+  const existing = await getSourceVideoByIdForOwner(env.DB, videoId, user.id);
   if (!existing) {
     return json({ error: "Video not found" }, 404);
   }
@@ -383,6 +413,7 @@ async function handleCreateClip(
   request: Request,
   env: Env,
   ctx: ExecutionContext,
+  user: AuthenticatedUser,
 ): Promise<Response> {
   let body: unknown;
   try {
@@ -404,6 +435,12 @@ async function handleCreateClip(
 
   if (clipRequest.source.type === "upload") {
     const uploadKey = clipRequest.source.key;
+    const ownsUpload =
+      isOwnedUploadKey(uploadKey, user.id) ||
+      (await isOwnedUploadSource(env.DB, uploadKey, user.id));
+    if (!ownsUpload) {
+      return json({ error: "Upload not found" }, 404);
+    }
     const object = await env.CLIPS_BUCKET.head(uploadKey);
     if (!object) {
       return json(
@@ -440,6 +477,7 @@ async function handleCreateClip(
     env,
     ctx,
     new URL(request.url).origin,
+    user,
   );
 }
 
@@ -448,6 +486,7 @@ async function handleCreateClipForVideo(
   videoId: string,
   env: Env,
   ctx: ExecutionContext,
+  user: AuthenticatedUser,
 ): Promise<Response> {
   let body: unknown;
   try {
@@ -457,6 +496,7 @@ async function handleCreateClipForVideo(
   }
 
   const result = await createClipForVideo({
+    ownerId: user.id,
     videoId,
     input: body,
     env,
@@ -477,9 +517,11 @@ async function createClipJob(
   env: Env,
   ctx: ExecutionContext,
   origin: string,
+  user: AuthenticatedUser,
   videoId?: string,
 ): Promise<Response> {
   const clip = await enqueueClip({
+    ownerId: user.id,
     clipRequest,
     env,
     origin,
@@ -493,8 +535,9 @@ async function handleSourceVideoSource(
   request: Request,
   videoId: string,
   env: Env,
+  user: AuthenticatedUser,
 ): Promise<Response> {
-  const video = await getSourceVideoById(env.DB, videoId);
+  const video = await getSourceVideoByIdForOwner(env.DB, videoId, user.id);
   if (!video) {
     return json({ error: "Video not found" }, 404);
   }
@@ -561,6 +604,7 @@ async function handleListSourceVideos(
   url: URL,
   env: Env,
   ctx: ExecutionContext,
+  user: AuthenticatedUser,
 ): Promise<Response> {
   const limit = Math.min(
     Math.max(parseInt(url.searchParams.get("limit") ?? "", 10) || DEFAULT_LIST_LIMIT, 1),
@@ -573,6 +617,7 @@ async function handleListSourceVideos(
   await sweepStaleClips(env.DB);
   const { videos, total } = await listSourceVideos(
     env.DB,
+    user.id,
     limit,
     offset,
     archived,
@@ -596,6 +641,7 @@ async function handleListSourceVideos(
 async function handleCreateSourceVideo(
   request: Request,
   env: Env,
+  user: AuthenticatedUser,
 ): Promise<Response> {
   let body: unknown;
   try {
@@ -619,7 +665,15 @@ async function handleCreateSourceVideo(
   const sourceTitle =
     validation.value.title ||
     fallbackSourceTitle(source, "Uploaded video");
-  const videoId = await ensureSourceVideo(env.DB, {
+  if (
+    source.type === "upload" &&
+    !isOwnedUploadKey(source.key, user.id) &&
+    !(await isOwnedUploadSource(env.DB, source.key, user.id))
+  ) {
+    return json({ error: "Upload not found" }, 404);
+  }
+
+  const videoId = await ensureSourceVideo(env.DB, user.id, {
     source,
     title: sourceTitle,
     updateUploadTitle: Boolean(
@@ -633,7 +687,7 @@ async function handleCreateSourceVideo(
       validation.value.durationSeconds,
     );
   }
-  const video = await getSourceVideoById(env.DB, videoId);
+  const video = await getSourceVideoByIdForOwner(env.DB, videoId, user.id);
   if (!video) {
     return json({ error: "Failed to create video" }, 500);
   }
@@ -644,9 +698,15 @@ async function handleUpdateSourceVideo(
   request: Request,
   videoId: string,
   env: Env,
+  user: AuthenticatedUser,
 ): Promise<Response> {
   if (!videoId) {
     return json({ error: "Video id is required" }, 400);
+  }
+
+  const existing = await getSourceVideoByIdForOwner(env.DB, videoId, user.id);
+  if (!existing) {
+    return json({ error: "Video not found" }, 404);
   }
 
   let body: { archived?: unknown; durationSeconds?: unknown };
@@ -723,15 +783,16 @@ async function handleUpdateSourceVideo(
   if (!updated) {
     return json({ error: "Video not found" }, 404);
   }
-  const video = await getSourceVideoById(env.DB, videoId);
+  const video = await getSourceVideoByIdForOwner(env.DB, videoId, user.id);
   return json(sourceVideoRecordToResponse(video!, env.R2_PUBLIC_PREFIX));
 }
 
 async function handleDeleteSourceVideo(
   videoId: string,
   env: Env,
+  user: AuthenticatedUser,
 ): Promise<Response> {
-  const video = await getSourceVideoById(env.DB, videoId);
+  const video = await getSourceVideoByIdForOwner(env.DB, videoId, user.id);
   if (!video) {
     return json({ error: "Video not found" }, 404);
   }
@@ -754,6 +815,7 @@ async function handleGetSourceVideo(
   env: Env,
   ctx: ExecutionContext,
   origin: string,
+  user: AuthenticatedUser,
 ): Promise<Response> {
   if (!videoId) {
     return json({ error: "Video id is required" }, 400);
@@ -762,8 +824,8 @@ async function handleGetSourceVideo(
   await sweepAndRecoverHelperClips(env, origin, ctx);
   await sweepStaleClips(env.DB);
   const [video, clips] = await Promise.all([
-    getSourceVideoById(env.DB, videoId),
-    listClipsByVideoId(env.DB, videoId),
+    getSourceVideoByIdForOwner(env.DB, videoId, user.id),
+    listClipsByVideoIdForOwner(env.DB, videoId, user.id),
   ]);
 
   if (!video) {
@@ -790,6 +852,7 @@ async function handleListClips(
   url: URL,
   env: Env,
   ctx: ExecutionContext,
+  user: AuthenticatedUser,
 ): Promise<Response> {
   const limit = Math.min(
     Math.max(parseInt(url.searchParams.get("limit") ?? "", 10) || DEFAULT_LIST_LIMIT, 1),
@@ -804,7 +867,7 @@ async function handleListClips(
       shouldRetain: (key) => isRetainedUploadSource(env.DB, key),
     }),
   );
-  const { clips, total } = await listClips(env.DB, limit, offset);
+  const { clips, total } = await listClips(env.DB, user.id, limit, offset);
   const prefix = env.R2_PUBLIC_PREFIX;
 
   return json({
@@ -818,12 +881,13 @@ async function handleListClips(
 async function handleDeleteClip(
   clipId: string,
   env: Env,
+  user: AuthenticatedUser,
 ): Promise<Response> {
   if (!clipId) {
     return json({ error: "Clip id is required" }, 400);
   }
 
-  const record = await getClipById(env.DB, clipId);
+  const record = await getClipByIdForOwner(env.DB, clipId, user.id);
   if (!record) {
     return json({ error: "Clip not found" }, 404);
   }
@@ -842,13 +906,14 @@ async function handleGetClip(
   env: Env,
   ctx: ExecutionContext,
   origin: string,
+  user: AuthenticatedUser,
 ): Promise<Response> {
   if (!clipId) {
     return json({ error: "Clip id is required" }, 400);
   }
 
   await sweepAndRecoverHelperClips(env, origin, ctx);
-  const record = await getClipById(env.DB, clipId);
+  const record = await getClipByIdForOwner(env.DB, clipId, user.id);
   if (!record) {
     return json({ error: "Clip not found" }, 404);
   }
@@ -860,12 +925,13 @@ async function handleRequestGifExport(
   clipId: string,
   env: Env,
   ctx: ExecutionContext,
+  user: AuthenticatedUser,
 ): Promise<Response> {
   if (!clipId) {
     return json({ error: "Clip id is required" }, 400);
   }
 
-  const record = await getClipById(env.DB, clipId);
+  const record = await getClipByIdForOwner(env.DB, clipId, user.id);
   if (!record) {
     return json({ error: "Clip not found" }, 404);
   }
@@ -895,7 +961,7 @@ async function handleRequestGifExport(
 
   const started = await markGifEncoding(env.DB, clipId);
   if (!started) {
-    const latest = await getClipById(env.DB, clipId);
+    const latest = await getClipByIdForOwner(env.DB, clipId, user.id);
     if (!latest) {
       return json({ error: "Clip not found" }, 404);
     }
@@ -904,7 +970,7 @@ async function handleRequestGifExport(
 
   ctx.waitUntil(dispatchGifExportJob(env, clipId));
 
-  const updated = await getClipById(env.DB, clipId);
+  const updated = await getClipByIdForOwner(env.DB, clipId, user.id);
   return json(recordToResponse(updated!, env.R2_PUBLIC_PREFIX), 202);
 }
 
@@ -913,7 +979,11 @@ async function handleRequestUploadUrl(
   env: Env,
   url: URL,
   ctx: ExecutionContext,
+  user: AuthenticatedUser | null,
 ): Promise<Response> {
+  if (!user && !validHelperRequest(request, env)) {
+    return json({ error: "Unauthorized" }, 401);
+  }
   let body: unknown;
   try {
     body = await request.json();
@@ -936,7 +1006,7 @@ async function handleRequestUploadUrl(
     }),
   );
 
-  const key = generateUploadKey(validation.value.contentType);
+  const key = generateUploadKey(validation.value.contentType, user?.id);
   const uploadUrl = `${url.origin}/api/uploads/${encodeURIComponent(key)}`;
 
   return json({
@@ -952,10 +1022,17 @@ async function handleUploadPut(
   request: Request,
   env: Env,
   encodedKey: string,
+  user: AuthenticatedUser | null,
 ): Promise<Response> {
+  if (!user && !validHelperRequest(request, env)) {
+    return json({ error: "Unauthorized" }, 401);
+  }
   const key = decodeUploadPathParam(encodedKey);
   if (!key) {
     return json({ error: "Invalid upload key" }, 400);
+  }
+  if (user && !isOwnedUploadKey(key, user.id)) {
+    return json({ error: "Upload not found" }, 404);
   }
 
   const maxSizeBytes = maxUploadSizeBytes(env);
@@ -1136,7 +1213,15 @@ async function handleInternalStatusUpdate(
   return json(recordToResponse(updated!, env.R2_PUBLIC_PREFIX));
 }
 
-async function handleArtifactRequest(key: string, env: Env): Promise<Response> {
+async function handleArtifactRequest(
+  key: string,
+  env: Env,
+  user: AuthenticatedUser,
+): Promise<Response> {
+  const clipId = key.match(/^clips\/([^/]+)\/(?:clip\.(?:mp4|gif)|thumbnail\.jpg)$/)?.[1];
+  if (!clipId || !(await getClipByIdForOwner(env.DB, clipId, user.id))) {
+    return new Response("Not found", { status: 404 });
+  }
   const object = await env.CLIPS_BUCKET.get(key);
   if (!object) {
     return new Response("Not found", { status: 404 });
@@ -1145,9 +1230,19 @@ async function handleArtifactRequest(key: string, env: Env): Promise<Response> {
   const headers = new Headers();
   object.writeHttpMetadata(headers);
   headers.set("etag", object.httpEtag);
-  headers.set("cache-control", "public, max-age=31536000, immutable");
+  headers.set("cache-control", "private, no-store");
 
   return new Response(object.body, { headers });
+}
+
+function validHelperRequest(request: Request, env: Env): boolean {
+  return Boolean(
+    env.HELPER_TOKEN &&
+      verifyHelperToken(
+        request.headers.get(HELPER_TOKEN_HEADER),
+        env.HELPER_TOKEN,
+      ),
+  );
 }
 
 function verifyInternalJobAuth(

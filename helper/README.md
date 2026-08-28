@@ -30,8 +30,8 @@ Default path: `~/.config/carpo-helper/config.json` (override with `--config` or 
 | `pollIntervalSeconds` | no | `5` | Seconds between claim polls when idle |
 | `ytDlpPath` | no | `"yt-dlp"` | Path to yt-dlp binary |
 | `ffprobePath` | no | `"ffprobe"` | Path to ffprobe (used to verify section alignment) |
-| `cfAccessClientId` | no | — | Cloudflare Access service token ID |
-| `cfAccessClientSecret` | no | — | Cloudflare Access service token secret |
+| `cfAccessClientId` | for Access-protected servers | — | Cloudflare Access service token ID |
+| `cfAccessClientSecret` | for Access-protected servers | — | Cloudflare Access service token secret |
 
 Both CF Access fields must be set together; when present, they are sent on every API request.
 

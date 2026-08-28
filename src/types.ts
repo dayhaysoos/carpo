@@ -86,6 +86,7 @@ export interface CreateClipRequest {
 
 export interface ClipRecord {
   id: string;
+  owner_id: string;
   title: string;
   source_type: SourceType;
   source_ref: string;
@@ -138,6 +139,7 @@ export interface ClipResponse {
 
 export interface SourceVideoRecord {
   id: string;
+  owner_id: string;
   source_type: SourceType;
   source_ref: string;
   title: string;

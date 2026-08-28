@@ -25,6 +25,7 @@ export interface InsertClipOptions {
 
 export async function insertClip(
   db: D1Database,
+  ownerId: string,
   id: string,
   request: CreateClipRequest,
   options?: InsertClipOptions,
@@ -37,7 +38,7 @@ export async function insertClip(
   const explicitSourceTitle = request.sourceTitle?.trim();
   const videoId =
     options?.videoId ??
-    (await ensureSourceVideo(db, {
+    (await ensureSourceVideo(db, ownerId, {
       source: request.source,
       title:
         explicitSourceTitle ||
@@ -50,13 +51,14 @@ export async function insertClip(
   await db
     .prepare(
       `INSERT INTO clips (
-        id, title, source_type, source_ref, trim_start, trim_end,
+        id, owner_id, title, source_type, source_ref, trim_start, trim_end,
         quality, caption, filters_json, status, callback_secret, helper_state,
         video_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?)`,
     )
     .bind(
       id,
+      ownerId,
       request.title,
       sourceType,
       sourceRef,
@@ -80,6 +82,7 @@ export async function insertClip(
 
 export async function ensureSourceVideo(
   db: D1Database,
+  ownerId: string,
   input: {
     source: ClipSource;
     title: string;
@@ -93,32 +96,32 @@ export async function ensureSourceVideo(
   if (input.updateUploadTitle && sourceType === "upload") {
     await db
       .prepare(
-        `INSERT INTO source_videos (id, source_type, source_ref, title)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT (source_type, source_ref) DO UPDATE SET
+        `INSERT INTO source_videos (id, owner_id, source_type, source_ref, title)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (owner_id, source_type, source_ref) DO UPDATE SET
            title = excluded.title,
            updated_at = datetime('now')`,
       )
-      .bind(id, sourceType, sourceRef, input.title)
+      .bind(id, ownerId, sourceType, sourceRef, input.title)
       .run();
   } else {
     await db
       .prepare(
-        `INSERT INTO source_videos (id, source_type, source_ref, title)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT (source_type, source_ref) DO UPDATE SET
+        `INSERT INTO source_videos (id, owner_id, source_type, source_ref, title)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (owner_id, source_type, source_ref) DO UPDATE SET
            updated_at = datetime('now')`,
       )
-      .bind(id, sourceType, sourceRef, input.title)
+      .bind(id, ownerId, sourceType, sourceRef, input.title)
       .run();
   }
 
   const record = await db
     .prepare(
       `SELECT id FROM source_videos
-       WHERE source_type = ? AND source_ref = ?`,
+       WHERE owner_id = ? AND source_type = ? AND source_ref = ?`,
     )
-    .bind(sourceType, sourceRef)
+    .bind(ownerId, sourceType, sourceRef)
     .first<{ id: string }>();
 
   if (!record) {
@@ -134,6 +137,17 @@ export async function getClipById(
   return db
     .prepare("SELECT * FROM clips WHERE id = ?")
     .bind(id)
+    .first<ClipRecord>();
+}
+
+export async function getClipByIdForOwner(
+  db: D1Database,
+  id: string,
+  ownerId: string,
+): Promise<ClipRecord | null> {
+  return db
+    .prepare("SELECT * FROM clips WHERE id = ? AND owner_id = ?")
+    .bind(id, ownerId)
     .first<ClipRecord>();
 }
 
@@ -279,17 +293,21 @@ export async function sweepStaleClips(db: D1Database): Promise<number> {
 
 export async function listClips(
   db: D1Database,
+  ownerId: string,
   limit: number,
   offset: number,
 ): Promise<{ clips: ClipRecord[]; total: number }> {
   const totalResult = await db
-    .prepare("SELECT COUNT(*) as count FROM clips")
+    .prepare("SELECT COUNT(*) as count FROM clips WHERE owner_id = ?")
+    .bind(ownerId)
     .first<{ count: number }>();
   const total = totalResult?.count ?? 0;
 
   const result = await db
-    .prepare("SELECT * FROM clips ORDER BY created_at DESC LIMIT ? OFFSET ?")
-    .bind(limit, offset)
+    .prepare(
+      "SELECT * FROM clips WHERE owner_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+    )
+    .bind(ownerId, limit, offset)
     .all<ClipRecord>();
 
   return { clips: result.results ?? [], total };
@@ -298,6 +316,7 @@ export async function listClips(
 const SOURCE_VIDEO_SELECT = `
   SELECT
     source_videos.id,
+    source_videos.owner_id,
     source_videos.source_type,
     source_videos.source_ref,
     source_videos.title,
@@ -310,6 +329,7 @@ const SOURCE_VIDEO_SELECT = `
       SELECT preview.output_thumbnail_key
       FROM clips AS preview
       WHERE preview.video_id = source_videos.id
+        AND preview.owner_id = source_videos.owner_id
         AND preview.output_thumbnail_key IS NOT NULL
       ORDER BY preview.created_at DESC
       LIMIT 1
@@ -329,10 +349,12 @@ const SOURCE_VIDEO_SELECT = `
     source_videos.created_at,
     COALESCE(MAX(clips.updated_at), source_videos.updated_at) AS updated_at
   FROM source_videos
-  LEFT JOIN clips ON clips.video_id = source_videos.id`;
+  LEFT JOIN clips ON clips.video_id = source_videos.id
+    AND clips.owner_id = source_videos.owner_id`;
 
 export async function listSourceVideos(
   db: D1Database,
+  ownerId: string,
   limit: number,
   offset: number,
   archived = false,
@@ -344,19 +366,20 @@ export async function listSourceVideos(
     .prepare(
       `SELECT COUNT(*) AS count
        FROM source_videos
-       WHERE ${archiveClause}`,
+       WHERE source_videos.owner_id = ? AND ${archiveClause}`,
     )
+    .bind(ownerId)
     .first<{ count: number }>();
 
   const result = await db
     .prepare(
       `${SOURCE_VIDEO_SELECT}
-       WHERE ${archiveClause}
+       WHERE source_videos.owner_id = ? AND ${archiveClause}
        GROUP BY source_videos.id
        ORDER BY updated_at DESC
        LIMIT ? OFFSET ?`,
     )
-    .bind(limit, offset)
+    .bind(ownerId, limit, offset)
     .all<SourceVideoRecord>();
 
   return {
@@ -607,6 +630,21 @@ export async function getSourceVideoById(
     .first<SourceVideoRecord>();
 }
 
+export async function getSourceVideoByIdForOwner(
+  db: D1Database,
+  id: string,
+  ownerId: string,
+): Promise<SourceVideoRecord | null> {
+  return db
+    .prepare(
+      `${SOURCE_VIDEO_SELECT}
+       WHERE source_videos.id = ? AND source_videos.owner_id = ?
+       GROUP BY source_videos.id`,
+    )
+    .bind(id, ownerId)
+    .first<SourceVideoRecord>();
+}
+
 export async function listClipsByVideoId(
   db: D1Database,
   videoId: string,
@@ -620,6 +658,39 @@ export async function listClipsByVideoId(
     .bind(videoId)
     .all<ClipRecord>();
   return result.results ?? [];
+}
+
+export async function listClipsByVideoIdForOwner(
+  db: D1Database,
+  videoId: string,
+  ownerId: string,
+): Promise<ClipRecord[]> {
+  const result = await db
+    .prepare(
+      `SELECT * FROM clips
+       WHERE video_id = ? AND owner_id = ?
+       ORDER BY created_at DESC`,
+    )
+    .bind(videoId, ownerId)
+    .all<ClipRecord>();
+  return result.results ?? [];
+}
+
+export async function isOwnedUploadSource(
+  db: D1Database,
+  key: string,
+  ownerId: string,
+): Promise<boolean> {
+  const record = await db
+    .prepare(
+      `SELECT 1 AS owned
+       FROM source_videos
+       WHERE owner_id = ? AND source_type = 'upload' AND source_ref = ?
+       LIMIT 1`,
+    )
+    .bind(ownerId, key)
+    .first<{ owned: number }>();
+  return record?.owned === 1;
 }
 
 export async function deleteClip(db: D1Database, id: string): Promise<boolean> {
