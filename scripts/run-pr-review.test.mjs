@@ -16,6 +16,21 @@ import {
 } from "./pr-review-proof-challenges.mjs";
 
 describe("backend-neutral PR review runner", () => {
+  it("installs exact workspace dependencies before Actions invokes the runner", async () => {
+    const workflow = await readFile(
+      new URL("../.github/workflows/pr-browser-review.yml", import.meta.url),
+      "utf8",
+    );
+    const installIndex = workflow.indexOf("- name: Install exact candidate dependencies");
+    const reviewIndex = workflow.indexOf(
+      "- name: Run the backend-neutral exact-candidate review",
+    );
+
+    assert.notEqual(installIndex, -1);
+    assert.ok(reviewIndex > installIndex);
+    assert.match(workflow.slice(installIndex, reviewIndex), /run: npm ci/);
+  });
+
   it("creates an allowlisted manual execution identity", () => {
     assert.equal(
       createManualExecutionId(
@@ -75,9 +90,9 @@ describe("backend-neutral PR review runner", () => {
   it("selects only the repository-owned one-time proof challenge path", () => {
     assert.equal(
       selectProofChallenge([
-        { path: "review-challenges/multilingual-pants.json" },
+        { path: "review-challenges/multilingual-shirt.json" },
       ])?.id,
-      "multilingual-pants",
+      "multilingual-shirt",
     );
     assert.equal(
       selectProofChallenge([

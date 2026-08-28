@@ -135,6 +135,14 @@ function passedAssertionCount(assertions) {
   return assertions.filter((assertion) => assertion?.status === "passed").length;
 }
 
+function renderCaptureTimestamp(value) {
+  if (typeof value !== "string") return "not recorded";
+  const timestamp = new Date(value);
+  return Number.isNaN(timestamp.valueOf())
+    ? "not recorded"
+    : timestamp.toISOString();
+}
+
 function renderScreenshotCell(item, alt) {
   if (!item) return "<td><em>Unavailable</em></td>";
   return `<td><a href="${escapeHtml(item.url)}"><img src="${escapeHtml(item.url)}" alt="${escapeHtml(alt)}" width="360"></a></td>`;
@@ -274,6 +282,7 @@ export function renderReviewComment({
   repository,
   pr,
   sha,
+  executionId,
   sourceUrl,
   result,
   evidence,
@@ -285,6 +294,10 @@ export function renderReviewComment({
   const passedAssertions = passedAssertionCount(assertions);
   const diagnostics = diagnosticCount(result?.diagnostics);
   const shortSha = sha.slice(0, 7);
+  const captureTimestamp = renderCaptureTimestamp(result?.completedAt);
+  const safeExecutionId = EXECUTION_ID_PATTERN.test(executionId ?? "")
+    ? executionId
+    : "not recorded";
   const commitUrl = `https://github.com/${repository}/commit/${sha}`;
   const sourceLabel = sourceUrl.includes("/actions/runs/")
     ? "Actions run"
@@ -298,6 +311,8 @@ export function renderReviewComment({
     `## Carpo PR browser review: ${statusLabel}`,
     "",
     `Reviewed commit [\`${escapeHtml(shortSha)}\`](${commitUrl}) for PR #${escapeHtml(pr)} · [${sourceLabel}](${escapeHtml(sourceUrl)})`,
+    "",
+    `**Evidence captured:** \`${captureTimestamp}\` · **Execution:** \`${safeExecutionId}\``,
     "",
     `**Assertions:** ${passedAssertions}/${assertions.length} passed · **Browser diagnostics:** ${diagnostics}`,
   ];

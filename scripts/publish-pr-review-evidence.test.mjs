@@ -46,6 +46,7 @@ describe("PR review evidence publisher", () => {
       workflowStatus: "success",
       result: {
         status: "passed",
+        completedAt: "2026-08-27T22:54:12.000Z",
         assertions: [{ label: "Create renders", status: "passed" }],
         diagnostics: { consoleErrors: [], failedRequests: [] },
         proofBoundary: "This proves the bounded browser surfaces only.",
@@ -62,6 +63,8 @@ describe("PR review evidence publisher", () => {
     assert.match(body, /Carpo PR browser review: ✅ PASS/);
     assert.match(body, /<img src="https:\/\/carpo-pr-review/);
     assert.match(body, /1\/1 passed/);
+    assert.match(body, /Evidence captured.*2026-08-27T22:54:12\.000Z/);
+    assert.match(body, /actions-32981962097-1/);
     assert.match(body, /expire after 14 days/);
     assert.match(body, /bounded browser surfaces only/);
   });

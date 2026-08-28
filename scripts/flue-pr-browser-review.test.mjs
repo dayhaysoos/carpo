@@ -253,7 +253,7 @@ describe("bounded Flue browser review", () => {
       diffText: "diff",
       outputDir,
       diagnostics: {},
-      proofChallenge: "multilingual-pants",
+      proofChallenge: "multilingual-shirt",
     });
     adapter.elements.set("e1", {
       id: "e1",
@@ -270,11 +270,11 @@ describe("bounded Flue browser review", () => {
 
     try {
       await assert.rejects(
-        () => adapter.fill("e2", "pants"),
+        () => adapter.fill("e2", "shirt"),
         /Create Title field/,
       );
       await assert.rejects(
-        () => adapter.fill("e1", "pantalones"),
+        () => adapter.fill("e1", "camisa"),
         /exact English value/,
       );
       await assert.rejects(
@@ -287,7 +287,7 @@ describe("bounded Flue browser review", () => {
         /all 4 host proof challenge steps/,
       );
 
-      const values = ["pants", "pantalones", "pantalon", "ズボン"];
+      const values = ["shirt", "camisa", "chemise", "シャツ"];
       for (const value of values) {
         await adapter.fill("e1", value);
         await adapter.captureEvidence("model supplied note is replaced");
@@ -298,14 +298,14 @@ describe("bounded Flue browser review", () => {
       assert.deepEqual(
         result.completedSteps.map(({ language, value }) => ({ language, value })),
         [
-          { language: "English", value: "pants" },
-          { language: "Spanish", value: "pantalones" },
-          { language: "French", value: "pantalon" },
-          { language: "Japanese", value: "ズボン" },
+          { language: "English", value: "shirt" },
+          { language: "Spanish", value: "camisa" },
+          { language: "French", value: "chemise" },
+          { language: "Japanese", value: "シャツ" },
         ],
       );
       assert.equal(adapter.screenshots.length, 4);
-      assert.match(adapter.screenshots[1].note, /Spanish Title is "pantalones"/);
+      assert.match(adapter.screenshots[1].note, /Spanish Title is "camisa"/);
       assert.equal(adapter.screenshots[3].proofChallenge.step, 4);
     } finally {
       await rm(outputDir, { recursive: true, force: true });

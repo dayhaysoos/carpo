@@ -48,19 +48,19 @@ const UNSUPPORTED_TESTED_AREA =
 const CANONICAL_REMAINING_RISK =
   "Direct API behavior, upload execution, clip creation, encoding, media playback, YouTube reliability, and production behavior remain unverified.";
 
-const MULTILINGUAL_PANTS = Object.freeze({
-  id: "multilingual-pants",
-  changedPath: "review-challenges/multilingual-pants.json",
+const MULTILINGUAL_SHIRT = Object.freeze({
+  id: "multilingual-shirt",
+  changedPath: "review-challenges/multilingual-shirt.json",
   steps: Object.freeze([
-    Object.freeze({ language: "English", value: "pants" }),
-    Object.freeze({ language: "Spanish", value: "pantalones" }),
-    Object.freeze({ language: "French", value: "pantalon" }),
-    Object.freeze({ language: "Japanese", value: "ズボン" }),
+    Object.freeze({ language: "English", value: "shirt" }),
+    Object.freeze({ language: "Spanish", value: "camisa" }),
+    Object.freeze({ language: "French", value: "chemise" }),
+    Object.freeze({ language: "Japanese", value: "シャツ" }),
   ]),
 });
-/** @type {Map<string, typeof MULTILINGUAL_PANTS>} */
+/** @type {Map<string, typeof MULTILINGUAL_SHIRT>} */
 const PROOF_CHALLENGES = new Map([
-  [MULTILINGUAL_PANTS.id, MULTILINGUAL_PANTS],
+  [MULTILINGUAL_SHIRT.id, MULTILINGUAL_SHIRT],
 ]);
 
 /**
@@ -78,7 +78,7 @@ const PROOF_CHALLENGES = new Map([
  */
 
 export const PR_REVIEW_PROOF_CHALLENGES = Object.freeze({
-  multilingualPants: MULTILINGUAL_PANTS,
+  multilingualShirt: MULTILINGUAL_SHIRT,
 });
 
 export const readReviewMaterialInputSchema = v.object({
@@ -666,8 +666,8 @@ export function selectProofChallenge(files) {
       .map((file) => (typeof file === "string" ? file : file?.path))
       .filter((file) => typeof file === "string"),
   );
-  return changedPaths.has(MULTILINGUAL_PANTS.changedPath)
-    ? MULTILINGUAL_PANTS
+  return changedPaths.has(MULTILINGUAL_SHIRT.changedPath)
+    ? MULTILINGUAL_SHIRT
     : undefined;
 }
 
