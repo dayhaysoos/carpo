@@ -1,11 +1,39 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { listClips } from "../api";
-import { ClipFailureMessage } from "./ClipFailureMessage";
-import { CLIPS_QUERY_KEY } from "../queries";
 import { isYoutubeBlockedError } from "../errors";
+import { CLIPS_QUERY_KEY } from "../queries";
 import { isTerminalStatus, statusLabel, statusProgress } from "../status";
 import type { ClipResponse } from "../types";
+import { ClipFailureMessage } from "./ClipFailureMessage";
+
+interface StatusPanelScope {
+  excludeVideoId?: string;
+  includeBlockedFailureVideoId?: string;
+}
+
+export function visibleStatusPanelClips(
+  clips: readonly ClipResponse[],
+  scope: StatusPanelScope,
+) {
+  const inFlightClips = clips.filter(
+    (clip) =>
+      !isTerminalStatus(clip.status) && clip.videoId !== scope.excludeVideoId,
+  );
+  const blockedFailureClips = scope.includeBlockedFailureVideoId
+    ? clips.filter(
+        (clip) =>
+          clip.videoId === scope.includeBlockedFailureVideoId &&
+          clip.status === "failed" &&
+          isYoutubeBlockedError(clip.errorMessage),
+      )
+    : [];
+  return {
+    inFlightClips,
+    blockedFailureClips,
+    visibleClips: [...inFlightClips, ...blockedFailureClips],
+  };
+}
 
 function JobCard({ clip }: { clip: ClipResponse }) {
   const progress = statusProgress(clip.status);
@@ -39,7 +67,10 @@ function JobCard({ clip }: { clip: ClipResponse }) {
   );
 }
 
-export function StatusPanel() {
+export function StatusPanel({
+  excludeVideoId,
+  includeBlockedFailureVideoId,
+}: StatusPanelScope) {
   const { data, error, isLoading } = useQuery({
     queryKey: CLIPS_QUERY_KEY,
     queryFn: () => listClips(),
@@ -50,25 +81,26 @@ export function StatusPanel() {
     },
   });
 
-  const inFlightClips =
-    data?.clips.filter((clip) => !isTerminalStatus(clip.status)) ?? [];
-  const blockedFailureClips =
-    data?.clips.filter(
-      (clip) =>
-        clip.status === "failed" && isYoutubeBlockedError(clip.errorMessage),
-    ) ?? [];
-  const visibleClips = [...inFlightClips, ...blockedFailureClips];
+  const { inFlightClips, visibleClips } = visibleStatusPanelClips(
+    data?.clips ?? [],
+    {
+      excludeVideoId,
+      includeBlockedFailureVideoId,
+    },
+  );
 
   return (
     <section className="status-panel card">
       <div className="card-header">
-        <h2>Jobs</h2>
+        <h2>{excludeVideoId ? "Other jobs" : "Jobs"}</h2>
         <p>
           {visibleClips.length === 0
-            ? "Created clips appear here while encoding."
+            ? excludeVideoId
+              ? "Background work from your other videos appears here."
+              : "Created clips appear here while encoding."
             : inFlightClips.length > 0
               ? `${inFlightClips.length} in progress`
-              : "Recent YouTube failures"}
+              : "Current YouTube clip needs attention"}
         </p>
       </div>
 

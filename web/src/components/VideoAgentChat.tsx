@@ -3,7 +3,10 @@ import { getToolName, isToolUIPart } from "ai";
 import type { UIMessage } from "ai";
 import { useAgent } from "agents/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ClipProposalReview } from "../clip-proposal-review";
+import {
+  ClipProposalReview,
+  type CreatedClipResult,
+} from "../clip-proposal-review";
 import { createClipProposalReview } from "../create-clip-proposal-review";
 import { useClipProposalReview } from "../hooks/useClipProposalReview";
 import { extractThinkClipProposalSubmissions } from "../think-clip-proposals";
@@ -21,7 +24,7 @@ interface VideoAgentChatProps {
   source?: ClipSource;
   retainedSourceReady?: boolean;
   videoDurationSeconds?: number | null;
-  onClipCreated: () => void;
+  onClipCreated: (clip: CreatedClipResult) => void;
   onTimestampSelect: (window: TimestampWindow) => void;
   existingClips?: ExistingClipRange[];
   proposalReview?: ClipProposalReview;
