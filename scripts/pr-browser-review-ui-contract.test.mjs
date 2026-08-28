@@ -19,8 +19,12 @@ describe("PR browser review UI contract", () => {
 
     assert.equal(label, "Overlay text (optional)");
     assert.ok(
-      browserReview.includes(`page.getByLabel(${JSON.stringify(label)})`),
+      browserReview.includes(`.getByLabel(${JSON.stringify(label)})`),
       `Browser review must locate the Creator form overlay field by ${JSON.stringify(label)}`,
+    );
+    assert.ok(
+      browserReview.includes('.getByLabel("Caption (optional)")'),
+      "Browser review must retain the prior label for exact-base visual capture",
     );
   });
 });

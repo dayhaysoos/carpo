@@ -243,7 +243,9 @@ async function reviewProductSurfaces(page, plan, run) {
   run.assertions.push({ label: "Owned-video upload is the default source mode", status: "passed" });
   await visible(page.getByRole("tab", { name: "YouTube URL" }), "Best-effort YouTube source remains available", run.assertions);
   const title = page.getByLabel("Title");
-  const overlayText = page.getByLabel("Overlay text (optional)");
+  const overlayText = page
+    .getByLabel("Overlay text (optional)")
+    .or(page.getByLabel("Caption (optional)"));
   await title.fill("Manual review title");
   await overlayText.fill("Manual review overlay text");
   if ((await title.inputValue()) !== "Manual review title") {
