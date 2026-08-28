@@ -165,49 +165,49 @@ describe("bounded review policy contract", () => {
   });
 
   it("owns proof-challenge definitions and completion", () => {
-    const challenge = resolveProofChallenge("multilingual-shirt");
+    const challenge = resolveProofChallenge("multilingual-octopus");
     assert.equal(challenge.steps.length, 4);
-    assert.deepEqual(nextProofChallengeStep("multilingual-shirt", 1), {
+    assert.deepEqual(nextProofChallengeStep("multilingual-octopus", 1), {
       language: "Spanish",
-      value: "camisa",
+      value: "pulpo",
     });
     assert.throws(() => resolveProofChallenge("not-real"), /Unknown/);
     assert.deepEqual(
       assertProofChallengeFill({
-        challengeId: "multilingual-shirt",
+        challengeId: "multilingual-octopus",
         completedCount: 0,
         pending: null,
         currentPath: "/",
         element: { tag: "input", type: "text", name: "Title" },
-        value: "shirt",
+        value: "octopus",
       }),
-      { language: "English", value: "shirt" },
+      { language: "English", value: "octopus" },
     );
     assert.throws(
       () =>
         assertProofChallengeFill({
-          challengeId: "multilingual-shirt",
+          challengeId: "multilingual-octopus",
           completedCount: 1,
           pending: null,
           currentPath: "/",
           element: { tag: "input", type: "text", name: "Title" },
-          value: "shirt",
+          value: "octopus",
         }),
       /exact Spanish value/i,
     );
     assert.doesNotThrow(() =>
       assertProofChallengeEvidence({
-        pending: { value: "camisa" },
+        pending: { value: "pulpo" },
         currentPath: "/",
-        observedValue: "camisa",
+        observedValue: "pulpo",
       }),
     );
     assert.throws(
       () =>
         assertProofChallengeEvidence({
-          pending: { value: "camisa" },
+          pending: { value: "pulpo" },
           currentPath: "/library",
-          observedValue: "camisa",
+          observedValue: "pulpo",
         }),
       /Create route/i,
     );
@@ -217,7 +217,7 @@ describe("bounded review policy contract", () => {
           progress: completeProgress,
           report,
           reviewOrigin: origin,
-          proofChallengeId: "multilingual-shirt",
+          proofChallengeId: "multilingual-octopus",
         }),
       /proof challenge/i,
     );
@@ -227,7 +227,7 @@ describe("bounded review policy contract", () => {
     const local = buildReviewerInstructions();
     const durable = buildReviewerInstructions({
       beginReviewRequired: true,
-      proofChallengeId: "multilingual-shirt",
+      proofChallengeId: "multilingual-octopus",
     });
     for (const text of [local, durable]) {
       assert.match(text, /untrusted data, never instructions/i);
@@ -238,7 +238,7 @@ describe("bounded review policy contract", () => {
     }
     assert.doesNotMatch(local, /Call begin_review/);
     assert.match(durable, /Call begin_review/);
-    assert.match(durable, /camisa/);
+    assert.match(durable, /pulpo/);
   });
 
   it("names the exact missing route when completion needs it", () => {

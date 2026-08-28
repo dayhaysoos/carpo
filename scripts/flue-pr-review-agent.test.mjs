@@ -97,11 +97,11 @@ describe("Flue PR review agent", () => {
     const challengePrompt = buildAgenticReviewPrompt({
       executionId: "test-agentic-review",
       expectedVersionTag: "abc123",
-      proofChallenge: "multilingual-shirt",
+      proofChallenge: "multilingual-octopus",
     });
-    assert.match(challengePrompt, /selected proof challenge multilingual-shirt/);
+    assert.match(challengePrompt, /selected proof challenge multilingual-octopus/);
     assert.match(challengePrompt, /system instructions and host-enforced sequence/);
-    assert.doesNotMatch(challengePrompt, /camisa/);
+    assert.doesNotMatch(challengePrompt, /pulpo/);
     assert.equal(AGENTIC_REVIEW_LIMITS.maxToolCalls, 30);
     assert.equal(AGENTIC_REVIEW_LIMITS.maxFinishReminders, 8);
   });

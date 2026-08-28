@@ -259,6 +259,17 @@ function renderAgenticReview(agenticReview, evidence) {
       );
     }
   }
+  if (agenticReview.browserRecording?.status === "captured") {
+    lines.push(
+      "",
+      `**Browser Run replay:** rrweb recording captured for session \`${escapeHtml(agenticReview.browserRecording.sessionId)}\`. Download \`${escapeHtml(agenticReview.browserRecording.artifact ?? "browser-recording.json")}\` from the execution artifact or replay the session from Cloudflare Browser Run. Input values are masked, and actual video/audio playback is not part of the recording.`,
+    );
+  } else if (agenticReview.browserRecording?.status === "failed") {
+    lines.push(
+      "",
+      `**Browser Run replay:** unavailable — ${inlineText(agenticReview.browserRecording.failure ?? "recording finalization failed")}`,
+    );
+  }
   lines.push(
     "",
     `> **Agentic proof boundary:** ${inlineText(agenticReview.proofBoundary ?? "The exploratory result is advisory and bounded to the inspected paths.")}`,

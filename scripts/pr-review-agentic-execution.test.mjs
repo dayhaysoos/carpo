@@ -25,7 +25,7 @@ function request(outputDir) {
     diffPath: path.join(outputDir, "diff.patch"),
     outputDir,
     cwd: "/candidate",
-    proofChallenge: "multilingual-shirt",
+    proofChallenge: "multilingual-octopus",
   };
 }
 
@@ -322,7 +322,7 @@ describe("agentic subprocess adapters", () => {
         "--",
         "--url",
       ]);
-      assert.ok(calls[0][1].includes("multilingual-shirt"));
+      assert.ok(calls[0][1].includes("multilingual-octopus"));
       assert.equal(calls[0][2].cwd, "/candidate");
     });
   });
@@ -365,7 +365,7 @@ describe("agentic subprocess adapters", () => {
       );
       assert.equal(payload.candidate.headSha, headSha);
       assert.equal(payload.contextText, '{"number":9}\n');
-      assert.equal(payload.proofChallenge, "multilingual-shirt");
+      assert.equal(payload.proofChallenge, "multilingual-octopus");
     });
   });
 });

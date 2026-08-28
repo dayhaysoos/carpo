@@ -22,6 +22,7 @@ const GENERATED_EVIDENCE = [
   "agentic-result.json",
   "agentic-trace.zip",
   "agentic-failure.png",
+  "browser-recording.json",
   "durable-review-input.json",
   ...Array.from({ length: 12 }, (_, index) =>
     `agentic-${String(index + 1).padStart(2, "0")}.png`,

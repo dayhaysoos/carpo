@@ -90,9 +90,9 @@ describe("backend-neutral PR review runner", () => {
   it("selects only the repository-owned one-time proof challenge path", () => {
     assert.equal(
       selectProofChallenge([
-        { path: "review-challenges/multilingual-shirt.json" },
+        { path: "review-challenges/multilingual-octopus.json" },
       ])?.id,
-      "multilingual-shirt",
+      "multilingual-octopus",
     );
     assert.equal(
       selectProofChallenge([

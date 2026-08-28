@@ -146,6 +146,15 @@ describe("PR review evidence publisher", () => {
           remainingRisks: ["Upload and encoding were not exercised."],
           reportUrl:
             "https://carpo-pr-review-agent.ndejesus1227.workers.dev/reports/manual-20260827T120000Z-1234abcd",
+          browserRecording: {
+            status: "captured",
+            provider: "cloudflare-browser-run",
+            format: "rrweb",
+            sessionId: "12345678-1234-1234-1234-123456789abc",
+            artifact: "browser-recording.json",
+            inputFieldsMasked: true,
+            mediaPlaybackCaptured: false,
+          },
           proofBoundary: "Advisory exact-candidate exploration only.",
         },
       },
@@ -168,6 +177,9 @@ describe("PR review evidence publisher", () => {
     assert.match(body, /\/library/);
     assert.match(body, /Upload and encoding were not exercised/);
     assert.match(body, /private durable report and Browser Run replay/);
+    assert.match(body, /rrweb recording captured/);
+    assert.match(body, /browser\-recording\.json/);
+    assert.match(body, /video\/audio playback is not part of the recording/);
     assert.match(body, new RegExp(agenticUrl.replaceAll("/", "\\/")));
   });
 

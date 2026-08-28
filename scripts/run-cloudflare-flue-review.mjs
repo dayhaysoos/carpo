@@ -1,3 +1,5 @@
+import { readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   runWithCloudflareBrowser,
@@ -13,12 +15,32 @@ async function main() {
   const outputIndex = args.indexOf("--output");
   const output = outputIndex === -1 ? "test-output/pr-review" : args[outputIndex + 1];
   await prepareAgenticReviewOutput(output);
-  await runWithCloudflareBrowser({
-    reviewerPath: fileURLToPath(
-      new URL("./flue-pr-browser-review.mjs", import.meta.url),
-    ),
-    args: stripDirectCdpOverride(args),
-  });
+  let browserRecording;
+  let reviewError;
+  try {
+    ({ browserRecording } = await runWithCloudflareBrowser({
+      reviewerPath: fileURLToPath(
+        new URL("./flue-pr-browser-review.mjs", import.meta.url),
+      ),
+      args: stripDirectCdpOverride(args),
+      recordingOutputPath: path.join(output, "browser-recording.json"),
+    }));
+  } catch (error) {
+    reviewError = error;
+    browserRecording = error?.browserRecording;
+  }
+
+  if (browserRecording) {
+    const resultPath = path.join(output, "agentic-result.json");
+    try {
+      const result = JSON.parse(await readFile(resultPath, "utf8"));
+      result.browserRecording = browserRecording;
+      await writeFile(resultPath, `${JSON.stringify(result, null, 2)}\n`);
+    } catch (error) {
+      if (!reviewError || error?.code !== "ENOENT") throw error;
+    }
+  }
+  if (reviewError) throw reviewError;
 }
 
 main().catch((error) => {

@@ -48,19 +48,19 @@ const UNSUPPORTED_TESTED_AREA =
 const CANONICAL_REMAINING_RISK =
   "Direct API behavior, upload execution, clip creation, encoding, media playback, YouTube reliability, and production behavior remain unverified.";
 
-const MULTILINGUAL_SHIRT = Object.freeze({
-  id: "multilingual-shirt",
-  changedPath: "review-challenges/multilingual-shirt.json",
+const MULTILINGUAL_OCTOPUS = Object.freeze({
+  id: "multilingual-octopus",
+  changedPath: "review-challenges/multilingual-octopus.json",
   steps: Object.freeze([
-    Object.freeze({ language: "English", value: "shirt" }),
-    Object.freeze({ language: "Spanish", value: "camisa" }),
-    Object.freeze({ language: "French", value: "chemise" }),
-    Object.freeze({ language: "Japanese", value: "シャツ" }),
+    Object.freeze({ language: "English", value: "octopus" }),
+    Object.freeze({ language: "Spanish", value: "pulpo" }),
+    Object.freeze({ language: "French", value: "pieuvre" }),
+    Object.freeze({ language: "Japanese", value: "タコ" }),
   ]),
 });
-/** @type {Map<string, typeof MULTILINGUAL_SHIRT>} */
+/** @type {Map<string, typeof MULTILINGUAL_OCTOPUS>} */
 const PROOF_CHALLENGES = new Map([
-  [MULTILINGUAL_SHIRT.id, MULTILINGUAL_SHIRT],
+  [MULTILINGUAL_OCTOPUS.id, MULTILINGUAL_OCTOPUS],
 ]);
 
 /**
@@ -78,7 +78,7 @@ const PROOF_CHALLENGES = new Map([
  */
 
 export const PR_REVIEW_PROOF_CHALLENGES = Object.freeze({
-  multilingualShirt: MULTILINGUAL_SHIRT,
+  multilingualOctopus: MULTILINGUAL_OCTOPUS,
 });
 
 export const readReviewMaterialInputSchema = v.object({
@@ -666,8 +666,8 @@ export function selectProofChallenge(files) {
       .map((file) => (typeof file === "string" ? file : file?.path))
       .filter((file) => typeof file === "string"),
   );
-  return changedPaths.has(MULTILINGUAL_SHIRT.changedPath)
-    ? MULTILINGUAL_SHIRT
+  return changedPaths.has(MULTILINGUAL_OCTOPUS.changedPath)
+    ? MULTILINGUAL_OCTOPUS
     : undefined;
 }
 
