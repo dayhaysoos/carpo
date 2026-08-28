@@ -1,0 +1,60 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "carpo-pr-review-agent",
+  "compatibility_date": "2026-08-27",
+  "compatibility_flags": ["nodejs_compat"],
+  "preview_urls": true,
+  "assets": {
+    "directory": "./dist/client",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/agents/*", "/reports/*", "/login"]
+  },
+  "browser": {
+    "binding": "BROWSER",
+    "remote": true
+  },
+  "ai": {
+    "binding": "AI",
+    "remote": true
+  },
+  "r2_buckets": [
+    {
+      "binding": "EVIDENCE_BUCKET",
+      "bucket_name": "carpo-pr-review-evidence"
+    }
+  ],
+  "queues": {
+    "consumers": [
+      {
+        "queue": "carpo-pr-review-events",
+        "max_batch_size": 1,
+        "max_batch_timeout": 5,
+        "max_retries": 3
+      }
+    ]
+  },
+  "exports": {
+    "FlueCarpoDurableReviewerAgent": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  },
+  "vars": {
+    "TARGET_REVIEW_ORIGIN": "https://carpo-pr-review.ndejesus1227.workers.dev",
+    "REPORT_ORIGIN": "https://carpo-pr-review-agent.ndejesus1227.workers.dev",
+    "CARPO_PR_REVIEW_MODEL": "cloudflare/@cf/moonshotai/kimi-k2.6",
+    "TARGET_REVIEW_WORKER_NAME": "carpo-pr-review"
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    }
+  }
+}

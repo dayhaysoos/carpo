@@ -1,17 +1,20 @@
 import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
 import { chromium } from "playwright-core";
+import {
+  browserDiagnosticCount,
+  createBrowserDiagnostics,
+  observeBrowserDiagnostics,
+  readCandidateIdentity,
+  REVIEW_COOKIE,
+  REVIEW_ORIGIN,
+  traceContainsSecret,
+} from "./pr-browser-review-runtime.mjs";
 import {
   prepareReviewOutput,
   redactSecrets,
 } from "./pr-browser-review-utils.mjs";
-
-const REVIEW_COOKIE = "carpo_pr_review";
-const REVIEW_ORIGIN = "https://carpo-pr-review.ndejesus1227.workers.dev";
-const execFileAsync = promisify(execFile);
 
 function parseArgs(argv) {
   const args = {};
@@ -168,79 +171,17 @@ async function capturePage(page, filePath) {
   await page.screenshot({ path: filePath });
 }
 
-function createDiagnostics() {
-  return {
-    consoleErrors: [],
-    pageErrors: [],
-    failedRequests: [],
-    serverErrors: [],
-  };
-}
-
-function observeDiagnostics(page, baseUrl, diagnostics) {
-  page.on("console", (message) => {
-    if (message.type() === "error") {
-      diagnostics.consoleErrors.push({
-        text: message.text(),
-        location: message.location(),
-      });
-    }
-  });
-  page.on("pageerror", (error) => diagnostics.pageErrors.push(error.message));
-  page.on("requestfailed", (request) => {
-    if (new URL(request.url()).origin === baseUrl.origin) {
-      diagnostics.failedRequests.push({
-        url: request.url(),
-        reason: request.failure()?.errorText,
-      });
-    }
-  });
-  page.on("response", (response) => {
-    if (
-      new URL(response.url()).origin === baseUrl.origin &&
-      response.status() >= 500
-    ) {
-      diagnostics.serverErrors.push({
-        url: response.url(),
-        status: response.status(),
-      });
-    }
-  });
-}
-
 async function assertCandidateIdentity(
   page,
   plan,
   assertions,
   expectedVersionId,
 ) {
-  const response = await page.goto(
-    new URL("/api/review/identity", plan.baseUrl).href,
-    { waitUntil: "domcontentloaded", timeout: 30_000 },
-  );
-  if (!response || !response.ok()) {
-    throw new Error(
-      `Candidate identity request failed with status ${response?.status() ?? "unknown"}`,
-    );
-  }
-  const candidate = await response.json();
-  if (
-    typeof candidate?.id !== "string" ||
-    typeof candidate?.tag !== "string" ||
-    typeof candidate?.timestamp !== "string"
-  ) {
-    throw new Error("Candidate identity returned invalid Worker version metadata");
-  }
-  if (candidate.tag !== plan.expectedVersionTag) {
-    throw new Error(
-      `Deployed Worker tag ${JSON.stringify(candidate.tag)} does not match expected tag ${JSON.stringify(plan.expectedVersionTag)}`,
-    );
-  }
-  if (expectedVersionId && candidate.id !== expectedVersionId) {
-    throw new Error(
-      `Deployed Worker version changed from ${expectedVersionId} to ${candidate.id} during browser review`,
-    );
-  }
+  const candidate = await readCandidateIdentity(page, {
+    reviewOrigin: plan.baseUrl.origin,
+    expectedVersionTag: plan.expectedVersionTag,
+    expectedVersionId,
+  });
   assertions.push({
     label: expectedVersionId
       ? "Deployed Worker version stayed fixed throughout browser review"
@@ -339,23 +280,11 @@ async function reviewProductSurfaces(page, plan, run) {
   }
 }
 
-function diagnosticCount(diagnostics) {
-  return Object.values(diagnostics).reduce((total, entries) => total + entries.length, 0);
-}
-
-async function traceContainsSecret(tracePath, secret) {
-  const { stdout } = await execFileAsync("unzip", ["-p", tracePath], {
-    encoding: null,
-    maxBuffer: 64 * 1024 * 1024,
-  });
-  return stdout.includes(Buffer.from(secret));
-}
-
 async function runBrowserReview(plan) {
   const run = {
     startedAt: new Date().toISOString(),
     assertions: [],
-    diagnostics: createDiagnostics(),
+    diagnostics: createBrowserDiagnostics(),
     screenshots: [],
     candidate: undefined,
     trace: undefined,
@@ -389,7 +318,7 @@ async function runBrowserReview(plan) {
     // Network/DOM snapshots retain request headers. The action timeline and
     // screenshots remain useful while keeping the review cookie out of traces.
     await browserContext.tracing.start({ screenshots: true, snapshots: false });
-    observeDiagnostics(page, plan.baseUrl, run.diagnostics);
+    observeBrowserDiagnostics(page, plan.baseUrl.origin, run.diagnostics);
 
     run.candidate = await assertCandidateIdentity(page, plan, run.assertions);
     await reviewProductSurfaces(page, plan, run);
@@ -400,7 +329,7 @@ async function runBrowserReview(plan) {
       run.candidate.id,
     );
 
-    if (diagnosticCount(run.diagnostics) > 0) {
+    if (browserDiagnosticCount(run.diagnostics) > 0) {
       const { consoleErrors, pageErrors, failedRequests, serverErrors } = run.diagnostics;
       throw new Error(
         `Browser diagnostics were not clean (${consoleErrors.length} console, ${pageErrors.length} page, ${failedRequests.length} request, ${serverErrors.length} server errors)`,

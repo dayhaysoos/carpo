@@ -30,6 +30,10 @@ describe("PR review evidence publisher", () => {
       buildEvidenceKey(INPUTS, "create.png"),
       `pull-requests/8/${SHA}/executions/actions-32981962097-1/create.png`,
     );
+    assert.equal(
+      buildEvidenceKey(INPUTS, "before-create.png"),
+      `pull-requests/8/${SHA}/executions/actions-32981962097-1/before-create.png`,
+    );
     assert.throws(
       () => buildEvidenceKey(INPUTS, "trace.zip"),
       /Unsupported evidence filename/,
@@ -42,6 +46,7 @@ describe("PR review evidence publisher", () => {
       workflowStatus: "success",
       result: {
         status: "passed",
+        completedAt: "2026-08-27T22:54:12.000Z",
         assertions: [{ label: "Create renders", status: "passed" }],
         diagnostics: { consoleErrors: [], failedRequests: [] },
         proofBoundary: "This proves the bounded browser surfaces only.",
@@ -58,8 +63,217 @@ describe("PR review evidence publisher", () => {
     assert.match(body, /Carpo PR browser review: ✅ PASS/);
     assert.match(body, /<img src="https:\/\/carpo-pr-review/);
     assert.match(body, /1\/1 passed/);
+    assert.match(body, /Evidence captured.*2026-08-27T22:54:12\.000Z/);
+    assert.match(body, /actions-32981962097-1/);
     assert.match(body, /expire after 14 days/);
     assert.match(body, /bounded browser surfaces only/);
+  });
+
+  it("renders exact base and head screenshots side by side", () => {
+    const beforeUrl = `https://carpo-pr-review.ndejesus1227.workers.dev/api/review/evidence/pull-requests/8/${SHA}/executions/actions-32981962097-1/before-create.png`;
+    const afterUrl = `https://carpo-pr-review.ndejesus1227.workers.dev/api/review/evidence/pull-requests/8/${SHA}/executions/actions-32981962097-1/after-create.png`;
+    const body = renderReviewComment({
+      ...INPUTS,
+      workflowStatus: "success",
+      result: {
+        status: "passed",
+        assertions: [],
+        diagnostics: {},
+        proofBoundary: "Bounded proof.",
+        visualEvidence: {
+          requested: true,
+          status: "paired",
+          baseSha: "37f96f3adf366f61513e8be2dd6c3f07d2a4e36c",
+          headSha: SHA,
+          comparisons: [
+            {
+              id: "create",
+              label: "Create",
+              before: "before-create.png",
+              after: "after-create.png",
+            },
+          ],
+        },
+      },
+      evidence: [
+        { file: "before-create.png", label: "Create before", url: beforeUrl },
+        { file: "after-create.png", label: "Create after", url: afterUrl },
+      ],
+    });
+
+    assert.match(body, /Before · base/);
+    assert.match(body, /After · head/);
+    assert.match(body, /37f96f3/);
+    assert.match(body, /f5e8a92/);
+    assert.match(body, new RegExp(beforeUrl.replaceAll("/", "\\/")));
+    assert.match(body, new RegExp(afterUrl.replaceAll("/", "\\/")));
+  });
+
+  it("renders bounded Flue findings and their screenshot evidence as advisory", () => {
+    const agenticUrl = `https://carpo-pr-review.ndejesus1227.workers.dev/api/review/evidence/pull-requests/8/${SHA}/executions/actions-32981962097-1/agentic-01.png`;
+    const body = renderReviewComment({
+      ...INPUTS,
+      workflowStatus: "success",
+      result: {
+        status: "passed",
+        assertions: [],
+        diagnostics: {},
+        proofBoundary: "Deterministic proof.",
+        agenticReview: {
+          status: "completed",
+          advisory: true,
+          verdict: "needs_attention",
+          summary: "The agent found one concrete concern.",
+          findings: [
+            {
+              severity: "warning",
+              category: "navigation",
+              title: "Ambiguous state",
+              description: "The selected Library view did not identify itself clearly.",
+              evidence: "The selected view was unclear.",
+              path: "/library",
+              reproduction: ["Open Library.", "Select the archived view."],
+              screenshot: "agentic-01.png",
+            },
+          ],
+          screenshots: [
+            {
+              file: "agentic-01.png",
+              note: "Library state after navigation",
+              path: "/library",
+            },
+          ],
+          remainingRisks: ["Upload and encoding were not exercised."],
+          reportUrl:
+            "https://carpo-pr-review-agent.ndejesus1227.workers.dev/reports/manual-20260827T120000Z-1234abcd",
+          browserRecording: {
+            status: "captured",
+            provider: "cloudflare-browser-run",
+            format: "rrweb",
+            sessionId: "12345678-1234-1234-1234-123456789abc",
+            artifact: "browser-recording.json",
+            inputFieldsMasked: true,
+            mediaPlaybackCaptured: false,
+          },
+          proofBoundary: "Advisory exact-candidate exploration only.",
+        },
+      },
+      evidence: [
+        {
+          file: "agentic-01.png",
+          label: "Flue evidence 01",
+          url: agenticUrl,
+        },
+      ],
+    });
+
+    assert.match(body, /Flue exploratory review \(advisory\)/);
+    assert.match(body, /NEEDS ATTENTION/);
+    assert.match(body, /Ambiguous state/);
+    assert.match(body, /navigation/);
+    assert.match(body, /Reproduce/);
+    assert.match(body, /Select the archived view/);
+    assert.match(body, /Library state after navigation/);
+    assert.match(body, /\/library/);
+    assert.match(body, /Upload and encoding were not exercised/);
+    assert.match(body, /private durable report and Browser Run replay/);
+    assert.match(body, /rrweb recording captured/);
+    assert.match(body, /browser\-recording\.json/);
+    assert.match(body, /video\/audio playback is not part of the recording/);
+    assert.match(body, new RegExp(agenticUrl.replaceAll("/", "\\/")));
+  });
+
+  it("renders bounded Flue provider failure diagnostics", () => {
+    const body = renderReviewComment({
+      ...INPUTS,
+      workflowStatus: "success",
+      result: {
+        status: "passed",
+        assertions: [],
+        diagnostics: {},
+        proofBoundary: "Deterministic proof.",
+        agenticReview: {
+          status: "failed",
+          advisory: true,
+          verdict: "inconclusive",
+          summary: "The Flue exploratory review did not complete.",
+          failure: "[flue] Agent run failed.",
+          providerDiagnostics: {
+            turns: [
+              {
+                turnId: "turn-2",
+                providerId: "cloudflare-workers-ai",
+                requestedModel: "@cf/meta/llama-4-scout-17b-16e-instruct",
+                durationMs: 912,
+                finishReason: "error",
+                providerFinishReason: "upstream_error",
+                gatewayLogId: "gateway-log-123",
+                error: {
+                  type: "_OTHER",
+                  message: "Workers AI upstream unavailable.",
+                },
+              },
+            ],
+            settlement: {
+              outcome: "failed",
+              error: {
+                type: "operation_failed",
+                message: "Agent operation failed.",
+              },
+            },
+            cause: {
+              type: "operation_failed",
+              message: "Agent operation failed.",
+            },
+          },
+          proofBoundary: "Advisory only.",
+        },
+      },
+      evidence: [],
+    });
+
+    assert.match(body, /Failure diagnostics/);
+    assert.match(body, /cloudflare\\-workers\\-ai/);
+    assert.match(body, /llama\\-4\\-scout/);
+    assert.match(body, /upstream\\_error/);
+    assert.match(body, /gateway\\-log\\-123/);
+    assert.match(body, /Workers AI upstream unavailable/);
+    assert.match(body, /operation\\_failed/);
+  });
+
+  it("keeps successful provider telemetry out of the failure section", () => {
+    const body = renderReviewComment({
+      ...INPUTS,
+      workflowStatus: "success",
+      result: {
+        status: "passed",
+        assertions: [],
+        diagnostics: {},
+        proofBoundary: "Deterministic proof.",
+        agenticReview: {
+          status: "completed",
+          advisory: true,
+          verdict: "pass",
+          summary: "The bounded review completed.",
+          providerDiagnostics: {
+            turns: [
+              {
+                providerId: "cloudflare-workers-ai",
+                requestedModel: "@cf/meta/llama-4-scout-17b-16e-instruct",
+                finishReason: "toolUse",
+              },
+            ],
+            failedOperations: [],
+            recoveries: [],
+            settlement: { outcome: "completed" },
+          },
+          proofBoundary: "Advisory only.",
+        },
+      },
+      evidence: [],
+    });
+
+    assert.doesNotMatch(body, /Failure diagnostics/);
   });
 
   it("keeps failure text from injecting markup into the PR comment", () => {
@@ -79,6 +293,43 @@ describe("PR review evidence publisher", () => {
     assert.doesNotMatch(body, /<img src="https:\/\/attacker/);
     assert.doesNotMatch(body, /!\[pixel\]/);
     assert.match(body, /&lt;img src=&quot;https:\/\/attacker/);
+  });
+
+  it("neutralizes mentions in model-authored PR evidence", () => {
+    const body = renderReviewComment({
+      ...INPUTS,
+      workflowStatus: "success",
+      result: {
+        status: "passed",
+        assertions: [],
+        diagnostics: {},
+        proofBoundary: "Deterministic proof.",
+        agenticReview: {
+          status: "completed",
+          advisory: true,
+          verdict: "needs_attention",
+          summary: "@octocat should inspect this.",
+          findings: [
+            {
+              severity: "warning",
+              category: "content",
+              title: "Notify @team",
+              description: "The page visibly included @everyone.",
+              evidence: "Observed @maintainers in rendered content.",
+              path: "/",
+              reproduction: ["Ask @reviewers to open Create."],
+            },
+          ],
+          remainingRisks: ["@security has not reviewed this."],
+          proofBoundary: "Advisory only.",
+        },
+      },
+      evidence: [],
+    });
+
+    assert.doesNotMatch(body, /@(octocat|team|everyone|maintainers|reviewers|security)/);
+    assert.match(body, /&#64;octocat/);
+    assert.match(body, /&#64;team/);
   });
 
   it("uses the supplied Actions identity without calling the unsupported user endpoint", async () => {

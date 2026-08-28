@@ -4,25 +4,40 @@
   "private": true,
   "type": "module",
   "workspaces": [
-    "web"
+    "web",
+    "review-contract",
+    "review-service"
   ],
   "overrides": {
     "@hono/node-server": "2.1.0",
-    "undici": "7.29.0"
+    "undici": "7.29.0",
+    "wrangler": "$wrangler",
+    "postcss": {
+      "nanoid": "3.3.18"
+    }
   },
   "scripts": {
     "dev": "npm run build:web && wrangler dev",
     "dev:web": "npm run dev -w web",
     "build:web": "npm run build -w web",
-    "build": "npm run build:web && tsc --noEmit",
+    "build": "npm run build:web && tsc --noEmit && npm run review:service:build",
     "deploy": "npm run build:web && wrangler deploy",
-    "typecheck": "tsc --noEmit && npm run typecheck -w web",
-    "test": "npm run test:api && npm run test:web && npm run test:pr-review-publisher && npm run test:pr-review-runner",
+    "typecheck": "tsc --noEmit && npm run typecheck -w web && npm run review:contract:typecheck && npm run review:service:typecheck",
+    "test": "npm run test:api && npm run test:web && npm run test:pr-review-publisher && npm run test:pr-review-runner && npm run review:contract:test && npm run test:pr-review-agent && npm run review:service:test",
     "test:api": "vitest run test",
     "test:web": "npm test --workspace web",
     "test:pr-browser": "node scripts/run-cloudflare-browser-review.mjs",
     "test:pr-review-publisher": "node --test scripts/publish-pr-review-evidence.test.mjs",
-    "test:pr-review-runner": "node --test scripts/run-pr-review.test.mjs",
+    "test:pr-review-runner": "node --test scripts/run-pr-review.test.mjs scripts/pr-review-agentic-execution.test.mjs scripts/run-durable-flue-review.test.mjs scripts/pr-review-lease.test.mjs",
+    "test:pr-review-agent": "node --test scripts/cloudflare-browser-session.test.mjs scripts/flue-pr-review-agent.test.mjs scripts/flue-pr-browser-review.test.mjs",
+    "review:pr-agent": "node scripts/run-cloudflare-flue-review.mjs",
+    "review:contract:test": "npm run test -w review-contract",
+    "review:contract:typecheck": "npm run typecheck -w review-contract",
+    "review:service:dev": "npm run dev -w review-service",
+    "review:service:build": "npm run build -w review-service",
+    "review:service:deploy": "npm run deploy -w review-service",
+    "review:service:typecheck": "npm run typecheck -w review-service",
+    "review:service:test": "npm run test -w review-service",
     "review:pr": "node scripts/run-pr-review.mjs",
     "validate:pr-review-config": "node scripts/validate-pr-review-config.mjs",
     "test:encoder": "node --experimental-strip-types scripts/test-encoder-contract.ts",
@@ -31,11 +46,16 @@
     "db:migrate:local": "wrangler d1 migrations apply carpo --local"
   },
   "dependencies": {
+    "@carpo/review-contract": "0.1.0",
     "@cloudflare/containers": "^0.0.30",
     "@cloudflare/think": "^0.14.0",
+    "@earendil-works/pi-ai": "^0.83.0",
+    "@flue/runtime": "^2.0.3",
+    "@flue/sdk": "^2.0.3",
     "@modelcontextprotocol/sdk": "1.30.0",
     "agents": "^0.20.1",
     "ai": "^6.0.241",
+    "valibot": "^1.4.2",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -47,6 +67,6 @@
     "typescript": "^5.8.3",
     "vite": "^8.2.0",
     "vitest": "^4.1.0",
-    "wrangler": "^4.118.0"
+    "wrangler": "^4.127.0"
   }
 }

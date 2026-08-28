@@ -49,6 +49,31 @@ describe("public PR review evidence", () => {
     expect(bucket.get).toHaveBeenCalledWith(EVIDENCE_KEY);
   });
 
+  it.each([
+    "before-create.png",
+    "after-library.png",
+    "before-archived.png",
+    "agentic-01.png",
+    "agentic-12.png",
+    "agentic-failure.png",
+  ])(
+    "streams paired visual evidence: %s",
+    async (file) => {
+      const bucket = evidenceBucket();
+      const key = EVIDENCE_KEY.replace("create.png", file);
+      const response = await handleReviewEvidence(
+        new Request(`https://review.example/api/review/evidence/${key}`),
+        {
+          PR_REVIEW_MODE: "enabled",
+          PR_REVIEW_EVIDENCE_BUCKET: bucket,
+        },
+      );
+
+      expect(response?.status).toBe(200);
+      expect(bucket.get).toHaveBeenCalledWith(key);
+    },
+  );
+
   it("uses metadata-only reads for HEAD requests", async () => {
     const bucket = evidenceBucket();
     const response = await handleReviewEvidence(
@@ -68,6 +93,8 @@ describe("public PR review evidence", () => {
   it.each([
     "pull-requests/8/not-a-sha/executions/actions-1-1/create.png",
     "pull-requests/8/f5e8a926f693a9244bda6084bd0d09a1880690e0/executions/actions-1-1/trace.zip",
+    "pull-requests/8/f5e8a926f693a9244bda6084bd0d09a1880690e0/executions/actions-1-1/during-create.png",
+    "pull-requests/8/f5e8a926f693a9244bda6084bd0d09a1880690e0/executions/actions-1-1/agentic-13.png",
     "pull-requests/0/f5e8a926f693a9244bda6084bd0d09a1880690e0/executions/actions-1-1/create.png",
     "pull-requests/8/f5e8a926f693a9244bda6084bd0d09a1880690e0/executions/manual-bad/create.png",
   ])("rejects a non-allowlisted evidence key: %s", async (key) => {

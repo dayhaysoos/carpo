@@ -1,0 +1,14 @@
+{
+  "name": "@carpo/review-contract",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.js",
+  "scripts": {
+    "test": "node --test test/contract.test.mjs",
+    "typecheck": "tsc --allowJs --checkJs --strict --noEmit --target ES2022 --module ES2022 --moduleResolution Bundler --skipLibCheck src/index.js"
+  },
+  "dependencies": {
+    "valibot": "^1.2.0"
+  }
+}

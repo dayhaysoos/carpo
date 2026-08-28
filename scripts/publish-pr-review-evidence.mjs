@@ -3,6 +3,11 @@ import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import {
+  agenticFailureDiagnosticLines,
+  escapeHtml,
+  inlineMarkdownText as inlineText,
+} from "./pr-browser-review-utils.mjs";
 
 const execFileAsync = promisify(execFile);
 const EXPECTED_REPOSITORY = "dayhaysoos/carpo";
@@ -17,7 +22,18 @@ const SCREENSHOTS = [
   { file: "create.png", label: "Create" },
   { file: "library.png", label: "Library" },
   { file: "archived.png", label: "Archived" },
+  { file: "before-create.png", label: "Create before" },
+  { file: "after-create.png", label: "Create after" },
+  { file: "before-library.png", label: "Library before" },
+  { file: "after-library.png", label: "Library after" },
+  { file: "before-archived.png", label: "Archived before" },
+  { file: "after-archived.png", label: "Archived after" },
   { file: "failure.png", label: "Failure" },
+  ...Array.from({ length: 12 }, (_, index) => {
+    const number = String(index + 1).padStart(2, "0");
+    return { file: `agentic-${number}.png`, label: `Flue evidence ${number}` };
+  }),
+  { file: "agentic-failure.png", label: "Flue failure" },
 ];
 
 function parseArgs(argv) {
@@ -106,22 +122,6 @@ export function buildEvidenceKey({ pr, sha, executionId }, file) {
   return `pull-requests/${pr}/${sha}/executions/${executionId}/${file}`;
 }
 
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function inlineText(value) {
-  return escapeHtml(String(value).replace(/\s+/g, " ").trim()).replace(
-    /([\\`*_\[\]()!])/g,
-    "\\$1",
-  );
-}
-
 function diagnosticCount(diagnostics) {
   if (!diagnostics || typeof diagnostics !== "object") return 0;
   return Object.values(diagnostics).reduce(
@@ -135,9 +135,37 @@ function passedAssertionCount(assertions) {
   return assertions.filter((assertion) => assertion?.status === "passed").length;
 }
 
-function renderScreenshots(evidence) {
+function renderCaptureTimestamp(value) {
+  if (typeof value !== "string") return "not recorded";
+  const timestamp = new Date(value);
+  return Number.isNaN(timestamp.valueOf())
+    ? "not recorded"
+    : timestamp.toISOString();
+}
+
+function renderScreenshotCell(item, alt) {
+  if (!item) return "<td><em>Unavailable</em></td>";
+  return `<td><a href="${escapeHtml(item.url)}"><img src="${escapeHtml(item.url)}" alt="${escapeHtml(alt)}" width="360"></a></td>`;
+}
+
+function renderScreenshots(evidence, visualEvidence) {
   if (evidence.length === 0) {
     return "_No browser screenshot was produced. Open the Actions run for failure details._";
+  }
+
+  if (
+    visualEvidence?.status === "paired" &&
+    Array.isArray(visualEvidence.comparisons) &&
+    visualEvidence.comparisons.length > 0
+  ) {
+    const evidenceByFile = new Map(evidence.map((item) => [item.file, item]));
+    const rows = visualEvidence.comparisons
+      .map((comparison) => {
+        const label = escapeHtml(comparison.label);
+        return `<tr><th>${label}</th>${renderScreenshotCell(evidenceByFile.get(comparison.before), `${comparison.label} before browser review evidence`)}${renderScreenshotCell(evidenceByFile.get(comparison.after), `${comparison.label} after browser review evidence`)}</tr>`;
+      })
+      .join("");
+    return `<table><thead><tr><th>Surface</th><th>Before · base</th><th>After · head</th></tr></thead><tbody>${rows}</tbody></table>`;
   }
 
   const heading = evidence
@@ -152,10 +180,120 @@ function renderScreenshots(evidence) {
   return `<table><tr>${heading}</tr><tr>${images}</tr></table>`;
 }
 
+function renderAgenticReview(agenticReview, evidence) {
+  if (!agenticReview) return [];
+  const verdict =
+    agenticReview.verdict === "pass"
+      ? "✅ PASS"
+      : agenticReview.verdict === "needs_attention"
+        ? "⚠️ NEEDS ATTENTION"
+        : "⚪ INCONCLUSIVE";
+  const lines = [
+    "### Flue exploratory review (advisory)",
+    "",
+    `**Verdict:** ${verdict} · **Status:** ${inlineText(agenticReview.status ?? "unknown")}`,
+    "",
+    inlineText(agenticReview.summary ?? "No agentic summary was produced."),
+  ];
+  if (agenticReview.failure) {
+    lines.push("", `**Agent failure:** ${inlineText(agenticReview.failure)}`);
+  }
+  const providerDiagnosticLines = agenticFailureDiagnosticLines(
+    agenticReview.providerDiagnostics,
+  );
+  if (providerDiagnosticLines.length > 0) {
+    lines.push("", "#### Failure diagnostics", "", ...providerDiagnosticLines);
+  }
+  if (Array.isArray(agenticReview.findings) && agenticReview.findings.length > 0) {
+    lines.push("", "#### Findings", "");
+    for (const finding of agenticReview.findings.slice(0, 20)) {
+      const icon =
+        finding.severity === "error"
+          ? "❌"
+          : finding.severity === "warning"
+            ? "⚠️"
+            : "ℹ️";
+      lines.push(
+        `- ${icon} **${inlineText(finding.title ?? "Finding")}** · ${inlineText(finding.category ?? "uncategorized")} · \`${inlineText(finding.path ?? "unknown path")}\` — ${inlineText(finding.description ?? finding.evidence ?? "No description supplied.")}`,
+      );
+      lines.push(`  - Evidence: ${inlineText(finding.evidence ?? "No evidence description supplied.")}`);
+      if (Array.isArray(finding.reproduction) && finding.reproduction.length > 0) {
+        lines.push(
+          `  - Reproduce: ${finding.reproduction.slice(0, 8).map((step, index) => `${index + 1}. ${inlineText(step)}`).join(" ")}`,
+        );
+      }
+    }
+  }
+  if (
+    Array.isArray(agenticReview.remainingRisks) &&
+    agenticReview.remainingRisks.length > 0
+  ) {
+    lines.push("", "#### Remaining boundaries", "");
+    for (const risk of agenticReview.remainingRisks.slice(0, 20)) {
+      lines.push(`- ${inlineText(risk)}`);
+    }
+  }
+
+  const evidenceByFile = new Map(evidence.map((item) => [item.file, item]));
+  const captures = Array.isArray(agenticReview.screenshots)
+    ? agenticReview.screenshots
+        .map((capture) => ({ ...capture, evidence: evidenceByFile.get(capture.file) }))
+        .filter((capture) => capture.evidence)
+        .slice(0, 6)
+    : [];
+  if (captures.length > 0) {
+    const rows = captures
+      .map(
+        (capture) =>
+          `<tr>${renderScreenshotCell(capture.evidence, `${capture.note ?? capture.evidence.label} Flue browser review evidence`)}<td><code>${escapeHtml(capture.path ?? "unknown path")}</code><br>${escapeHtml(capture.note ?? "Exploratory browser evidence")}</td></tr>`,
+      )
+      .join("");
+    lines.push(
+      "",
+      `<table><thead><tr><th>Evidence</th><th>Host route · agent note</th></tr></thead><tbody>${rows}</tbody></table>`,
+    );
+    if (agenticReview.screenshots.length > captures.length) {
+      lines.push(
+        "",
+        `${agenticReview.screenshots.length - captures.length} additional Flue screenshot(s) remain in the R2 manifest and execution artifact.`,
+      );
+    }
+  }
+  if (agenticReview.browserRecording?.status === "captured") {
+    lines.push(
+      "",
+      `**Browser Run replay:** rrweb recording captured for session \`${escapeHtml(agenticReview.browserRecording.sessionId)}\`. Download \`${escapeHtml(agenticReview.browserRecording.artifact ?? "browser-recording.json")}\` from the execution artifact or replay the session from Cloudflare Browser Run. Input values are masked, and actual video/audio playback is not part of the recording.`,
+    );
+  } else if (agenticReview.browserRecording?.status === "failed") {
+    lines.push(
+      "",
+      `**Browser Run replay:** unavailable — ${inlineText(agenticReview.browserRecording.failure ?? "recording finalization failed")}`,
+    );
+  }
+  lines.push(
+    "",
+    `> **Agentic proof boundary:** ${inlineText(agenticReview.proofBoundary ?? "The exploratory result is advisory and bounded to the inspected paths.")}`,
+    "",
+  );
+  if (
+    typeof agenticReview.reportUrl === "string" &&
+    /^https:\/\/carpo-pr-review-agent\.ndejesus1227\.workers\.dev\/reports\/[A-Za-z0-9._-]{1,140}$/.test(
+      agenticReview.reportUrl,
+    )
+  ) {
+    lines.push(
+      "",
+      `[Open the private durable report and Browser Run replay](${agenticReview.reportUrl})`,
+    );
+  }
+  return lines;
+}
+
 export function renderReviewComment({
   repository,
   pr,
   sha,
+  executionId,
   sourceUrl,
   result,
   evidence,
@@ -167,6 +305,10 @@ export function renderReviewComment({
   const passedAssertions = passedAssertionCount(assertions);
   const diagnostics = diagnosticCount(result?.diagnostics);
   const shortSha = sha.slice(0, 7);
+  const captureTimestamp = renderCaptureTimestamp(result?.completedAt);
+  const safeExecutionId = EXECUTION_ID_PATTERN.test(executionId ?? "")
+    ? executionId
+    : "not recorded";
   const commitUrl = `https://github.com/${repository}/commit/${sha}`;
   const sourceLabel = sourceUrl.includes("/actions/runs/")
     ? "Actions run"
@@ -181,6 +323,8 @@ export function renderReviewComment({
     "",
     `Reviewed commit [\`${escapeHtml(shortSha)}\`](${commitUrl}) for PR #${escapeHtml(pr)} · [${sourceLabel}](${escapeHtml(sourceUrl)})`,
     "",
+    `**Evidence captured:** \`${captureTimestamp}\` · **Execution:** \`${safeExecutionId}\``,
+    "",
     `**Assertions:** ${passedAssertions}/${assertions.length} passed · **Browser diagnostics:** ${diagnostics}`,
   ];
 
@@ -192,12 +336,27 @@ export function renderReviewComment({
     "",
     "### Browser evidence",
     "",
-    renderScreenshots(evidence),
+    renderScreenshots(
+      evidence.filter(
+        (item) =>
+          typeof item.file !== "string" || !item.file.startsWith("agentic-"),
+      ),
+      result?.visualEvidence,
+    ),
     "",
+    ...(result?.visualEvidence?.requested
+      ? [
+          result.visualEvidence.status === "paired"
+            ? `Paired visual evidence compares base \`${escapeHtml(result.visualEvidence.baseSha.slice(0, 7))}\` with head \`${escapeHtml(result.visualEvidence.headSha.slice(0, 7))}\` using the same review steps and viewport.`
+            : `Before evidence unavailable; showing the exact head only. ${inlineText(result.visualEvidence.reason ?? "No baseline reason was recorded.")}`,
+          "",
+        ]
+      : []),
     `Screenshots are stored in the isolated Cloudflare R2 evidence bucket and expire after ${EVIDENCE_RETENTION_DAYS} days. The trace and machine-readable evidence remain in the execution output; the evidence manifest is also retained in R2.`,
     "",
     `> **Proof boundary:** ${inlineText(proofBoundary)}`,
     "",
+    ...renderAgenticReview(result?.agenticReview, evidence),
   );
   return lines.join("\n");
 }
@@ -402,6 +561,8 @@ async function main() {
     uploadedAt: new Date().toISOString(),
     expiresAfterDays: EVIDENCE_RETENTION_DAYS,
     screenshots: evidence,
+    visualEvidence: result?.visualEvidence,
+    agenticReview: result?.agenticReview,
     r2Key: buildManifestKey(inputs),
   };
   const manifestPath = path.join(inputs.outputDir, "evidence-manifest.json");
