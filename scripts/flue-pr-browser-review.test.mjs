@@ -265,7 +265,7 @@ describe("bounded Flue browser review", () => {
       id: "e2",
       tag: "input",
       type: "text",
-      name: "Caption (optional)",
+      name: "Overlay text (optional)",
     });
 
     try {

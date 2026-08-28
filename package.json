@@ -29,7 +29,7 @@
     "test:pr-browser": "node scripts/run-cloudflare-browser-review.mjs",
     "test:pr-review-publisher": "node --test scripts/publish-pr-review-evidence.test.mjs",
     "test:pr-review-runner": "node --test scripts/run-pr-review.test.mjs scripts/pr-review-agentic-execution.test.mjs scripts/run-durable-flue-review.test.mjs scripts/pr-review-lease.test.mjs",
-    "test:pr-review-agent": "node --test scripts/cloudflare-browser-session.test.mjs scripts/flue-pr-review-agent.test.mjs scripts/flue-pr-browser-review.test.mjs",
+    "test:pr-review-agent": "node --test scripts/cloudflare-browser-session.test.mjs scripts/flue-pr-review-agent.test.mjs scripts/flue-pr-browser-review.test.mjs scripts/pr-browser-review-ui-contract.test.mjs",
     "review:pr-agent": "node scripts/run-cloudflare-flue-review.mjs",
     "review:contract:test": "npm run test -w review-contract",
     "review:contract:typecheck": "npm run typecheck -w review-contract",
