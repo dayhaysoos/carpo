@@ -24,6 +24,10 @@ _Avoid_: Think review, agent approval, pending clips
 A session-scoped group of clip proposals supplied together for one video. It remains separate from later submissions and is reviewed before the next batch begins.
 _Avoid_: Mixed review, proposal queue
 
+**Live WebMCP Verification Journey**:
+A bounded, reversible evaluation of Carpo's registered WebMCP tools through a live browser surface. It ends with evidence that a clip proposal reached clip proposal review without creating a clip or exercising review authority.
+_Avoid_: Clip proposal review, Flue review, agent approval
+
 **Source Captions**:
 Timed text acquired with a video that can seed transcript and caption work. Source captions are input material, not a finished clip's caption output.
 _Avoid_: Output captions, closed-caption artifact

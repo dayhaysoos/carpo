@@ -204,6 +204,50 @@ function renderAgenticReview(agenticReview, evidence) {
   if (providerDiagnosticLines.length > 0) {
     lines.push("", "#### Failure diagnostics", "", ...providerDiagnosticLines);
   }
+  const webMcp = agenticReview.webMcp;
+  if (webMcp) {
+    const deterministic =
+      webMcp.deterministic === "pass" ? "✅ PASS" : "⚪ INCONCLUSIVE";
+    const completedCalls = Array.isArray(webMcp.calls)
+      ? webMcp.calls.filter(({ status }) => status === "completed")
+      : [];
+    lines.push(
+      "",
+      "#### Live WebMCP experience",
+      "",
+      `**Deterministic WebMCP check:** ${deterministic} · **Journey:** ${inlineText(webMcp.status ?? "unknown")}`,
+      "",
+      `**Browser API:** \`${inlineText(webMcp.apiSurface ?? "unavailable")}\``,
+      `**Tools discovered:** ${Array.isArray(webMcp.discoveredToolNames) && webMcp.discoveredToolNames.length > 0 ? webMcp.discoveredToolNames.map((name) => `\`${inlineText(name)}\``).join(", ") : "none"}`,
+      `**Successful calls:** ${completedCalls.length > 0 ? completedCalls.map(({ name }) => `\`${inlineText(name)}\``).join(" → ") : "none"}`,
+      `**Human-review boundary:** ${webMcp.proposal?.requiresHumanReview === true && webMcp.proposal?.createdClipCount === 0 ? "proposal review opened; zero fixture clips persisted" : "not established"}`,
+    );
+    const experience = webMcp.experience;
+    if (experience) {
+      lines.push(
+        "",
+        `**Flue experience verdict:** ${inlineText(experience.verdict ?? "inconclusive")}`,
+        "",
+        inlineText(experience.summary ?? "No WebMCP experience summary was produced."),
+      );
+      for (const [heading, entries] of [
+        ["Strengths", experience.strengths],
+        ["Frictions", experience.frictions],
+        ["Recommendations", experience.recommendations],
+      ]) {
+        if (Array.isArray(entries) && entries.length > 0) {
+          lines.push("", `**${heading}:**`);
+          for (const entry of entries.slice(0, 10)) {
+            lines.push(`- ${inlineText(entry)}`);
+          }
+        }
+      }
+    }
+    lines.push(
+      "",
+      `> **WebMCP proof boundary:** ${inlineText(webMcp.proofBoundary ?? "The live WebMCP journey is bounded to the recorded fixture session.")}`,
+    );
+  }
   if (Array.isArray(agenticReview.findings) && agenticReview.findings.length > 0) {
     lines.push("", "#### Findings", "");
     for (const finding of agenticReview.findings.slice(0, 20)) {

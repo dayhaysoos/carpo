@@ -14,6 +14,10 @@ import {
 import { createCloudflareReviewLease } from "./pr-review-lease.mjs";
 import { selectProofChallenge } from "./pr-review-proof-challenges.mjs";
 import { agenticExecution } from "./pr-review-agentic-execution.mjs";
+import {
+  installWebMcpReviewFixture,
+  WEBMCP_REVIEW_FIXTURE,
+} from "./pr-review-webmcp-fixture.mjs";
 
 const execFileAsync = promisify(execFile);
 const EXPECTED_REPOSITORY = "dayhaysoos/carpo";
@@ -594,6 +598,7 @@ async function executeReview({
       outputDir,
       cwd,
       proofChallenge: proofChallenge?.id,
+      webMcpFixtureVideoId: WEBMCP_REVIEW_FIXTURE.videoId,
     },
   });
 
@@ -725,10 +730,33 @@ async function executeReview({
   await verifyCandidateUnchanged(repository, pr, baseSha, headSha, cwd);
 
   if (agenticPlan.status === "ready") {
-    printStep("Run bounded Flue exploration against the exact candidate");
-    const agenticReview = await agenticExecution.execute(agenticPlan);
-    await attachAgenticReview({ outputDir, agenticReview });
-    await verifyCandidateUnchanged(repository, pr, baseSha, headSha, cwd);
+    printStep("Install the disposable live WebMCP review fixture");
+    const webMcpFixture = await installWebMcpReviewFixture({
+      cwd,
+      env: runtimeEnv,
+      outputDir,
+      runCommand: run,
+    });
+    let agenticError;
+    try {
+      printStep("Run bounded Flue and live WebMCP exploration");
+      const agenticReview = await agenticExecution.execute(agenticPlan);
+      await attachAgenticReview({ outputDir, agenticReview });
+      await verifyCandidateUnchanged(repository, pr, baseSha, headSha, cwd);
+    } catch (error) {
+      agenticError = error;
+    } finally {
+      try {
+        await webMcpFixture.cleanup();
+      } catch (cleanupError) {
+        agenticError = agenticError
+          ? new Error(
+              `${redactSecrets(agenticError instanceof Error ? agenticError.message : agenticError)}\n${redactSecrets(cleanupError instanceof Error ? cleanupError.message : cleanupError)}`,
+            )
+          : cleanupError;
+      }
+    }
+    if (agenticError) throw agenticError;
   }
 }
 

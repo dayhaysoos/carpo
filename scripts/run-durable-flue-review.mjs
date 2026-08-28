@@ -88,6 +88,7 @@ export async function runDurableFlueReview(args, env = process.env) {
   const sourceUrl = args["source-url"];
   const reviewOrigin = args.url;
   const expectedVersionTag = args["expected-version-tag"];
+  const webMcpFixtureVideoId = args["webmcp-video-id"];
   if (
     !executionId ||
     !repository ||
@@ -96,6 +97,7 @@ export async function runDurableFlueReview(args, env = process.env) {
     !sourceUrl ||
     !reviewOrigin ||
     !expectedVersionTag ||
+    !webMcpFixtureVideoId ||
     !args.context ||
     !args.diff
   ) {
@@ -126,6 +128,7 @@ export async function runDurableFlueReview(args, env = process.env) {
     ...(args["proof-challenge"]
       ? { proofChallenge: args["proof-challenge"] }
       : {}),
+    webMcpFixtureVideoId,
   };
   const controller = new AbortController();
   const timeout = setTimeout(

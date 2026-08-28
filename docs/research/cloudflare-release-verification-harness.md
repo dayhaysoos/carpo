@@ -1,7 +1,7 @@
 # Carpo PR Browser Review Harness
 
-**Status:** exact-candidate deterministic harness green; local bounded Flue adapter green; durable Cloudflare-native Flue service implemented and awaiting operator provisioning, 2026-08-27
-**Branch:** `feature/flue-agentic-pr-review`
+**Status:** exact-candidate deterministic harness green; local bounded Flue adapter now includes a live WebMCP evaluation path; durable Cloudflare-native Flue service remains a separate optional backend, 2026-08-28
+**Branch:** `feature/webmcp-clip-proposals`
 
 Current checkpoint: PR #8 produced the first green end-to-end CI run, then the backend-neutral manual adapter completed a second exact-candidate run during a GitHub Actions outage. The manual execution passed all repository checks and 17 Browser Run assertions, held one Worker version fixed, uploaded three `1440×1000` PNGs plus a manifest to `carpo-pr-review-evidence`, and created [the inline evidence comment](https://github.com/dayhaysoos/carpo/pull/8#issuecomment-5428391133). Direct reads returned `200 image/png`, the remote and local manifest SHA-256 values matched, and GitHub rendered all three images through its image proxy. The bucket has a 14-day expiration lifecycle.
 
@@ -10,6 +10,8 @@ The next slice now runs by default after the deterministic exact-head checks pas
 The implementation now also includes an opt-in durable backend in [`review-service/`](../../review-service). It deploys separately from candidate code, runs Flue inside a generated SQLite-backed Durable Object, uses the Worker AI binding, and creates recorded Browser Run sessions. Its browser capabilities remain narrow host-authored tools—read frozen material, inspect, navigate a positive route catalog, select desktop/mobile viewports, click safe links/tabs, fill safe text fields, capture private screenshots, and read diagnostics. It does **not** expose Flue Code Mode, arbitrary CDP source, a shell, or general network tools to the model. Reports and screenshots are stored in the dedicated evidence R2 bucket and available through an authenticated dossier with rrweb replay. Flue tracing is installed with `content: false`, so Workers traces preserve operational spans without prompts, diffs, tool arguments, or page content. The default local backend now also explicitly creates its Browser Run session with recording enabled, closes the exact session after the review, waits for finalization, and retains `browser-recording.json` in the local or Actions execution output. That artifact is structured rrweb replay data rather than an MP4; Cloudflare masks input values and does not capture actual `<video>` or `<audio>` playback.
 
 Both execution backends now import the same provider-neutral [`review-contract/`](../../review-contract) workspace. It owns the unchanged v1 schemas and every rule whose drift could change reviewer authority or proof quality: route and action safety, proof challenges, completion and evidence validation, coverage downgrades, diagnostics verdicts, and shared instruction facts. Local Playwright/Workers AI and Durable Browser Run/Flue remain thin integration adapters around that contract.
+
+The default local backend now starts its agentic Browser Run in Cloudflare's lab pool and mounts a bounded WebMCP bridge. A tiny non-production media seed is provisioned once at `review-fixtures/webmcp/source.mp4` in the isolated review clip bucket; each run installs and later removes only its disposable uploaded-video row and transcript. Flue must discover `getCarpoInstructions`, `readClipWorkspace`, and `proposeClips` in the live page and call them successfully in that order. The host restricts the transcript window, requires the exact returned video/revision/block identities, permits exactly one reversible proposal, verifies the human-review modal is visible, performs a read-only check that zero fixture clips were persisted, captures screenshot evidence, and removes the disposable fixture data even when the agent is inconclusive. The PR comment reports this deterministic WebMCP proof separately from Flue's qualitative strengths, frictions, and recommendations. The model never receives arbitrary JavaScript execution.
 
 This branch also carries one repository-owned committed-PR proof challenge. The exact changed path `review-challenges/multilingual-octopus.json` selects a hardcoded host task: replace the Create Title with `octopus`, then Spanish `pulpo`, French `pieuvre`, and Japanese `タコ`, capturing each visible state without submitting. The runner ignores the marker's contents and all PR prose when selecting or defining the task. The browser host independently enforces the Title field, Create route, exact values, order, and immediate screenshot sequence. Because selection depends on this path appearing in the frozen base/head diff, the challenge does not run on ordinary later PRs after this marker has merged unchanged.
 
@@ -24,7 +26,7 @@ When a pull request is opened or updated, GitHub Actions normally invokes the ru
 5. The candidate is deployed to one isolated Cloudflare environment named `pr-review`, with the exact head SHA attached as its Worker version tag.
 6. When the exact changed-path map contains `web/` files and the frozen base contains the review harness, the runner deploys that base first and captures advisory "Before" screenshots. It then deploys the exact head and repeats the same selected steps at the same `1440×1000` viewport for "After" screenshots. A base that predates the harness is reported explicitly as after-only evidence rather than being approximated.
 7. A Cloudflare Browser Run session authenticates to each selected deployment, proves the observed Worker tag matches the expected SHA, performs bounded browser checks selected from Carpo's permanent smoke tests plus known diff and PR/Issue context signals, proves the Worker version ID did not change during each traversal, and records screenshots plus a credential-audited Playwright trace. Head assertions remain the release signal; the base capture is comparative evidence, not a second gate.
-8. By default, a Flue agent independently selects bounded same-origin browser actions after the deterministic gate. The proven `local` backend remains the default. It creates an explicitly recorded Browser Run session through either scoped environment credentials or local Wrangler OAuth, then retains the finalized rrweb payload with the execution. `--agent-backend durable` (or `CARPO_PR_REVIEW_AGENT_BACKEND=durable`) delegates the same frozen package to the separately deployed durable service and downloads its private screenshots back into the ordinary evidence bundle. Both backends can read frozen review material, inspect, navigate only within a positive catalog of Create, Library, Archived, the host-defined missing route, and UUID-addressed video-detail routes, switch between exact desktop/mobile presets, click safe controls, fill non-consequential text fields, capture evidence, and read diagnostics. The browser host blocks every network method except `GET`, `HEAD`, and `OPTIONS`, even if candidate code attaches a write to a superficially safe control. The agent has no shell, filesystem, arbitrary network, deployment, GitHub, credential, upload, clip-creation, or destructive authority. Its result is advisory and cannot turn a deterministic failure green. Operators can use `--no-agentic` for a bounded deterministic-only fallback.
+8. By default, a Flue agent independently selects bounded same-origin browser actions after the deterministic gate. The proven `local` backend remains the default. It creates an explicitly recorded Browser Run lab session through either scoped environment credentials or local Wrangler OAuth, retains the finalized rrweb payload, and exercises Carpo's live WebMCP tools through the host allowlist described above. `--agent-backend durable` (or `CARPO_PR_REVIEW_AGENT_BACKEND=durable`) remains an optional separately deployed execution host for the ordinary bounded browser traversal; live WebMCP evidence is currently established by the default local backend. Both backends can read frozen review material, inspect, navigate only within a positive catalog of Create, Library, Archived, the host-defined missing route, and UUID-addressed video-detail routes, switch between exact desktop/mobile presets, click safe controls, fill non-consequential text fields, capture evidence, and read diagnostics. The browser host blocks every network method except `GET`, `HEAD`, and `OPTIONS`, even if candidate code attaches a write to a superficially safe control. The agent has no shell, filesystem, arbitrary network, deployment, GitHub, credential, upload, clip-creation, or destructive authority. Its result is advisory and cannot turn a deterministic failure green. Operators can use `--no-agentic` for a bounded deterministic-only fallback.
    For this branch's one-time multilingual proof marker only, the same host also requires four ordered Title fills and four corresponding screenshots before it will accept the structured finish. This demonstrates novel model-directed interaction without granting broader authority or turning PR text into executable instructions.
 9. PNG screenshots are written under an immutable PR/SHA/run-specific prefix in the dedicated evidence R2 bucket. Paired deterministic evidence is rendered as `Before · base` and `After · head`; Flue captures appear in a separate advisory section with the host-observed route, agent note, findings, remaining boundaries, and proof boundary. The review Worker exposes only tightly validated PNG paths, while the application and clip buckets remain private.
 10. The active GitHub reporting identity creates or updates its marker-based PR comment with the exact reviewed SHA, assertion and diagnostic counts, inline screenshots, execution-source link, retention, and proof boundary. Actions also retains the trace and frozen evidence as an artifact; a manual run keeps them in its local output directory. The R2 manifest is uploaded before comment publication, so a GitHub reporting failure does not discard the evidence. The runner then releases the lease with an owner-checked delete; a crashed run's lease expires after 45 minutes.
@@ -108,11 +110,11 @@ It captures and publishes:
 - `changed-files.json`, derived from the same frozen PR merge-base/head comparison;
 - `test-plan.json`, including context and diff digests;
 - `result.json` and a human-readable `summary.md`;
-- optional `agentic-result.json`, `agentic-trace.zip`, finalized `browser-recording.json` rrweb replay data, and up to 12 deduplicated `agentic-<nn>.png` captures when bounded Flue review is enabled;
+- optional `agentic-result.json`, `agentic-trace.zip`, finalized `browser-recording.json` rrweb replay data, the live WebMCP call/proof/experience record, and up to 12 deduplicated `agentic-<nn>.png` captures when bounded Flue review is enabled;
 - immutable R2 PNG keys of the form `pull-requests/<pr>/<sha>/executions/<execution-id>/<surface>.png`;
 - one marker-based PR comment per GitHub reporting identity, updated by later runs from that same adapter identity.
 
-The artifact is evidence, not a blanket certification. Side-by-side screenshots make intended UI changes easier to inspect, but v0 does not perform pixel-diff gating and does not claim that unchanged pixels prove behavior. The default Flue pass proves only that one model completed the host-enforced bounded traversal without a concrete reported issue; deterministic assertions remain the release signal. Neither path yet proves upload, encoding, clip playback, YouTube reliability, production behavior, accessibility, visual quality, or correctness outside the inspected routes.
+The artifact is evidence, not a blanket certification. Side-by-side screenshots make intended UI changes easier to inspect, but v0 does not perform pixel-diff gating and does not claim that unchanged pixels prove behavior. The live WebMCP check deterministically establishes tool discovery, ordered invocation, grounded proposal admission, visible human review, and zero persisted fixture clips; Flue's usability assessment remains probabilistic and advisory. Neither path yet proves upload execution, encoding, clip playback, YouTube reliability, production behavior, accessibility, visual quality, or correctness outside the inspected routes.
 
 ## Durable service boundary
 
@@ -135,7 +137,7 @@ Do not add these until the basic loop has run successfully on real PRs:
 - a searchable evidence dashboard beyond the private per-run dossier and PR comment;
 - per-PR infrastructure stacks;
 - an LLM-authored release gate or autonomous merge verdict;
-- Stagehand, WebMCP, unrestricted Code Mode, or broader Agents SDK orchestration beyond the bounded Flue adapter;
+- Stagehand, unrestricted Code Mode, or broader Agents SDK orchestration beyond the bounded Flue adapter;
 - managed Cloudflare Access identity in front of the review URL (v0 already uses a scoped review-secret cookie gate);
 - automatic merge, promotion, rollback, or production deployment;
 - browser/device matrices;
@@ -203,6 +205,17 @@ Each is a possible upgrade, not a prerequisite.
 
 **Exit:** one committed candidate produces the ordinary PR evidence plus a private durable report and replay without relying on GitHub Actions.
 
+### Checkpoint 6 — live WebMCP experience
+
+- [x] Start the default agentic run in a recorded Browser Run lab session.
+- [x] Install and clean a disposable transcript-ready uploaded-video fixture in the isolated review environment.
+- [x] Expose `list_webmcp_tools` plus three narrowly typed wrappers for the allowlisted Carpo tools; every wrapper still invokes the live page through the bounded host bridge.
+- [x] Require ordered instructions/workspace/proposal calls with exact live provenance.
+- [x] Require visible human review, zero persisted clips, screenshot evidence, and a structured experience report.
+- [ ] Run the path against a committed exact PR candidate and inspect the published R2/PR evidence.
+
+**Exit:** one committed candidate produces a fresh PR comment showing both deterministic live WebMCP proof and Flue's evidence-grounded experience report.
+
 Run the current slice locally with:
 
 ```bash
@@ -233,7 +246,7 @@ Add complexity only in response to evidence:
 | Fourteen-day PR evidence is insufficient for retention/search | Extend the R2 lifecycle or add an evidence index/dashboard |
 | Bounded Flue exploration repeatedly finds the same issue class | Promote that observation into a deterministic repository-owned case |
 | Review access needs user identity, revocation, or audit policy | Replace the scoped v0 secret-cookie gate with Cloudflare Access and service-token authentication |
-| Reviewers need semantic app tools | Evaluate WebMCP after the browser loop is stable |
+| Reviewers need additional semantic app tools | Extend the existing allowlist one reviewed, human-bounded Carpo capability at a time |
 
 ## Credentials and authority
 

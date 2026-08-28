@@ -40,6 +40,7 @@ import {
 } from "./pr-browser-review-runtime.mjs";
 import { redactSecrets } from "./pr-browser-review-utils.mjs";
 import { resolveProofChallenge } from "./pr-review-proof-challenges.mjs";
+import { createLiveWebMcpVerificationJourney } from "./live-webmcp-verification-journey.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -135,6 +136,7 @@ export class BoundedPlaywrightReviewAdapter {
     outputDir,
     diagnostics,
     proofChallenge,
+    webMcpFixtureVideoId,
   }) {
     this.page = page;
     this.materials = { context: contextText, diff: diffText };
@@ -153,6 +155,18 @@ export class BoundedPlaywrightReviewAdapter {
     );
     this.proofChallengeSteps = [];
     this.pendingProofChallengeStep = undefined;
+    this.webMcpJourney = webMcpFixtureVideoId
+      ? createLiveWebMcpVerificationJourney({
+          fixtureVideoId: webMcpFixtureVideoId,
+          browser: {
+            discoverTools: (input) => this.discoverLiveWebMcpTools(input),
+            invokeTool: (input) => this.invokeLiveWebMcpTool(input),
+            observeProposalReview: (input) =>
+              this.observeLiveWebMcpProposalReview(input),
+            captureProof: (input) => this.captureLiveWebMcpProof(input),
+          },
+        })
+      : undefined;
   }
 
   recordCurrentPath() {
@@ -286,6 +300,184 @@ export class BoundedPlaywrightReviewAdapter {
     return { preset, ...viewport };
   }
 
+  async discoverLiveWebMcpTools({ fixtureVideoId, expectedToolNames }) {
+    const currentUrl = new URL(this.page.url());
+    if (
+      currentUrl.pathname !== "/" ||
+      currentUrl.searchParams.get("video") !== fixtureVideoId
+    ) {
+      await this.navigate(`/?video=${encodeURIComponent(fixtureVideoId)}`);
+    }
+    this.recordCurrentPath();
+    const discovery = await this.page.evaluate(
+      async ({ allowedNames }) => {
+        const normalizeSchema = (value) => {
+          if (typeof value !== "string") return value ?? {};
+          try {
+            return JSON.parse(value);
+          } catch {
+            return value.slice(0, 8_000);
+          }
+        };
+        const project = (tool) => ({
+          name: String(tool?.name ?? "").slice(0, 160),
+          title:
+            typeof tool?.title === "string"
+              ? tool.title.slice(0, 240)
+              : undefined,
+          description:
+            typeof tool?.description === "string"
+              ? tool.description.slice(0, 2_000)
+              : "",
+          inputSchema: normalizeSchema(tool?.inputSchema),
+          annotations:
+            tool?.annotations && typeof tool.annotations === "object"
+              ? {
+                  readOnlyHint: tool.annotations.readOnlyHint === true,
+                  untrustedContentHint:
+                    tool.annotations.untrustedContentHint === true,
+                }
+              : undefined,
+        });
+        const readTools = async () => {
+          const testing = navigator.modelContextTesting;
+          if (typeof testing?.listTools === "function") {
+            return {
+              apiSurface: "navigator.modelContextTesting",
+              tools: (await testing.listTools()).map(project),
+            };
+          }
+          if (typeof document.modelContext?.getTools === "function") {
+            return {
+              apiSurface: "document.modelContext",
+              tools: (await document.modelContext.getTools()).map(project),
+            };
+          }
+          return undefined;
+        };
+        let last;
+        for (let attempt = 0; attempt < 60; attempt += 1) {
+          last = await readTools();
+          if (
+            last &&
+            allowedNames.every((name) =>
+              last.tools.some((tool) => tool.name === name),
+            )
+          ) {
+            break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+        return {
+          available: Boolean(last),
+          apiSurface: last?.apiSurface,
+          userAgent: navigator.userAgent.slice(0, 500),
+          tools: (last?.tools ?? []).filter((tool) =>
+            allowedNames.includes(tool.name),
+          ),
+          unexpectedToolNames: (last?.tools ?? [])
+            .map((tool) => tool.name)
+            .filter((name) => name && !allowedNames.includes(name))
+            .slice(0, 20),
+        };
+      },
+      { allowedNames: expectedToolNames },
+    );
+    return discovery;
+  }
+
+  async invokeLiveWebMcpTool({ apiSurface, name, arguments: input }) {
+    return this.page.evaluate(
+      async ({ apiSurface: surface, name: toolName, input: toolInput }) => {
+        let result;
+        if (surface === "navigator.modelContextTesting") {
+          result = await navigator.modelContextTesting.executeTool(
+            toolName,
+            JSON.stringify(toolInput),
+          );
+        } else {
+          const tools = await document.modelContext.getTools();
+          const tool = tools.find(({ name }) => name === toolName);
+          if (!tool) throw new Error(`WebMCP tool ${toolName} is no longer registered`);
+          result = await document.modelContext.executeTool(
+            tool,
+            JSON.stringify(toolInput),
+          );
+        }
+        if (typeof result === "string") {
+          try {
+            return JSON.parse(result);
+          } catch {
+            return result;
+          }
+        }
+        return result;
+      },
+      { apiSurface, name, input },
+    );
+  }
+
+  async observeLiveWebMcpProposalReview({ fixtureVideoId }) {
+    return this.page.evaluate(async (videoId) => {
+      let modalVisible = false;
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        const text = document.body?.innerText ?? "";
+        modalVisible =
+          text.includes("Review clips") && text.includes("Suggested via WebMCP");
+        if (modalVisible) break;
+        await new Promise((resolve) => setTimeout(resolve, 125));
+      }
+      const response = await fetch(
+        `/api/videos/${encodeURIComponent(videoId)}`,
+        { credentials: "include" },
+      );
+      const detail = response.ok ? await response.json() : undefined;
+      return {
+        modalVisible,
+        persistenceStatus: response.status,
+        clipCount: Array.isArray(detail?.clips) ? detail.clips.length : null,
+      };
+    }, fixtureVideoId);
+  }
+
+  requireWebMcpJourney() {
+    if (!this.webMcpJourney) {
+      throw new Error("The host did not provide a live WebMCP fixture workspace");
+    }
+    return this.webMcpJourney;
+  }
+
+  unwrapWebMcpReceipt(receipt) {
+    if (receipt.status === "advanced" || receipt.output !== undefined) {
+      return receipt.output;
+    }
+    throw new Error(receipt.error?.message ?? "The live WebMCP journey failed");
+  }
+
+  async listWebMcpTools() {
+    const receipt = await this.requireWebMcpJourney().perform({ kind: "discover" });
+    return this.unwrapWebMcpReceipt(receipt);
+  }
+
+  async callWebMcpTool({ name, arguments: input }) {
+    const action =
+      name === "getCarpoInstructions"
+        ? "get-instructions"
+        : name === "readClipWorkspace"
+          ? "read-workspace"
+          : name === "proposeClips"
+            ? "propose-clip"
+            : undefined;
+    if (!action) {
+      throw new Error("The requested WebMCP tool is outside Carpo's review allowlist");
+    }
+    const receipt = await this.requireWebMcpJourney().perform({
+      kind: action,
+      input,
+    });
+    return this.unwrapWebMcpReceipt(receipt);
+  }
+
   requireElement(elementId) {
     assertReviewElementId(elementId);
     const element = this.elements.get(elementId);
@@ -344,7 +536,7 @@ export class BoundedPlaywrightReviewAdapter {
     };
   }
 
-  async captureEvidence(note) {
+  async captureRawEvidence(note) {
     if (this.screenshots.length >= MAX_REVIEW_SCREENSHOTS) {
       throw new Error(
         `The review already captured its ${MAX_REVIEW_SCREENSHOTS}-screenshot budget`,
@@ -402,6 +594,33 @@ export class BoundedPlaywrightReviewAdapter {
     return evidence;
   }
 
+  async captureLiveWebMcpProof({ note, fixtureVideoId }) {
+    const evidence = await this.captureRawEvidence(note);
+    const observation = await this.observeLiveWebMcpProposalReview({
+      fixtureVideoId,
+    });
+    evidence.webMcp = {
+      reviewVisible: observation.modalVisible,
+      createdClipCount: observation.clipCount,
+    };
+    return {
+      evidence,
+      reviewVisible: observation.modalVisible,
+      createdClipCount: observation.clipCount,
+    };
+  }
+
+  async captureEvidence(note) {
+    if (this.webMcpJourney?.view().nextAction === "capture-proof") {
+      const receipt = await this.webMcpJourney.perform({
+        kind: "capture-proof",
+        note,
+      });
+      return this.unwrapWebMcpReceipt(receipt);
+    }
+    return this.captureRawEvidence(note);
+  }
+
   proofChallengeResult() {
     if (!this.proofChallenge) return undefined;
     return {
@@ -413,6 +632,10 @@ export class BoundedPlaywrightReviewAdapter {
           : "incomplete",
       completedSteps: [...this.proofChallengeSteps],
     };
+  }
+
+  webMcpResult(experience) {
+    return this.webMcpJourney?.dossier(experience);
   }
 
   async readDiagnostics() {
@@ -432,10 +655,12 @@ export class BoundedPlaywrightReviewAdapter {
         screenshots: this.screenshots,
         proofChallengeSteps: this.proofChallengeSteps,
         pendingProofChallenge: this.pendingProofChallengeStep,
+        webMcp: this.webMcpResult(report.webMcpExperience),
       },
       report,
       reviewOrigin: REVIEW_ORIGIN,
       proofChallengeId: this.proofChallenge?.id,
+      webMcpRequired: Boolean(this.webMcpJourney),
     });
     const boundedReport = enforceCoverageBoundary(report);
     return boundedReport;
@@ -446,6 +671,17 @@ export function appendHostDiagnosticsFinding(report, diagnostics) {
   return appendDiagnosticsFinding(report, diagnostics);
 }
 
+function unstartedWebMcpDossier(fixtureVideoId) {
+  return {
+    ...createLiveWebMcpVerificationJourney({
+      fixtureVideoId,
+      browser: {},
+    }).dossier(),
+    proofBoundary:
+      "No live WebMCP proof was established because the bounded Flue review did not start the WebMCP journey.",
+  };
+}
+
 async function runAgenticBrowserReview(args) {
   const cdpEndpoint = process.env.CARPO_BROWSER_CDP_URL ?? args.ws;
   const authToken = process.env.CARPO_PR_REVIEW_AUTH_TOKEN;
@@ -453,15 +689,24 @@ async function runAgenticBrowserReview(args) {
   const executionId = args["execution-id"];
   const outputDir = path.resolve(args.output ?? "test-output/pr-review");
   const proofChallenge = resolveProofChallenge(args["proof-challenge"]);
+  const webMcpFixtureVideoId = args["webmcp-video-id"];
   if (
     args.url !== REVIEW_ORIGIN &&
     args.url !== `${REVIEW_ORIGIN}/`
   ) {
     throw new Error(`The Flue review target must be exactly ${REVIEW_ORIGIN}`);
   }
-  if (!cdpEndpoint || !authToken || !expectedVersionTag || !executionId) {
+  if (
+    !cdpEndpoint ||
+    !authToken ||
+    !expectedVersionTag ||
+    !executionId ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      webMcpFixtureVideoId ?? "",
+    )
+  ) {
     throw new Error(
-      "Usage: flue-pr-browser-review.mjs --url <review-url> --expected-version-tag <tag> --execution-id <id> with Browser Run and review-auth credentials",
+      "Usage: flue-pr-browser-review.mjs --url <review-url> --expected-version-tag <tag> --execution-id <id> --webmcp-video-id <uuid> with Browser Run and review-auth credentials",
     );
   }
   await mkdir(outputDir, { recursive: true });
@@ -537,6 +782,7 @@ async function runAgenticBrowserReview(args) {
       outputDir,
       diagnostics,
       proofChallenge,
+      webMcpFixtureVideoId,
     });
     adapter.recordCurrentPath();
     agentResult = await runFlueAgenticReview({
@@ -547,6 +793,7 @@ async function runAgenticBrowserReview(args) {
       providers,
       runtimeEnv: inferenceEnv,
       proofChallenge,
+      webMcpFixtureVideoId,
     });
     await readCandidateIdentity(page, {
       reviewOrigin: REVIEW_ORIGIN,
@@ -618,6 +865,9 @@ async function runAgenticBrowserReview(args) {
       (proofChallenge
         ? { id: proofChallenge.id, status: "not_started", completedSteps: [] }
         : undefined),
+    webMcp:
+      adapter?.webMcpResult(report?.webMcpExperience) ??
+      unstartedWebMcpDossier(webMcpFixtureVideoId),
     diagnostics,
     toolCalls: agentResult?.toolCalls ?? 0,
     timeline: agentResult?.timeline ?? [],

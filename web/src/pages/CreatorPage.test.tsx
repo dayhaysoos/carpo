@@ -76,6 +76,7 @@ describe("CreatorPage", () => {
     vi.clearAllMocks();
     youtubePlayer.ready = true;
     delete (document as Document & { modelContext?: unknown }).modelContext;
+    delete (navigator as Navigator & { modelContext?: unknown }).modelContext;
   });
 
   function renderPage(initialEntry = "/") {
@@ -99,6 +100,23 @@ describe("CreatorPage", () => {
       screen.getByRole("heading", { name: "Clip with Think" }),
     ).toBeTruthy();
     expect(screen.getByText("Waiting")).toBeTruthy();
+  });
+
+  it("registers through the Browser Run legacy navigator surface when needed", async () => {
+    const registered: string[] = [];
+    Object.defineProperty(navigator, "modelContext", {
+      configurable: true,
+      value: {
+        registerTool: (tool: { name: string }) => registered.push(tool.name),
+      },
+    });
+
+    renderPage();
+
+    await waitFor(() =>
+      expect(registered).toContain("getCarpoInstructions"),
+    );
+    expect(registered).not.toContain("readClipWorkspace");
   });
 
   it("opens the existing editable review when the registered WebMCP tool proposes a grounded clip", async () => {

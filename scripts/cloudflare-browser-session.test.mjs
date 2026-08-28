@@ -22,6 +22,11 @@ function jsonResponse(value, status = 200) {
 describe("Cloudflare Browser Run session", () => {
   it("opts direct CDP sessions into recording and strips untrusted overrides", () => {
     assert.match(officialCdpEndpoint(ACCOUNT_ID), /recording=true/);
+    assert.equal(new URL(officialCdpEndpoint(ACCOUNT_ID)).searchParams.has("lab"), false);
+    assert.equal(
+      new URL(officialCdpEndpoint(ACCOUNT_ID, { lab: true })).searchParams.get("lab"),
+      "true",
+    );
     assert.deepEqual(
       stripDirectCdpOverride(["--url", "https://example.test", "--ws", "wss://bad"]),
       ["--url", "https://example.test"],
@@ -33,6 +38,7 @@ describe("Cloudflare Browser Run session", () => {
     const session = await createRecordedApiSession({
       accountId: ACCOUNT_ID,
       apiToken: "browser-token",
+      lab: true,
       fetchImpl: async (url, init) => {
         requests.push({ url: String(url), init });
         return jsonResponse({
@@ -53,6 +59,7 @@ describe("Cloudflare Browser Run session", () => {
     const createdUrl = new URL(requests[0].url);
     assert.equal(createdUrl.searchParams.get("recording"), "true");
     assert.equal(createdUrl.searchParams.get("keep_alive"), "600000");
+    assert.equal(createdUrl.searchParams.get("lab"), "true");
     assert.equal(requests[0].init.headers.Authorization, "Bearer browser-token");
   });
 

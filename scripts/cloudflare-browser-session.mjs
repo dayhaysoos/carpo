@@ -41,11 +41,17 @@ function parseJsonOutput(stdout) {
   return JSON.parse(stdout.slice(firstBrace, lastBrace + 1));
 }
 
-export function officialCdpEndpoint(accountId) {
+export function officialCdpEndpoint(accountId, { lab = false } = {}) {
   if (!/^[a-f0-9]{32}$/i.test(accountId)) {
     throw new Error("CLOUDFLARE_ACCOUNT_ID is not a valid Cloudflare account ID");
   }
-  return `wss://api.cloudflare.com/client/v4/accounts/${accountId}/browser-rendering/devtools/browser?keep_alive=600000&recording=true`;
+  const url = new URL(
+    `wss://api.cloudflare.com/client/v4/accounts/${accountId}/browser-rendering/devtools/browser`,
+  );
+  url.searchParams.set("keep_alive", "600000");
+  url.searchParams.set("recording", "true");
+  if (lab) url.searchParams.set("lab", "true");
+  return url.href;
 }
 
 async function runReviewer(reviewerPath, endpoint, args, env) {
@@ -57,10 +63,19 @@ async function runReviewer(reviewerPath, endpoint, args, env) {
   process.stderr.write(child.stderr);
 }
 
-async function createWranglerSession(env) {
+async function createWranglerSession(env, { lab = false } = {}) {
+  const args = [
+    "wrangler",
+    "browser",
+    "create",
+    "--json",
+    "--open=false",
+    "--keepAlive=600",
+  ];
+  if (lab) args.push("--lab");
   const { stdout } = await execFileAsync(
     "npx",
-    ["wrangler", "browser", "create", "--json", "--open=false", "--keepAlive=600"],
+    args,
     { env, maxBuffer: 2 * 1024 * 1024 },
   );
   const session = parseJsonOutput(stdout);
@@ -153,12 +168,14 @@ function browserSessionFromPayload(payload) {
 export async function createRecordedApiSession({
   accountId,
   apiToken,
+  lab = false,
   fetchImpl = fetch,
 }) {
   const url = cloudflareApiUrl(accountId, "devtools/browser");
   url.searchParams.set("targets", "true");
   url.searchParams.set("keep_alive", "600000");
   url.searchParams.set("recording", "true");
+  if (lab) url.searchParams.set("lab", "true");
   const response = await fetchImpl(url, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiToken}` },
@@ -273,6 +290,7 @@ export async function runWithCloudflareBrowser({
   runReviewerImpl = runReviewer,
   writeFileImpl = writeFile,
   wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  lab = false,
 }) {
   const configuredEndpoint = env.CARPO_BROWSER_CDP_URL;
   const accountId = env.CLOUDFLARE_ACCOUNT_ID;
@@ -293,6 +311,7 @@ export async function runWithCloudflareBrowser({
       recordedSession = await createRecordedApiSession({
         accountId: credentials.accountId,
         apiToken: credentials.apiToken,
+        lab,
         fetchImpl,
       });
     } catch (error) {
@@ -348,7 +367,7 @@ export async function runWithCloudflareBrowser({
 
   let sessionId;
   try {
-    const session = await createWranglerSession(env);
+    const session = await createWranglerSession(env, { lab });
     sessionId = session.sessionId;
     if (env.GITHUB_ACTIONS === "true") {
       process.stdout.write(`::add-mask::${session.endpoint}\n`);

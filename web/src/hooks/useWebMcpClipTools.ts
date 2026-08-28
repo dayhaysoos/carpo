@@ -10,11 +10,17 @@ function currentModelContext(): WebMcpModelContext | null {
     return null;
   }
   if (window.top !== window) return null;
-  const candidate = (document as Document & {
+  const documentCandidate = (document as Document & {
     modelContext?: Partial<WebMcpModelContext>;
   }).modelContext;
-  return typeof candidate?.registerTool === "function"
-    ? (candidate as WebMcpModelContext)
+  if (typeof documentCandidate?.registerTool === "function") {
+    return documentCandidate as WebMcpModelContext;
+  }
+  const navigatorCandidate = (navigator as Navigator & {
+    modelContext?: Partial<WebMcpModelContext>;
+  }).modelContext;
+  return typeof navigatorCandidate?.registerTool === "function"
+    ? (navigatorCandidate as WebMcpModelContext)
     : null;
 }
 
