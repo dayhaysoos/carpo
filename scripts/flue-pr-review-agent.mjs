@@ -30,6 +30,10 @@ const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 const MAX_TOOL_CALLS = 38;
 const MAX_FINISH_REMINDERS = 8;
 const MAX_REPEATED_FINISH_REJECTIONS = 2;
+const TERMINAL_TOOL_NAMES = new Set([
+  "read_browser_diagnostics",
+  "finish_review",
+]);
 const MAX_DIAGNOSTIC_TURNS = 16;
 const MAX_DIAGNOSTIC_FAILURES = 8;
 const MAX_DIAGNOSTIC_TEXT = 2_000;
@@ -204,7 +208,10 @@ async function runSessionTool(id, name, input, run) {
   const session = requireReviewSession(id);
   const execute = async () => {
     session.toolCalls += 1;
-    if (session.toolCalls > MAX_TOOL_CALLS) {
+    if (
+      session.toolCalls > MAX_TOOL_CALLS &&
+      !TERMINAL_TOOL_NAMES.has(name)
+    ) {
       throw new Error(`The agentic review exceeded its ${MAX_TOOL_CALLS}-tool budget`);
     }
     const startedAt = new Date().toISOString();

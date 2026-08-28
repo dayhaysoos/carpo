@@ -884,5 +884,5 @@ ${options.beginReviewRequired ? "5" : "4"}. Inspect desktop and mobile viewport 
 ${options.beginReviewRequired ? "6" : "5"}. Visit the host-defined missing route ${MISSING_ROUTE_PATH}, inspect its status and visible UI, then return to a normal route.
 ${options.beginReviewRequired ? "7" : "6"}. Exercise only safe interactions. Look for broken navigation, stale state, contradictory content, layout problems, and visible failures.
 ${options.beginReviewRequired ? "8" : "7"}. Capture screenshots that directly support the observed state. Findings require a category, description, exact path, evidence, and reproduction steps.
-${options.beginReviewRequired ? "9" : "8"}. Read browser diagnostics, then call finish_review exactly once. Use needs_attention for a concrete problem, inconclusive when the tools cannot establish an answer, and pass only when inspected behavior has no concrete issue.${proof}${webMcp}`;
+${options.beginReviewRequired ? "9" : "8"}. As soon as the required coverage and evidence are complete, stop exploring, read browser diagnostics, then call finish_review exactly once. Use needs_attention for a concrete problem, inconclusive when the tools cannot establish an answer, and pass only when inspected behavior has no concrete issue.${proof}${webMcp}`;
 }

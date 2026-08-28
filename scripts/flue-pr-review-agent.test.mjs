@@ -427,6 +427,46 @@ describe("Flue PR review agent", () => {
     );
   });
 
+  it("reserves diagnostics and structured completion after exploration is exhausted", async () => {
+    const faux = fauxProvider();
+    faux.setResponses([
+      ...Array.from({ length: AGENTIC_REVIEW_LIMITS.maxToolCalls }, () =>
+        fauxAssistantMessage(
+          [fauxToolCall("inspect_page", {})],
+          { stopReason: "toolUse" },
+        ),
+      ),
+      fauxAssistantMessage(
+        [fauxToolCall("read_browser_diagnostics", {})],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage(
+        [
+          fauxToolCall("finish_review", {
+            verdict: "inconclusive",
+            summary: "The bounded review exhausted its exploration budget.",
+            testedAreas: ["Create"],
+            findings: [],
+            remainingRisks: ["Further exploratory coverage remains unverified."],
+          }),
+        ],
+        { stopReason: "toolUse" },
+      ),
+    ]);
+
+    const result = await runFlueAgenticReview({
+      executionId: "test-budgeted-finish",
+      expectedVersionTag: "abc123",
+      adapter: fakeAdapter(),
+      model: "faux/faux-1",
+      providers: [faux.provider],
+      timeoutMs: 10_000,
+    });
+
+    assert.equal(result.report.verdict, "inconclusive");
+    assert.equal(result.toolCalls, AGENTIC_REVIEW_LIMITS.maxToolCalls + 2);
+  });
+
   it("retains sanitized provider and settlement diagnostics when a model turn fails", async () => {
     const faux = fauxProvider();
     faux.setResponses([
