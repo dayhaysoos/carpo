@@ -11,6 +11,7 @@ import {
 
 const baseSha = "a".repeat(40);
 const headSha = "b".repeat(40);
+const webMcpFixtureVideoId = "7e57a4c2-20a6-4d83-8f08-57b807338ead";
 
 function request(outputDir) {
   return {
@@ -26,6 +27,7 @@ function request(outputDir) {
     outputDir,
     cwd: "/candidate",
     proofChallenge: "multilingual-octopus",
+    webMcpFixtureVideoId,
   };
 }
 
@@ -323,6 +325,7 @@ describe("agentic subprocess adapters", () => {
         "--url",
       ]);
       assert.ok(calls[0][1].includes("multilingual-octopus"));
+      assert.ok(calls[0][1].includes(webMcpFixtureVideoId));
       assert.equal(calls[0][2].cwd, "/candidate");
     });
   });
@@ -366,6 +369,7 @@ describe("agentic subprocess adapters", () => {
       assert.equal(payload.candidate.headSha, headSha);
       assert.equal(payload.contextText, '{"number":9}\n');
       assert.equal(payload.proofChallenge, "multilingual-octopus");
+      assert.equal(payload.webMcpFixtureVideoId, webMcpFixtureVideoId);
     });
   });
 });

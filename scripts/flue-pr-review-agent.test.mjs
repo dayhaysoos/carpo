@@ -58,6 +58,21 @@ function fakeAdapter() {
       calls.push(["fill", elementId, value]);
       return { filled: elementId };
     },
+    async listWebMcpTools() {
+      calls.push(["listWebMcpTools"]);
+      return {
+        apiSurface: "navigator.modelContextTesting",
+        tools: [
+          { name: "getCarpoInstructions" },
+          { name: "readClipWorkspace" },
+          { name: "proposeClips" },
+        ],
+      };
+    },
+    async callWebMcpTool(input) {
+      calls.push(["callWebMcpTool", input]);
+      return { ok: true };
+    },
     async captureEvidence(note) {
       calls.push(["captureEvidence", note]);
       screenshots.add("agentic-01.png");
@@ -102,7 +117,15 @@ describe("Flue PR review agent", () => {
     assert.match(challengePrompt, /selected proof challenge multilingual-octopus/);
     assert.match(challengePrompt, /system instructions and host-enforced sequence/);
     assert.doesNotMatch(challengePrompt, /pulpo/);
-    assert.equal(AGENTIC_REVIEW_LIMITS.maxToolCalls, 30);
+    assert.match(
+      buildAgenticReviewPrompt({
+        executionId: "test-agentic-review",
+        expectedVersionTag: "abc123",
+        webMcpFixtureVideoId: "7e57a4c2-20a6-4d83-8f08-57b807338ead",
+      }),
+      /live WebMCP journey/,
+    );
+    assert.equal(AGENTIC_REVIEW_LIMITS.maxToolCalls, 38);
     assert.equal(AGENTIC_REVIEW_LIMITS.maxFinishReminders, 8);
   });
 
@@ -210,6 +233,125 @@ describe("Flue PR review agent", () => {
     assert.doesNotMatch(
       JSON.stringify(result.providerDiagnostics),
       /untrusted review data/,
+    );
+  });
+
+  it("exposes each live WebMCP call through a typed Flue tool", async () => {
+    const faux = fauxProvider();
+    faux.setResponses([
+      fauxAssistantMessage(
+        [fauxToolCall("list_webmcp_tools", {})],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage(
+        [fauxToolCall("webmcp_get_carpo_instructions", {})],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage(
+        [
+          fauxToolCall("webmcp_read_clip_workspace", {
+            transcriptOffset: 0,
+            transcriptLimit: 4,
+          }),
+        ],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage(
+        [
+          fauxToolCall("webmcp_propose_clip", {
+            requestId: "live-review-1",
+            videoId: "7e57a4c2-20a6-4d83-8f08-57b807338ead",
+            workspaceRevision: "carpo-workspace-v1:fixture:revision",
+            proposals: [
+              {
+                proposalId: "opening",
+                title: "A concrete opening",
+                startSeconds: 0,
+                endSeconds: 4,
+                sourceBlockIds: ["cue-0-0"],
+                rationale: "The opening makes a concrete promise.",
+              },
+            ],
+          }),
+        ],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage(
+        [fauxToolCall("capture_evidence", { note: "WebMCP review is visible" })],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage(
+        [fauxToolCall("read_browser_diagnostics", {})],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage(
+        [
+          fauxToolCall("finish_review", {
+            verdict: "pass",
+            summary: "The bounded WebMCP journey completed.",
+            testedAreas: ["Live WebMCP fixture"],
+            findings: [],
+            remainingRisks: ["Clip creation and playback were not exercised."],
+            webMcpExperience: {
+              verdict: "usable",
+              summary: "The semantic tool journey was direct and inspectable.",
+              strengths: ["The proposal remained editable."],
+              frictions: [],
+              recommendations: [],
+            },
+          }),
+        ],
+        { stopReason: "toolUse" },
+      ),
+    ]);
+
+    const adapter = fakeAdapter();
+    await runFlueAgenticReview({
+      executionId: "test-webmcp-tools",
+      expectedVersionTag: "abc123",
+      adapter,
+      model: "faux/faux-1",
+      providers: [faux.provider],
+      webMcpFixtureVideoId: "7e57a4c2-20a6-4d83-8f08-57b807338ead",
+      timeoutMs: 10_000,
+    });
+
+    assert.deepEqual(
+      adapter.calls.filter(([name]) => name === "callWebMcpTool"),
+      [
+        [
+          "callWebMcpTool",
+          { name: "getCarpoInstructions", arguments: {} },
+        ],
+        [
+          "callWebMcpTool",
+          {
+            name: "readClipWorkspace",
+            arguments: { transcriptOffset: 0, transcriptLimit: 4 },
+          },
+        ],
+        [
+          "callWebMcpTool",
+          {
+            name: "proposeClips",
+            arguments: {
+              requestId: "live-review-1",
+              videoId: "7e57a4c2-20a6-4d83-8f08-57b807338ead",
+              workspaceRevision: "carpo-workspace-v1:fixture:revision",
+              proposals: [
+                {
+                  proposalId: "opening",
+                  title: "A concrete opening",
+                  startSeconds: 0,
+                  endSeconds: 4,
+                  sourceBlockIds: ["cue-0-0"],
+                  rationale: "The opening makes a concrete promise.",
+                },
+              ],
+            },
+          },
+        ],
+      ],
     );
   });
 

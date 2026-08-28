@@ -164,6 +164,85 @@ describe("bounded review policy contract", () => {
     );
   });
 
+  it("requires deterministic live WebMCP proof and an experience report when enabled", () => {
+    const webMcpProgress = {
+      ...completeProgress,
+      screenshots: [
+        ...completeProgress.screenshots,
+        { file: "agentic-03.png", path: "/" },
+      ],
+      webMcp: {
+        status: "completed",
+        deterministic: "pass",
+        fixtureVideoId: "7e57a4c2-20a6-4d83-8f08-57b807338ead",
+        apiSurface: "navigator.modelContextTesting",
+        expectedToolNames: [
+          "getCarpoInstructions",
+          "readClipWorkspace",
+          "proposeClips",
+        ],
+        discoveredToolNames: [
+          "getCarpoInstructions",
+          "readClipWorkspace",
+          "proposeClips",
+        ],
+        calls: [],
+        attempts: [],
+        proposal: {
+          requiresHumanReview: true,
+          createdClipCount: 0,
+        },
+        evidenceScreenshot: "agentic-03.png",
+        proofBoundary: "Live WebMCP verification only.",
+      },
+    };
+    const webMcpReport = {
+      ...report,
+      webMcpExperience: {
+        verdict: "usable",
+        summary: "The structured proposal journey completed.",
+        strengths: ["The workspace supplied grounded identifiers."],
+        frictions: [],
+        recommendations: [],
+      },
+    };
+    assert.doesNotThrow(() =>
+      assertReviewComplete({
+        progress: webMcpProgress,
+        report: webMcpReport,
+        reviewOrigin: origin,
+        webMcpRequired: true,
+      }),
+    );
+    assert.throws(
+      () =>
+        assertReviewComplete({
+          progress: {
+            ...webMcpProgress,
+            webMcp: {
+              ...webMcpProgress.webMcp,
+              status: "incomplete",
+              deterministic: "inconclusive",
+            },
+          },
+          report: webMcpReport,
+          reviewOrigin: origin,
+          webMcpRequired: true,
+        }),
+      /deterministic live WebMCP verification journey/,
+    );
+    assert.throws(
+      () =>
+        assertReviewComplete({
+          progress: webMcpProgress,
+          report,
+          reviewOrigin: origin,
+          webMcpRequired: true,
+        }),
+      /experience report/,
+    );
+  });
+
   it("owns proof-challenge definitions and completion", () => {
     const challenge = resolveProofChallenge("multilingual-octopus");
     assert.equal(challenge.steps.length, 4);
@@ -239,6 +318,12 @@ describe("bounded review policy contract", () => {
     assert.doesNotMatch(local, /Call begin_review/);
     assert.match(durable, /Call begin_review/);
     assert.match(durable, /pulpo/);
+    const webMcp = buildReviewerInstructions({
+      webMcpFixtureVideoId: "7e57a4c2-20a6-4d83-8f08-57b807338ead",
+    });
+    assert.match(webMcp, /list_webmcp_tools/);
+    assert.match(webMcp, /Suggested via WebMCP/);
+    assert.match(webMcp, /Never approve, reject, dismiss/);
   });
 
   it("names the exact missing route when completion needs it", () => {

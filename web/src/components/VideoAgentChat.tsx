@@ -3,10 +3,10 @@ import { getToolName, isToolUIPart } from "ai";
 import type { UIMessage } from "ai";
 import { useAgent } from "agents/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createClipFromSourceVideo } from "../api";
 import { ClipProposalReview } from "../clip-proposal-review";
+import { createClipProposalReview } from "../create-clip-proposal-review";
 import { useClipProposalReview } from "../hooks/useClipProposalReview";
-import { extractThinkClipProposals } from "../think-clip-proposals";
+import { extractThinkClipProposalSubmissions } from "../think-clip-proposals";
 import type { ClipSource } from "../types";
 import {
   extractTimestampEntities,
@@ -20,9 +20,11 @@ interface VideoAgentChatProps {
   videoId: string;
   source?: ClipSource;
   retainedSourceReady?: boolean;
+  videoDurationSeconds?: number | null;
   onClipCreated: () => void;
   onTimestampSelect: (window: TimestampWindow) => void;
   existingClips?: ExistingClipRange[];
+  proposalReview?: ClipProposalReview;
 }
 
 const DEFAULT_TIMESTAMP_WINDOW_SECONDS = 10;
@@ -36,37 +38,11 @@ function messageText(parts: Array<{ type: string; text?: string }>): string {
 }
 
 export function VideoAgentChat(props: VideoAgentChatProps) {
-  const [proposalReview] = useState(
-    () =>
-      new ClipProposalReview({
-        create: async (proposal, input) => {
-          const clip = await createClipFromSourceVideo(
-            proposal.videoId,
-            {
-              title: input.title,
-              trimStart: input.startSeconds,
-              trimEnd: input.endSeconds,
-              quality: input.quality ?? "1080p",
-              filters: input.caption
-                ? [{ type: "caption", text: input.caption }]
-                : [],
-            },
-            proposal.idempotencyKey,
-          );
-          return {
-            id: clip.id,
-            title: clip.title,
-            startSeconds: clip.trimStart,
-            endSeconds: clip.trimEnd,
-            quality: clip.quality,
-            status: clip.status,
-          };
-        },
-      }),
-  );
+  const [fallbackProposalReview] = useState(createClipProposalReview);
+  const proposalReview = props.proposalReview ?? fallbackProposalReview;
 
   useEffect(() => {
-    proposalReview.activate(props.videoId);
+    if (!props.videoId) proposalReview.activate(null);
   }, [proposalReview, props.videoId]);
 
   if (!props.videoId) {
@@ -123,11 +99,14 @@ function ConnectedVideoAgentChat({
   videoId,
   source,
   retainedSourceReady = false,
+  videoDurationSeconds = null,
   onClipCreated,
   onTimestampSelect,
   existingClips = EMPTY_EXISTING_CLIPS,
   proposalReview,
-}: VideoAgentChatProps & { proposalReview: ClipProposalReview }) {
+}: Omit<VideoAgentChatProps, "proposalReview"> & {
+  proposalReview: ClipProposalReview;
+}) {
   const [input, setInput] = useState("");
   const [connected, setConnected] = useState(false);
   const lastAutoAppliedTimestamp = useRef<string | null>(null);
@@ -151,9 +130,9 @@ function ConnectedVideoAgentChat({
   const chatMessages = messages as UIMessage[];
   const reviewState = useClipProposalReview(proposalReview);
   const hasActiveVideoReview = reviewState.videoId === videoId;
-  const thinkProposals = useMemo(
+  const thinkSubmissions = useMemo(
     () =>
-      extractThinkClipProposals(chatMessages, videoId, {
+      extractThinkClipProposalSubmissions(chatMessages, videoId, {
         addToolApprovalResponse,
         addToolOutput,
       }),
@@ -168,8 +147,19 @@ function ConnectedVideoAgentChat({
   const working = status === "submitted" || status === "streaming";
 
   useEffect(() => {
-    if (!working) proposalReview.synchronize(videoId, thinkProposals);
-  }, [proposalReview, thinkProposals, videoId, working]);
+    proposalReview.activate({ id: videoId, durationSeconds: videoDurationSeconds });
+  }, [proposalReview, videoDurationSeconds, videoId]);
+
+  useEffect(() => {
+    if (!working) {
+      for (const { submission, reportAdmission } of thinkSubmissions) {
+        const result = proposalReview.admit(submission);
+        void reportAdmission(result).catch((error: unknown) => {
+          console.error("Think clip proposal admission reporting failed", error);
+        });
+      }
+    }
+  }, [proposalReview, thinkSubmissions, working]);
 
   useEffect(() => {
     const entity = timestampEntities.at(-1);

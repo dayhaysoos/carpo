@@ -24,6 +24,7 @@ async function main() {
       ),
       args: stripDirectCdpOverride(args),
       recordingOutputPath: path.join(output, "browser-recording.json"),
+      lab: true,
     }));
   } catch (error) {
     reviewError = error;

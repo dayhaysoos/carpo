@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -14,6 +15,8 @@ import { CreatorPage } from "./CreatorPage";
 const api = vi.hoisted(() => ({
   createSourceVideo: vi.fn(),
   getSourceVideo: vi.fn(),
+  getVideoTranscript: vi.fn(),
+  createClipFromSourceVideo: vi.fn(),
   requestUploadUrl: vi.fn(),
   uploadFileWithProgress: vi.fn(),
 }));
@@ -27,6 +30,8 @@ vi.mock("../api", async (importOriginal) => {
     ...original,
     createSourceVideo: api.createSourceVideo,
     getSourceVideo: api.getSourceVideo,
+    getVideoTranscript: api.getVideoTranscript,
+    createClipFromSourceVideo: api.createClipFromSourceVideo,
     requestUploadUrl: api.requestUploadUrl,
     uploadFileWithProgress: api.uploadFileWithProgress,
   };
@@ -70,6 +75,8 @@ describe("CreatorPage", () => {
     cleanup();
     vi.clearAllMocks();
     youtubePlayer.ready = true;
+    delete (document as Document & { modelContext?: unknown }).modelContext;
+    delete (navigator as Navigator & { modelContext?: unknown }).modelContext;
   });
 
   function renderPage(initialEntry = "/") {
@@ -93,6 +100,127 @@ describe("CreatorPage", () => {
       screen.getByRole("heading", { name: "Clip with Think" }),
     ).toBeTruthy();
     expect(screen.getByText("Waiting")).toBeTruthy();
+  });
+
+  it("registers through the Browser Run legacy navigator surface when needed", async () => {
+    const registered: string[] = [];
+    Object.defineProperty(navigator, "modelContext", {
+      configurable: true,
+      value: {
+        registerTool: (tool: { name: string }) => registered.push(tool.name),
+      },
+    });
+
+    renderPage();
+
+    await waitFor(() =>
+      expect(registered).toContain("getCarpoInstructions"),
+    );
+    expect(registered).not.toContain("readClipWorkspace");
+  });
+
+  it("opens the existing editable review when the registered WebMCP tool proposes a grounded clip", async () => {
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+    const video = {
+      id: "webmcp-video-id",
+      title: "WebMCP upload",
+      source: {
+        type: "upload" as const,
+        key: "uploads/webmcp.mp4",
+      },
+      clipCount: 0,
+      activeClipCount: 0,
+      failedClipCount: 0,
+      thumbnail: null,
+      durationSeconds: 45,
+      retainedSourceReady: true,
+      transcriptStatus: "available" as const,
+      transcriptCheckedAt: "2026-08-27T20:00:00.000Z",
+      transcriptCheckError: null,
+      transcriptRetryAt: null,
+      archivedAt: null,
+      createdAt: "2026-08-27T19:00:00.000Z",
+      updatedAt: "2026-08-27T20:00:00.000Z",
+    };
+    const transcript = {
+      transcriptStatus: "available" as const,
+      language: "en",
+      automatic: true,
+      cached: true,
+      blocks: [
+        {
+          id: "webmcp-block-1",
+          startCueId: "cue-1",
+          endCueId: "cue-2",
+          startSeconds: 6,
+          endSeconds: 12,
+          text: "A real passage from the uploaded video.",
+        },
+      ],
+    };
+    api.getSourceVideo.mockResolvedValue({ video, clips: [] });
+    api.getVideoTranscript.mockResolvedValue(transcript);
+    const registrations = new Map<
+      string,
+      { execute: (input: unknown) => Promise<unknown> }
+    >();
+    Object.defineProperty(document, "modelContext", {
+      configurable: true,
+      value: {
+        registerTool: (
+          tool: { name: string; execute: (input: unknown) => Promise<unknown> },
+        ) => {
+          registrations.set(tool.name, tool);
+        },
+      },
+    });
+
+    renderPage(`/?video=${video.id}`);
+
+    await screen.findByText(video.title);
+    await waitFor(() => expect(registrations.has("proposeClips")).toBe(true));
+    const readWorkspace = registrations.get("readClipWorkspace");
+    const proposeClips = registrations.get("proposeClips");
+    if (!readWorkspace || !proposeClips) {
+      throw new Error("Expected Carpo WebMCP tools to be registered");
+    }
+    const workspace = (await readWorkspace.execute({})) as {
+      revisions: { workspaceRevision: string };
+    };
+
+    await proposeClips.execute({
+      requestId: "react-integration",
+      videoId: video.id,
+      workspaceRevision: workspace.revisions.workspaceRevision,
+      proposals: [
+        {
+          proposalId: "agent-found-moment",
+          title: "Agent-found moment",
+          startSeconds: 6,
+          endSeconds: 12,
+          sourceBlockIds: ["webmcp-block-1"],
+          rationale: "This passage is concise and self-contained.",
+        },
+      ],
+    });
+
+    expect(
+      await screen.findByRole("heading", { name: "Review clips" }),
+    ).toBeTruthy();
+    expect(screen.getByText("Agent-found moment")).toBeTruthy();
+    expect(screen.getByText(/Suggested via WebMCP/)).toBeTruthy();
+    expect(
+      screen.getByText("This passage is concise and self-contained."),
+    ).toBeTruthy();
+    const trimStart = screen
+      .getAllByRole("slider", { name: "Trim start" })
+      .find((element) => element.tagName === "INPUT") as HTMLInputElement;
+    fireEvent.change(trimStart, { target: { value: "7" } });
+    expect(trimStart.value).toBe("7");
+    expect(api.createClipFromSourceVideo).not.toHaveBeenCalled();
   });
 
   it("activates Think for a valid URL before the player is ready", async () => {

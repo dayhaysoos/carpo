@@ -1,30 +1,53 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ClipProposalReview,
-  type ClipProposalEnvelope,
+  MAX_QUEUED_CLIP_PROPOSAL_BATCHES,
+  type ClipProposalDraft,
   type ClipProposalOutcome,
   type ClipProposalPersistence,
+  type ClipProposalSubmission,
   type CreatedClipResult,
 } from "./clip-proposal-review";
 
 type CreateClip = ClipProposalPersistence["create"];
 
+function canonical(
+  requestId: string,
+  proposalId: string,
+  adapter: "think" | "webmcp" = "think",
+  videoId = "video-1",
+): string {
+  return `${adapter}:${videoId}:${requestId}:${proposalId}`;
+}
+
 function proposal(
-  id: string,
+  proposalId: string,
   startSeconds: number,
   settle = vi.fn<(outcome: ClipProposalOutcome) => void>(),
-): ClipProposalEnvelope {
+): ClipProposalDraft {
   return {
-    id,
-    videoId: "video-1",
-    idempotencyKey: `tool-${id}`,
+    proposalId,
     input: {
-      title: `Clip ${id}`,
+      title: `Clip ${proposalId}`,
       startSeconds,
       endSeconds: startSeconds + 3,
       quality: "1080p",
     },
     settle,
+  };
+}
+
+function submission(
+  requestId: string,
+  proposals: ClipProposalDraft[],
+  options: Partial<Pick<ClipProposalSubmission, "adapter" | "atomic" | "videoId">> = {},
+): ClipProposalSubmission {
+  return {
+    adapter: options.adapter ?? "think",
+    requestId,
+    videoId: options.videoId ?? "video-1",
+    ...(options.atomic === undefined ? {} : { atomic: options.atomic }),
+    proposals,
   };
 }
 
@@ -48,19 +71,21 @@ describe("ClipProposalReview", () => {
       createdClip(item.id, input.startSeconds),
     );
     review = new ClipProposalReview({ create });
-    review.activate("video-1");
+    review.activate({ id: "video-1", durationSeconds: 90 });
   });
 
-  it("freezes a chronological batch and queues proposals that arrive later", async () => {
-    review.synchronize("video-1", [proposal("late", 40), proposal("first", 2)]);
+  it("freezes chronological batches and preserves manual edits across retries", async () => {
+    review.admit(
+      submission("batch-1", [proposal("late", 40), proposal("first", 2)]),
+    );
 
     expect(review.getSnapshot().items.map(({ proposalId }) => proposalId)).toEqual([
-      "first",
-      "late",
+      canonical("batch-1", "first"),
+      canonical("batch-1", "late"),
     ]);
     review.dispatch({
       type: "edit",
-      proposalId: "first",
+      proposalId: canonical("batch-1", "first"),
       input: {
         ...review.getSnapshot().items[0].input,
         startSeconds: 2.5,
@@ -68,33 +93,38 @@ describe("ClipProposalReview", () => {
       },
     });
 
-    review.synchronize("video-1", [
-      { ...proposal("first", 20), input: { ...proposal("first", 20).input } },
-      proposal("next", 1),
-    ]);
+    const replay = review.admit(
+      submission("batch-1", [
+        { ...proposal("first", 20), input: { ...proposal("first", 20).input } },
+        proposal("late", 40),
+      ]),
+    );
+    const queued = review.admit(submission("batch-2", [proposal("next", 1)]));
 
-    expect(review.getSnapshot().items.map(({ proposalId }) => proposalId)).toEqual([
-      "first",
-      "late",
-    ]);
+    expect(replay.items.every(({ replayed }) => replayed)).toBe(true);
+    expect(queued.items).toMatchObject([{ state: "queued" }]);
     expect(review.getSnapshot().items[0].input.startSeconds).toBe(2.5);
 
     review.dispatch({ type: "decide-all", approved: false });
     await review.finish();
 
     expect(review.getSnapshot().items.map(({ proposalId }) => proposalId)).toEqual([
-      "next",
+      canonical("batch-2", "next"),
     ]);
   });
 
   it("refreshes adapter callbacks without publishing an unchanged snapshot", async () => {
     const originalSettle = vi.fn();
     const refreshedSettle = vi.fn();
-    review.synchronize("video-1", [proposal("stable", 2, originalSettle)]);
+    review.admit(
+      submission("stable-batch", [proposal("stable", 2, originalSettle)]),
+    );
     const listener = vi.fn();
     review.subscribe(listener);
 
-    review.synchronize("video-1", [proposal("stable", 2, refreshedSettle)]);
+    review.admit(
+      submission("stable-batch", [proposal("stable", 2, refreshedSettle)]),
+    );
 
     expect(listener).not.toHaveBeenCalled();
     review.dispatch({ type: "decide-all", approved: false });
@@ -103,27 +133,39 @@ describe("ClipProposalReview", () => {
     expect(refreshedSettle).toHaveBeenCalledWith({ status: "rejected" });
   });
 
-  it("preserves edits and reversible decisions when dismissed or switching videos", () => {
-    review.synchronize("video-1", [proposal("editable", 10)]);
+  it("preserves edits and reversible decisions when dismissed or switching Videos", () => {
+    review.admit(submission("editable-batch", [proposal("editable", 10)]));
     const edited = {
       ...review.getSnapshot().items[0].input,
       startSeconds: 11.5,
       endSeconds: 15,
     };
-    review.dispatch({ type: "edit", proposalId: "editable", input: edited });
-    review.dispatch({ type: "decide", proposalId: "editable", approved: true });
-    review.dispatch({ type: "decide", proposalId: "editable", approved: false });
+    review.dispatch({
+      type: "edit",
+      proposalId: canonical("editable-batch", "editable"),
+      input: edited,
+    });
+    review.dispatch({
+      type: "decide",
+      proposalId: canonical("editable-batch", "editable"),
+      approved: true,
+    });
+    review.dispatch({
+      type: "decide",
+      proposalId: canonical("editable-batch", "editable"),
+      approved: false,
+    });
     review.dispatch({ type: "dismiss" });
 
-    review.activate("video-2");
+    review.activate({ id: "video-2", durationSeconds: 60 });
     expect(review.getSnapshot().items).toEqual([]);
-    review.activate("video-1");
+    review.activate({ id: "video-1", durationSeconds: 90 });
 
     expect(review.getSnapshot()).toMatchObject({
       isOpen: false,
       items: [
         {
-          proposalId: "editable",
+          proposalId: canonical("editable-batch", "editable"),
           input: edited,
           decision: false,
         },
@@ -131,10 +173,186 @@ describe("ClipProposalReview", () => {
     });
   });
 
+  it("admits valid proposals individually and keeps invalid proposals out of review", () => {
+    const result = review.admit(
+      submission("partial", [
+        proposal("valid", 2),
+        {
+          ...proposal("invalid", 5),
+          input: { ...proposal("invalid", 5).input, endSeconds: 80 },
+        },
+      ]),
+    );
+
+    expect(result.items).toMatchObject([
+      { proposalId: "valid", state: "ready-for-review", issues: [] },
+      {
+        proposalId: "invalid",
+        state: "rejected",
+        issues: [{ code: "INVALID_RANGE" }],
+      },
+    ]);
+    expect(review.getSnapshot().items).toHaveLength(1);
+  });
+
+  it("owns title, quality, and Overlay Text validation for every adapter", () => {
+    const invalidTitle = proposal("title", 2);
+    invalidTitle.input.title = "   ";
+    const invalidQuality = proposal("quality", 8);
+    invalidQuality.input.quality = "4k" as never;
+    const invalidOverlay = proposal("overlay", 14);
+    invalidOverlay.input.caption = "x".repeat(501);
+
+    const result = review.admit(
+      submission("shared-rules", [
+        invalidTitle,
+        invalidQuality,
+        invalidOverlay,
+      ]),
+    );
+
+    expect(result.items.map(({ issues }) => issues[0].code)).toEqual([
+      "INVALID_TITLE",
+      "INVALID_QUALITY",
+      "INVALID_OVERLAY_TEXT",
+    ]);
+    expect(review.getSnapshot().items).toEqual([]);
+  });
+
+  it("keeps atomic submissions out of review when any proposal is invalid", () => {
+    const result = review.admit(
+      submission(
+        "atomic",
+        [
+          proposal("valid", 2),
+          {
+            ...proposal("invalid", 5),
+            input: { ...proposal("invalid", 5).input, endSeconds: 80 },
+          },
+        ],
+        { adapter: "webmcp", atomic: true },
+      ),
+    );
+
+    expect(result.items.map(({ state }) => state)).toEqual([
+      "rejected",
+      "rejected",
+    ]);
+    expect(result.items[0].issues[0].code).toBe("ATOMIC_SUBMISSION_REJECTED");
+    expect(review.getSnapshot().items).toEqual([]);
+  });
+
+  it("derives canonical identity and normalizes provenance", () => {
+    const result = review.admit({
+      adapter: "webmcp",
+      requestId: "agent-run",
+      videoId: "video-1",
+      proposals: [
+        {
+          ...proposal("opening", 4),
+          evidence: {
+            rationale: "A grounded opening.",
+            sourceBlockIds: ["block-1"],
+            workspaceRevision: "revision-1",
+            contractVersion: "contract-1",
+          },
+        },
+      ],
+    });
+
+    expect(result.items).toMatchObject([
+      {
+        canonicalId: canonical("agent-run", "opening", "webmcp"),
+        state: "ready-for-review",
+      },
+    ]);
+    expect(review.getSnapshot().items).toMatchObject([
+      {
+        provenance: {
+          adapter: "webmcp",
+          label: "WebMCP",
+          rationale: "A grounded opening.",
+          sourceBlockIds: ["block-1"],
+          workspaceRevision: "revision-1",
+          contractVersion: "contract-1",
+          proposedAt: expect.any(String),
+        },
+      },
+    ]);
+  });
+
+  it("keeps an admitted batch frozen when a retry introduces a new proposal", () => {
+    review.admit(submission("frozen", [proposal("original", 2)]));
+
+    const retry = review.admit(
+      submission("frozen", [
+        proposal("original", 2),
+        proposal("unexpected", 8),
+      ]),
+    );
+
+    expect(retry.items).toMatchObject([
+      { proposalId: "original", replayed: true, state: "ready-for-review" },
+      {
+        proposalId: "unexpected",
+        state: "rejected",
+        issues: [{ code: "BATCH_FROZEN" }],
+      },
+    ]);
+    expect(review.getSnapshot().items).toHaveLength(1);
+  });
+
+  it("rejects batches containing more than ten proposals", () => {
+    const result = review.admit(
+      submission(
+        "too-large",
+        Array.from({ length: 11 }, (_, index) =>
+          proposal(`proposal-${index}`, index * 4),
+        ),
+      ),
+    );
+
+    expect(result.items).toHaveLength(11);
+    expect(result.items.every(({ state }) => state === "rejected")).toBe(true);
+    expect(result.items[0].issues[0].code).toBe("BATCH_TOO_LARGE");
+    expect(review.getSnapshot().items).toEqual([]);
+  });
+
+  it("returns a structured submission issue for an empty batch", () => {
+    const result = review.admit(submission("empty", []));
+
+    expect(result.items).toEqual([]);
+    expect(result.issues).toMatchObject([{ code: "BATCH_TOO_LARGE" }]);
+    expect(review.getSnapshot().items).toEqual([]);
+  });
+
+  it("keeps queued batches separate and rejects submissions beyond the queue limit", async () => {
+    review.admit(submission("active", [proposal("active", 0)]));
+    for (let index = 0; index < MAX_QUEUED_CLIP_PROPOSAL_BATCHES; index += 1) {
+      const result = review.admit(
+        submission(`queued-${index}`, [proposal(`queued-${index}`, index + 5)]),
+      );
+      expect(result.items[0].state).toBe("queued");
+    }
+
+    const overflow = review.admit(
+      submission("overflow", [proposal("overflow", 30)]),
+    );
+    expect(overflow.items).toMatchObject([
+      { state: "rejected", issues: [{ code: "QUEUE_FULL" }] },
+    ]);
+
+    review.dispatch({ type: "decide-all", approved: false });
+    await review.finish();
+    expect(review.getSnapshot().items.map(({ proposalId }) => proposalId)).toEqual([
+      canonical("queued-0", "queued-0"),
+    ]);
+  });
+
   it("continues after a persistence failure and retries only the failed proposal", async () => {
     let failMiddle = true;
-    create.mockImplementation(async (item: { id: string }, input) => {
-      if (item.id === "middle" && failMiddle) {
+    create.mockImplementation(async (item, input) => {
+      if (item.id === canonical("retry-batch", "middle") && failMiddle) {
         failMiddle = false;
         throw new Error("temporary persistence failure");
       }
@@ -143,20 +361,16 @@ describe("ClipProposalReview", () => {
     const first = proposal("first", 0);
     const middle = proposal("middle", 10);
     const last = proposal("last", 20);
-    review.synchronize("video-1", [first, middle, last]);
+    review.admit(submission("retry-batch", [first, middle, last]));
     review.dispatch({ type: "decide-all", approved: true });
 
     const firstResult = await review.finish();
 
-    expect(firstResult.created.map(({ id }) => id)).toEqual([
-      "clip-first",
-      "clip-last",
-    ]);
     expect(firstResult.created).toHaveLength(2);
     expect(create.mock.calls.map(([item]) => item.id)).toEqual([
-      "first",
-      "middle",
-      "last",
+      canonical("retry-batch", "first"),
+      canonical("retry-batch", "middle"),
+      canonical("retry-batch", "last"),
     ]);
     expect(first.settle).toHaveBeenCalledTimes(1);
     expect(middle.settle).not.toHaveBeenCalled();
@@ -167,7 +381,7 @@ describe("ClipProposalReview", () => {
       allReviewed: true,
       items: [
         {
-          proposalId: "middle",
+          proposalId: canonical("retry-batch", "middle"),
           decision: true,
           error: "temporary persistence failure",
         },
@@ -176,13 +390,8 @@ describe("ClipProposalReview", () => {
 
     const retryResult = await review.finish();
 
-    expect(retryResult.created.map(({ id }) => id)).toEqual(["clip-middle"]);
-    expect(create.mock.calls.map(([item]) => item.id)).toEqual([
-      "first",
-      "middle",
-      "last",
-      "middle",
-    ]);
+    expect(retryResult.created).toHaveLength(1);
+    expect(create).toHaveBeenCalledTimes(4);
     expect(middle.settle).toHaveBeenCalledTimes(1);
     expect(review.getSnapshot().items).toEqual([]);
   });
@@ -193,26 +402,30 @@ describe("ClipProposalReview", () => {
     const firstFinished = new Promise<void>((resolve) => {
       releaseFirst = resolve;
     });
-    create.mockImplementation(async (item: { id: string }, input) => {
+    create.mockImplementation(async (item, input) => {
       started.push(item.id);
-      if (item.id === "first") await firstFinished;
+      if (item.id === canonical("sequential", "first")) await firstFinished;
       return createdClip(item.id, input.startSeconds);
     });
-    review.synchronize("video-1", [
-      proposal("first", 0),
-      proposal("second", 10),
-    ]);
+    review.admit(
+      submission("sequential", [proposal("first", 0), proposal("second", 10)]),
+    );
     review.dispatch({ type: "decide-all", approved: true });
 
     const finishing = review.finish();
-    await vi.waitFor(() => expect(started).toEqual(["first"]));
+    await vi.waitFor(() =>
+      expect(started).toEqual([canonical("sequential", "first")]),
+    );
     releaseFirst();
     await finishing;
 
-    expect(started).toEqual(["first", "second"]);
+    expect(started).toEqual([
+      canonical("sequential", "first"),
+      canonical("sequential", "second"),
+    ]);
   });
 
-  it("retries acknowledgement without recreating a persisted clip", async () => {
+  it("retries acknowledgement without recreating a persisted Clip", async () => {
     let rejectAcknowledgement = true;
     const settle = vi.fn(() => {
       if (rejectAcknowledgement) {
@@ -220,14 +433,12 @@ describe("ClipProposalReview", () => {
         throw new Error("acknowledgement interrupted");
       }
     });
-    review.synchronize("video-1", [proposal("once", 4, settle)]);
+    review.admit(submission("ack", [proposal("once", 4, settle)]));
     review.dispatch({ type: "decide-all", approved: true });
 
     const firstResult = await review.finish();
     expect(firstResult.created).toHaveLength(1);
-    expect(review.getSnapshot().items).toMatchObject([
-      { proposalId: "once", decision: true },
-    ]);
+    expect(review.getSnapshot().items).toHaveLength(1);
 
     const retryResult = await review.finish();
     expect(retryResult.created).toEqual([]);
@@ -236,10 +447,23 @@ describe("ClipProposalReview", () => {
     expect(review.getSnapshot().items).toEqual([]);
   });
 
+  it("revalidates edited ranges against the latest Video context", async () => {
+    review.admit(submission("revalidate", [proposal("range", 20)]));
+    review.dispatch({ type: "decide-all", approved: true });
+    review.activate({ id: "video-1", durationSeconds: 21 });
+
+    await review.finish();
+
+    expect(create).not.toHaveBeenCalled();
+    expect(review.getSnapshot().items).toMatchObject([
+      { error: "Clip range exceeds the 21-second Video duration." },
+    ]);
+  });
+
   it("settles rejected proposals without invoking persistence", async () => {
     const first = proposal("first", 0);
     const second = proposal("second", 10);
-    review.synchronize("video-1", [first, second]);
+    review.admit(submission("reject", [first, second]));
     review.dispatch({ type: "decide-all", approved: false });
 
     await review.finish();
@@ -253,7 +477,9 @@ describe("ClipProposalReview", () => {
     const settle = vi.fn(() => {
       throw new Error("provider acknowledgement failed");
     });
-    review.synchronize("video-1", [proposal("rejected-once", 0, settle)]);
+    review.admit(
+      submission("reject-once", [proposal("rejected-once", 0, settle)]),
+    );
     review.dispatch({ type: "decide-all", approved: false });
 
     await review.finish();
@@ -262,5 +488,18 @@ describe("ClipProposalReview", () => {
     expect(settle).toHaveBeenCalledTimes(1);
     expect(create).not.toHaveBeenCalled();
     expect(review.getSnapshot().items).toEqual([]);
+  });
+
+  it("cancels active and queued batches for an explicitly discarded Video", async () => {
+    const active = proposal("active", 0);
+    const queued = proposal("queued", 10);
+    review.admit(submission("active-batch", [active]));
+    review.admit(submission("queued-batch", [queued]));
+
+    await review.cancel("video-1");
+
+    expect(active.settle).toHaveBeenCalledWith({ status: "cancelled" });
+    expect(queued.settle).toHaveBeenCalledWith({ status: "cancelled" });
+    expect(review.getSnapshot()).toMatchObject({ videoId: "", items: [] });
   });
 });

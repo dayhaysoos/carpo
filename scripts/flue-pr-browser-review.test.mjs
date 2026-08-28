@@ -229,6 +229,170 @@ describe("bounded Flue browser review", () => {
     ]);
   });
 
+  it("discovers and invokes only the ordered live Carpo WebMCP journey", async () => {
+    const outputDir = await mkdtemp(path.join(os.tmpdir(), "carpo-webmcp-review-"));
+    const videoId = "7e57a4c2-20a6-4d83-8f08-57b807338ead";
+    const workspaceRevision = "carpo-workspace-v1:fixture:revision";
+    const browserCalls = [];
+    let currentUrl = "https://carpo-pr-review.ndejesus1227.workers.dev/";
+    const page = {
+      url: () => currentUrl,
+      async goto(url) {
+        currentUrl = url;
+        return { status: () => 200 };
+      },
+      async evaluate(_fn, input) {
+        if (input?.allowedNames) {
+          const names = currentUrl.includes(`?video=${videoId}`)
+            ? input.allowedNames
+            : ["getCarpoInstructions"];
+          return {
+            available: true,
+            apiSurface: "navigator.modelContextTesting",
+            userAgent: "Chrome/146",
+            tools: names.map((name) => ({
+              name,
+              description: `${name} description`,
+              inputSchema: { type: "object" },
+            })),
+            unexpectedToolNames: ["candidateExtraTool"],
+          };
+        }
+        if (input?.apiSurface) {
+          browserCalls.push(input);
+          if (input.name === "getCarpoInstructions") return { ok: true };
+          if (input.name === "readClipWorkspace") {
+            return {
+              ok: true,
+              revisions: { workspaceRevision },
+              video: { id: videoId },
+              transcript: {
+                status: "available",
+                blocks: [
+                  {
+                    id: "cue-0-0",
+                    startSeconds: 0,
+                    endSeconds: 4,
+                    text: "Fixture transcript",
+                  },
+                ],
+              },
+            };
+          }
+          return {
+            ok: true,
+            requiresHumanReview: true,
+            createdClipIds: [],
+            forbiddenActionsPerformed: [],
+            proposalReview: { isOpen: true },
+          };
+        }
+        if (input === videoId) {
+          return { modalVisible: true, persistenceStatus: 200, clipCount: 0 };
+        }
+        return true;
+      },
+      async screenshot({ path: screenshotPath }) {
+        await writeFile(screenshotPath, "webmcp-review-visible");
+      },
+    };
+    const adapter = new BoundedPlaywrightReviewAdapter({
+      page,
+      contextText: "context",
+      diffText: "diff",
+      outputDir,
+      diagnostics: {},
+      webMcpFixtureVideoId: videoId,
+    });
+
+    try {
+      const discovery = await adapter.listWebMcpTools();
+      assert.deepEqual(
+        discovery.tools.map(({ name }) => name),
+        ["getCarpoInstructions", "readClipWorkspace", "proposeClips"],
+      );
+      assert.equal(
+        currentUrl,
+        `https://carpo-pr-review.ndejesus1227.workers.dev/?video=${videoId}`,
+      );
+      await assert.rejects(
+        () =>
+          adapter.callWebMcpTool({
+            name: "readClipWorkspace",
+            arguments: { transcriptLimit: 4 },
+          }),
+        /next required .*getCarpoInstructions/,
+      );
+      await adapter.callWebMcpTool({
+        name: "getCarpoInstructions",
+        arguments: {},
+      });
+      await adapter.callWebMcpTool({
+        name: "readClipWorkspace",
+        arguments: { transcriptOffset: 0, transcriptLimit: 4 },
+      });
+      await assert.rejects(
+        () =>
+          adapter.callWebMcpTool({
+            name: "proposeClips",
+            arguments: {
+              requestId: "wrong-revision",
+              videoId,
+              workspaceRevision: "stale",
+              proposals: [
+                {
+                  proposalId: "one",
+                  title: "One",
+                  startSeconds: 0,
+                  endSeconds: 4,
+                  sourceBlockIds: ["cue-0-0"],
+                },
+              ],
+            },
+          }),
+        /exact live videoId and workspaceRevision/,
+      );
+      await adapter.callWebMcpTool({
+        name: "proposeClips",
+        arguments: {
+          requestId: "live-review",
+          videoId,
+          workspaceRevision,
+          proposals: [
+            {
+              proposalId: "one",
+              title: "Human review matters",
+              startSeconds: 0,
+              endSeconds: 4,
+              sourceBlockIds: ["cue-0-0"],
+            },
+          ],
+        },
+      });
+      const evidence = await adapter.captureEvidence(
+        "WebMCP proposal is visible in human review",
+      );
+      assert.equal(evidence.webMcp.reviewVisible, true);
+      const result = adapter.webMcpResult({
+        verdict: "usable",
+        summary: "The journey worked.",
+        strengths: [],
+        frictions: [],
+        recommendations: [],
+      });
+      assert.equal(result.status, "completed");
+      assert.equal(result.deterministic, "pass");
+      assert.equal(result.proposal.createdClipCount, 0);
+      assert.equal(result.evidenceScreenshot, "agentic-01.png");
+      assert.deepEqual(
+        browserCalls.map(({ name }) => name),
+        ["getCarpoInstructions", "readClipWorkspace", "proposeClips"],
+      );
+    } finally {
+      await rm(outputDir, { recursive: true, force: true });
+    }
+  });
+
   it("host-enforces the ordered multilingual Title proof and its screenshots", async () => {
     const outputDir = await mkdtemp(path.join(os.tmpdir(), "carpo-proof-challenge-"));
     let currentValue = "";
@@ -265,7 +429,7 @@ describe("bounded Flue browser review", () => {
       id: "e2",
       tag: "input",
       type: "text",
-      name: "Caption (optional)",
+      name: "Overlay text (optional)",
     });
 
     try {

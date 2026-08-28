@@ -1,8 +1,9 @@
 import { getToolName, isToolUIPart, type UIMessage } from "ai";
 import type {
-  ClipProposalEnvelope,
+  ClipProposalAdmissionResult,
   ClipProposalInput,
   ClipProposalOutcome,
+  ClipProposalSubmission,
 } from "./clip-proposal-review";
 
 interface ThinkProposalCallbacks {
@@ -23,6 +24,11 @@ interface ThinkProposalReference {
   input: ClipProposalInput;
 }
 
+export interface ThinkClipProposalSubmission {
+  submission: ClipProposalSubmission;
+  reportAdmission: (result: ClipProposalAdmissionResult) => Promise<void>;
+}
+
 function isClipProposalInput(value: unknown): value is ClipProposalInput {
   if (!value || typeof value !== "object") return false;
   const input = value as Record<string, unknown>;
@@ -31,41 +37,37 @@ function isClipProposalInput(value: unknown): value is ClipProposalInput {
     typeof input.startSeconds === "number" &&
     typeof input.endSeconds === "number" &&
     (input.caption === undefined || typeof input.caption === "string") &&
-    (input.quality === undefined ||
-      input.quality === "720p" ||
-      input.quality === "1080p")
+    (input.quality === undefined || typeof input.quality === "string")
   );
 }
 
-function thinkProposalReferences(messages: UIMessage[]): ThinkProposalReference[] {
+function thinkProposalReferences(message: UIMessage): ThinkProposalReference[] {
   const proposals: ThinkProposalReference[] = [];
-  for (const message of messages) {
-    for (const part of message.parts) {
-      if (!isToolUIPart(part) || getToolName(part) !== "createClip") continue;
-      if (!isClipProposalInput(part.input)) continue;
+  for (const part of message.parts) {
+    if (!isToolUIPart(part) || getToolName(part) !== "createClip") continue;
+    if (!isClipProposalInput(part.input)) continue;
 
-      if (part.state === "input-available") {
-        proposals.push({
-          proposalId: part.toolCallId,
-          toolCallId: part.toolCallId,
-          resolution: "client",
-          input: part.input,
-        });
-        continue;
-      }
-
-      if (part.state !== "approval-requested") continue;
-      const approval = "approval" in part
-        ? (part.approval as { id?: unknown })
-        : undefined;
-      if (typeof approval?.id !== "string") continue;
+    if (part.state === "input-available") {
       proposals.push({
-        proposalId: approval.id,
+        proposalId: part.toolCallId,
         toolCallId: part.toolCallId,
-        resolution: "approval",
+        resolution: "client",
         input: part.input,
       });
+      continue;
     }
+
+    if (part.state !== "approval-requested") continue;
+    const approval = "approval" in part
+      ? (part.approval as { id?: unknown })
+      : undefined;
+    if (typeof approval?.id !== "string") continue;
+    proposals.push({
+      proposalId: approval.id,
+      toolCallId: part.toolCallId,
+      resolution: "approval",
+      input: part.input,
+    });
   }
   return proposals;
 }
@@ -108,18 +110,59 @@ function settleThinkProposal(
   });
 }
 
-export function extractThinkClipProposals(
+async function reportThinkAdmission(
+  proposals: ThinkProposalReference[],
+  callbacks: ThinkProposalCallbacks,
+  result: ClipProposalAdmissionResult,
+): Promise<void> {
+  const references = new Map(
+    proposals.map((proposal) => [proposal.proposalId, proposal]),
+  );
+  for (const rejected of result.items.filter(
+    ({ state }) => state === "rejected",
+  )) {
+    const proposal = references.get(rejected.proposalId);
+    if (!proposal) continue;
+    const reason = rejected.issues.map(({ message }) => message).join(" ");
+    if (proposal.resolution === "approval") {
+      await callbacks.addToolApprovalResponse({
+        id: proposal.proposalId,
+        approved: false,
+      });
+    } else {
+      await callbacks.addToolOutput({
+        toolCallId: proposal.toolCallId,
+        output: { status: "invalid", reason },
+      });
+    }
+  }
+}
+
+export function extractThinkClipProposalSubmissions(
   messages: UIMessage[],
   videoId: string,
   callbacks: ThinkProposalCallbacks,
-): ClipProposalEnvelope[] {
-  return thinkProposalReferences(messages).map((proposal) => ({
-    id: `think:${videoId}:${proposal.proposalId}`,
-    videoId,
-    idempotencyKey: proposal.toolCallId,
-    input: { ...proposal.input },
-    settle: async (outcome) => {
-      await settleThinkProposal(proposal, callbacks, outcome);
-    },
-  }));
+): ThinkClipProposalSubmission[] {
+  return messages.flatMap((message) => {
+    const proposals = thinkProposalReferences(message);
+    if (proposals.length === 0) return [];
+    return [
+      {
+        submission: {
+          adapter: "think" as const,
+          requestId: message.id,
+          videoId,
+          proposals: proposals.map((proposal) => ({
+            proposalId: proposal.proposalId,
+            input: { ...proposal.input },
+            settle: async (outcome: ClipProposalOutcome) => {
+              await settleThinkProposal(proposal, callbacks, outcome);
+            },
+          })),
+        },
+        reportAdmission: (result: ClipProposalAdmissionResult) =>
+          reportThinkAdmission(proposals, callbacks, result),
+      },
+    ];
+  });
 }

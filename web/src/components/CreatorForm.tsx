@@ -800,10 +800,10 @@ export function CreatorForm({
       </label>
 
       <label className="field">
-        <span>Caption (optional)</span>
+        <span>Overlay text (optional)</span>
         <input
           type="text"
-          placeholder="Burn text into the clip"
+          placeholder="Show static text throughout the clip"
           value={caption}
           onChange={(event) =>
             dispatch({

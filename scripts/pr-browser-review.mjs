@@ -243,17 +243,19 @@ async function reviewProductSurfaces(page, plan, run) {
   run.assertions.push({ label: "Owned-video upload is the default source mode", status: "passed" });
   await visible(page.getByRole("tab", { name: "YouTube URL" }), "Best-effort YouTube source remains available", run.assertions);
   const title = page.getByLabel("Title");
-  const caption = page.getByLabel("Caption (optional)");
+  const overlayText = page
+    .getByLabel("Overlay text (optional)")
+    .or(page.getByLabel("Caption (optional)"));
   await title.fill("Manual review title");
-  await caption.fill("Manual review caption");
+  await overlayText.fill("Manual review overlay text");
   if ((await title.inputValue()) !== "Manual review title") {
     throw new Error("Manual title editing did not retain the entered value");
   }
-  if ((await caption.inputValue()) !== "Manual review caption") {
-    throw new Error("Manual caption editing did not retain the entered value");
+  if ((await overlayText.inputValue()) !== "Manual review overlay text") {
+    throw new Error("Manual overlay-text editing did not retain the entered value");
   }
   run.assertions.push({ label: "Manual title editing remains available", status: "passed" });
-  run.assertions.push({ label: "Manual caption editing remains available", status: "passed" });
+  run.assertions.push({ label: "Manual overlay-text editing remains available", status: "passed" });
 
   await uploadTab.click();
   await visible(page.getByLabel("Video file"), "File picker renders after selecting upload", run.assertions);

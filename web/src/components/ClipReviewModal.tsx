@@ -373,6 +373,24 @@ export function ClipReviewModal({
               : "clip-review-details"
           }
         >
+          <div className="clip-review-proposal-heading">
+            <strong>{input.title}</strong>
+            {approval.provenance ? (
+              <span>
+                Suggested via {approval.provenance.label}
+                {approval.provenance.sourceBlockIds?.length
+                  ? ` · grounded in ${approval.provenance.sourceBlockIds.length} transcript passage${
+                      approval.provenance.sourceBlockIds.length === 1 ? "" : "s"
+                    }`
+                  : ""}
+              </span>
+            ) : null}
+          </div>
+          {approval.provenance?.rationale ? (
+            <p className="clip-review-rationale">
+              {approval.provenance.rationale}
+            </p>
+          ) : null}
           <ClipRangeEditor
             approvalId={approval.proposalId}
             originalInput={approval.originalInput}
@@ -398,7 +416,7 @@ export function ClipReviewModal({
           </div>
           {input.caption ? (
             <p className="clip-review-caption">
-              <span>Caption</span>
+              <span>Overlay text</span>
               {input.caption}
             </p>
           ) : null}

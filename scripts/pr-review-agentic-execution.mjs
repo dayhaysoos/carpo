@@ -31,6 +31,7 @@ function validateRequest(request) {
   requireString(request.diffPath, "frozen diff path");
   requireString(request.outputDir, "review output directory");
   requireString(request.cwd, "candidate checkout");
+  requireString(request.webMcpFixtureVideoId, "WebMCP fixture video ID");
   if (!SHA_PATTERN.test(request.baseSha ?? "")) {
     throw new Error("candidate base SHA has an invalid format");
   }
@@ -146,6 +147,8 @@ function commonReviewArgs(request) {
     request.diffPath,
     "--output",
     request.outputDir,
+    "--webmcp-video-id",
+    request.webMcpFixtureVideoId,
   ];
   if (request.proofChallenge) {
     args.push("--proof-challenge", request.proofChallenge);
@@ -245,6 +248,7 @@ export function createDurableAgenticAdapter({
               ...(request.proofChallenge
                 ? { proofChallenge: request.proofChallenge }
                 : {}),
+              webMcpFixtureVideoId: request.webMcpFixtureVideoId,
             },
             null,
             2,
