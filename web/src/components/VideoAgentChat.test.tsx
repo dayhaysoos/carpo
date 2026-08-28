@@ -494,7 +494,7 @@ describe("VideoAgentChat", () => {
           quality: "1080p",
           filters: [],
         },
-        "tool-approval-first",
+        "think:video-1:assistant-1:approval-first",
       ),
     );
     expect(chat.addToolApprovalResponse).toHaveBeenCalledWith({
@@ -797,7 +797,7 @@ describe("VideoAgentChat", () => {
           quality: "1080p",
           filters: [],
         },
-        "tool-editable",
+        "think:video-1:assistant-1:tool-editable",
       ),
     );
     expect(chat.addToolOutput).toHaveBeenCalledWith({

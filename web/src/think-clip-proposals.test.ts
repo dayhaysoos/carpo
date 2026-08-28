@@ -1,23 +1,23 @@
 import type { UIMessage } from "ai";
 import { describe, expect, it, vi } from "vitest";
 import { ClipProposalReview } from "./clip-proposal-review";
-import { extractThinkClipProposals } from "./think-clip-proposals";
+import { extractThinkClipProposalSubmissions } from "./think-clip-proposals";
 
-function messagesWith(part: Record<string, unknown>): UIMessage[] {
+function messagesWith(...parts: Record<string, unknown>[]): UIMessage[] {
   return [
     {
       id: "assistant-1",
       role: "assistant",
-      parts: [part],
+      parts,
     },
   ] as UIMessage[];
 }
 
-describe("extractThinkClipProposals", () => {
-  it("normalizes an approval request and translates rejection", async () => {
+describe("extractThinkClipProposalSubmissions", () => {
+  it("normalizes one assistant turn as a frozen batch and translates rejection", async () => {
     const addToolApprovalResponse = vi.fn();
     const addToolOutput = vi.fn();
-    const proposals = extractThinkClipProposals(
+    const submissions = extractThinkClipProposalSubmissions(
       messagesWith({
         type: "tool-createClip",
         toolCallId: "tool-1",
@@ -34,16 +34,23 @@ describe("extractThinkClipProposals", () => {
       { addToolApprovalResponse, addToolOutput },
     );
 
-    expect(proposals).toMatchObject([
+    expect(submissions).toMatchObject([
       {
-        id: "think:video-1:approval-1",
-        videoId: "video-1",
-        idempotencyKey: "tool-1",
-        input: { title: "Opening", startSeconds: 1, endSeconds: 4 },
+        submission: {
+          adapter: "think",
+          requestId: "assistant-1",
+          videoId: "video-1",
+          proposals: [
+            {
+              proposalId: "approval-1",
+              input: { title: "Opening", startSeconds: 1, endSeconds: 4 },
+            },
+          ],
+        },
       },
     ]);
 
-    await proposals[0].settle({ status: "rejected" });
+    await submissions[0].submission.proposals[0].settle({ status: "rejected" });
 
     expect(addToolApprovalResponse).toHaveBeenCalledWith({
       id: "approval-1",
@@ -52,10 +59,36 @@ describe("extractThinkClipProposals", () => {
     expect(addToolOutput).not.toHaveBeenCalled();
   });
 
+  it("keeps proposals from the same assistant turn in one submission", () => {
+    const submissions = extractThinkClipProposalSubmissions(
+      messagesWith(
+        {
+          type: "tool-createClip",
+          toolCallId: "tool-1",
+          state: "input-available",
+          input: { title: "First", startSeconds: 1, endSeconds: 4 },
+        },
+        {
+          type: "tool-createClip",
+          toolCallId: "tool-2",
+          state: "input-available",
+          input: { title: "Second", startSeconds: 8, endSeconds: 12 },
+        },
+      ),
+      "video-1",
+      { addToolApprovalResponse: vi.fn(), addToolOutput: vi.fn() },
+    );
+
+    expect(submissions).toHaveLength(1);
+    expect(
+      submissions[0].submission.proposals.map(({ proposalId }) => proposalId),
+    ).toEqual(["tool-1", "tool-2"]);
+  });
+
   it("translates a created client proposal into Think tool output", async () => {
     const addToolApprovalResponse = vi.fn();
     const addToolOutput = vi.fn();
-    const proposals = extractThinkClipProposals(
+    const submissions = extractThinkClipProposalSubmissions(
       messagesWith({
         type: "tool-createClip",
         toolCallId: "tool-client",
@@ -71,7 +104,7 @@ describe("extractThinkClipProposals", () => {
       { addToolApprovalResponse, addToolOutput },
     );
 
-    await proposals[0].settle({
+    await submissions[0].submission.proposals[0].settle({
       status: "created",
       clip: {
         id: "clip-1",
@@ -97,6 +130,38 @@ describe("extractThinkClipProposals", () => {
     expect(addToolApprovalResponse).not.toHaveBeenCalled();
   });
 
+  it("reports admission failures to Think without adding them to review", async () => {
+    const addToolOutput = vi.fn();
+    const review = new ClipProposalReview({ create: vi.fn() });
+    review.activate({ id: "video-1", durationSeconds: 30 });
+    const submissions = extractThinkClipProposalSubmissions(
+      messagesWith({
+        type: "tool-createClip",
+        toolCallId: "tool-invalid-range",
+        state: "input-available",
+        input: {
+          title: "Invalid range",
+          startSeconds: 10,
+          endSeconds: 5,
+        },
+      }),
+      "video-1",
+      { addToolApprovalResponse: vi.fn(), addToolOutput },
+    );
+
+    const admission = review.admit(submissions[0].submission);
+    await submissions[0].reportAdmission(admission);
+
+    expect(addToolOutput).toHaveBeenCalledWith({
+      toolCallId: "tool-invalid-range",
+      output: {
+        status: "invalid",
+        reason: expect.stringContaining("Clip range must be"),
+      },
+    });
+    expect(review.getSnapshot().items).toEqual([]);
+  });
+
   it("keeps a created proposal retryable when async acknowledgement fails", async () => {
     const create = vi.fn().mockResolvedValue({
       id: "clip-1",
@@ -112,7 +177,7 @@ describe("extractThinkClipProposals", () => {
       .mockRejectedValueOnce(acknowledgementError)
       .mockResolvedValueOnce(undefined);
     const review = new ClipProposalReview({ create });
-    const proposals = extractThinkClipProposals(
+    const submissions = extractThinkClipProposalSubmissions(
       messagesWith({
         type: "tool-createClip",
         toolCallId: "tool-retry",
@@ -128,11 +193,11 @@ describe("extractThinkClipProposals", () => {
       { addToolApprovalResponse: vi.fn(), addToolOutput },
     );
 
-    review.activate("video-1");
-    review.synchronize("video-1", proposals);
+    review.activate({ id: "video-1", durationSeconds: 30 });
+    const admission = review.admit(submissions[0].submission);
     review.dispatch({
       type: "decide",
-      proposalId: proposals[0].id,
+      proposalId: admission.items[0].canonicalId!,
       approved: true,
     });
 
@@ -143,7 +208,7 @@ describe("extractThinkClipProposals", () => {
     expect(review.getSnapshot()).toMatchObject({
       items: [
         {
-          proposalId: proposals[0].id,
+          proposalId: admission.items[0].canonicalId,
           error: "Acknowledgement failed",
         },
       ],
@@ -158,8 +223,8 @@ describe("extractThinkClipProposals", () => {
     expect(review.getSnapshot().items).toEqual([]);
   });
 
-  it("ignores malformed proposal input", () => {
-    const proposals = extractThinkClipProposals(
+  it("ignores input that cannot be translated into a Clip Proposal", () => {
+    const submissions = extractThinkClipProposalSubmissions(
       messagesWith({
         type: "tool-createClip",
         toolCallId: "tool-invalid",
@@ -170,6 +235,6 @@ describe("extractThinkClipProposals", () => {
       { addToolApprovalResponse: vi.fn(), addToolOutput: vi.fn() },
     );
 
-    expect(proposals).toEqual([]);
+    expect(submissions).toEqual([]);
   });
 });

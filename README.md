@@ -47,6 +47,12 @@ validation, authorization, human review, and recoverable manual correction. See
 [ADR 0002](docs/adr/0002-keep-capabilities-independent-from-intelligence-provider.md)
 and the [WebMCP capability contract](docs/webmcp-capability-contract.md).
 
+The first WebMCP slice exposes top-level browser tools that explain Carpo's
+authority boundary, read a revision-bound active video and transcript, and add
+transcript-grounded drafts to the existing editable Clip Proposal Review. The
+tools cannot approve, create, encode, publish, or share clips; browsers without
+WebMCP continue to use the normal manual and Think interfaces.
+
 ## Caption outputs
 
 The current editor can burn one static text overlay into an entire Clip. Carpo's

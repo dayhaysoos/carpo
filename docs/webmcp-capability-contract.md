@@ -10,7 +10,7 @@ See [ADR 0002](./adr/0002-keep-capabilities-independent-from-intelligence-provid
 
 WebMCP is an app-native adapter into Carpo's existing workspace and Clip Proposal Review. It is not a replacement UI, a second agent experience, or an automation layer over Think's chat interface.
 
-The persisted, user-visible Clip Proposal Review is the source of truth. Agent chat and transient tool output are not authoritative product state. A proposal records its source video and transcript version, suggested ranges, title and presentation options, rationale, validation state, provenance, and review status. Human edits and decisions remain attached to that artifact so a later authorized client can understand what actually happened without relying on chat history.
+The user-visible Clip Proposal Review is the source of truth while a review is active. Agent chat and transient tool output are not authoritative product state. A proposal records its source video and transcript version, suggested ranges, title and presentation options, rationale, validation state, provenance, and review status. In accordance with [ADR 0001](./adr/0001-human-reviewed-clip-proposals.md), unfinished reviews are session-scoped today; durable proposal history is a separate future capability and must not be implied by the first WebMCP adapter.
 
 ## Initial WebMCP surface
 
@@ -21,6 +21,10 @@ The initial tool surface should remain small and typed. The exact names may chan
 - `proposeClips`: create validated Clip Proposal drafts grounded in the current transcript and source video.
 - `updateClipProposalDraft`: revise proposal fields without approving or creating a Clip.
 - `getCarpoDocumentation`: return concise documentation for the exposed capabilities and their constraints.
+
+The first implemented tracer bullet registers `getCarpoInstructions`, `readClipWorkspace`, and `proposeClips`. It shares the existing Clip Proposal Review with Think, binds proposals to the current video and a content-derived transcript revision, requires real overlapping transcript block IDs, preserves manual range corrections across idempotent retries, and leaves unsupported browsers on the normal manual interface. Draft revision and broader documentation tools remain future slices.
+
+Clip Proposal Review owns provider-neutral admission for both Think and WebMCP: canonical proposal identity, shared title/range/quality/Overlay Text validation, frozen per-video batches, bounded FIFO review, idempotent retries, and pre-creation revalidation. Each adapter retains only its own translation and evidence rules; WebMCP therefore keeps workspace-revision and transcript-grounding checks without duplicating shared proposal policy.
 
 Tools register in the browser only when the relevant authenticated Carpo workspace is available. They use the same authorization, validation, idempotency, and provider-independent application boundaries as the manual and Think adapters. Mutating tools return structured validation results and the resulting current proposal state.
 
@@ -96,7 +100,7 @@ The initial contract is satisfied when an unfamiliar authorized browser agent ca
 2. Read the exact active workspace and the source revisions on which a proposal will depend.
 3. Create and revise an editable Clip Proposal through the same deterministic constraints used by the other adapters.
 4. Receive structured, actionable validation failures for invalid or stale inputs.
-5. Observe the resulting persisted proposal and provenance in the manual UI.
+5. Observe the resulting session-scoped proposal and provenance in the manual UI.
 
 The same verification must prove that the agent cannot approve, create, encode, publish, or share a Clip through the WebMCP surface; manual corrections survive agent regeneration; and the existing manual workflow remains usable when no agent is present.
 

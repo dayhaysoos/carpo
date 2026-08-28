@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getSourceVideo } from "../api";
+import { getSourceVideo, getVideoTranscript } from "../api";
+import { createClipProposalReview } from "../create-clip-proposal-review";
 import { CreatorForm } from "../components/CreatorForm";
 import { StatusPanel } from "../components/StatusPanel";
 import { VideoAgentChat } from "../components/VideoAgentChat";
@@ -10,6 +11,7 @@ import {
 } from "../queries";
 import { useSearchParams } from "react-router-dom";
 import { useRef, useState } from "react";
+import { useWebMcpClipTools } from "../hooks/useWebMcpClipTools";
 import type {
   ClipWindowRequest,
   TimestampWindow,
@@ -21,12 +23,38 @@ export function CreatorPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const videoId = searchParams.get("video") ?? "";
   const clipWindowSequence = useRef(0);
+  const [proposalReview] = useState(createClipProposalReview);
   const [clipWindowRequest, setClipWindowRequest] =
     useState<ClipWindowRequest | null>(null);
   const { data: sourceVideoData } = useQuery({
     queryKey: sourceVideoQueryKey(videoId),
     queryFn: () => getSourceVideo(videoId),
     enabled: Boolean(videoId),
+  });
+  const {
+    data: transcript = null,
+    error: transcriptError,
+  } = useQuery({
+    queryKey: ["video-transcript", videoId],
+    queryFn: () => getVideoTranscript(videoId),
+    enabled: Boolean(videoId),
+    retry: false,
+    refetchInterval: (query) => {
+      if (query.state.error) return false;
+      const result = query.state.data;
+      return result?.transcriptStatus === "checking"
+        ? result.retryAfterMs
+        : false;
+    },
+  });
+
+  const activeVideo =
+    sourceVideoData?.video.id === videoId ? sourceVideoData.video : null;
+  useWebMcpClipTools({
+    video: activeVideo,
+    transcript,
+    transcriptError: transcriptError?.message ?? null,
+    review: proposalReview,
   });
 
   const handleClipCreated = () => {
@@ -49,7 +77,9 @@ export function CreatorPage() {
       requestId: clipWindowSequence.current,
     });
   };
-  const existingClips = toExistingClipRanges(sourceVideoData?.clips);
+  const existingClips = toExistingClipRanges(
+    activeVideo ? sourceVideoData?.clips : undefined,
+  );
 
   return (
     <main className="app-main">
@@ -60,13 +90,13 @@ export function CreatorPage() {
       />
       <VideoAgentChat
         videoId={videoId}
-        source={sourceVideoData?.video.source}
-        retainedSourceReady={
-          sourceVideoData?.video.retainedSourceReady ?? false
-        }
+        source={activeVideo?.source}
+        retainedSourceReady={activeVideo?.retainedSourceReady ?? false}
+        videoDurationSeconds={activeVideo?.durationSeconds ?? null}
         onClipCreated={handleClipCreated}
         onTimestampSelect={handleTimestampSelect}
         existingClips={existingClips}
+        proposalReview={proposalReview}
       />
       <StatusPanel />
     </main>

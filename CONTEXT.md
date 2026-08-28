@@ -16,6 +16,14 @@ _Avoid_: Video, project output
 An agent-suggested excerpt awaiting explicit user review. A clip proposal is not a clip and may be edited or rejected before any clip is created.
 _Avoid_: Pending clip, draft clip
 
+**Clip Proposal Review**:
+The user-controlled session in which one or more clip proposals are previewed, corrected, approved, or rejected before any clip is created. Think and WebMCP may supply proposals, but neither has review authority.
+_Avoid_: Think review, agent approval, pending clips
+
+**Clip Proposal Batch**:
+A session-scoped group of clip proposals supplied together for one video. It remains separate from later submissions and is reviewed before the next batch begins.
+_Avoid_: Mixed review, proposal queue
+
 **Source Captions**:
 Timed text acquired with a video that can seed transcript and caption work. Source captions are input material, not a finished clip's caption output.
 _Avoid_: Output captions, closed-caption artifact
