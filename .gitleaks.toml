@@ -1,0 +1,21 @@
+title = "Carpo Gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "generic-api-key"
+
+  [[rules.allowlists]]
+  description = "Encoder contract media output names"
+  condition = "AND"
+  regexTarget = "line"
+  paths = ['''(^|/)scripts/test-encoder-contract\.ts$''']
+  regexes = ['''(?i)\b(?:mp4Key|thumbnailKey)\s*:\s*["'][^"'\r\n]+\.(?:mp4|jpe?g|png)["']''']
+
+  [[rules.allowlists]]
+  description = "Public Cloudflare Access application audience"
+  condition = "AND"
+  regexTarget = "line"
+  paths = ['''(^|/)wrangler\.jsonc$''']
+  regexes = ['''ACCESS_AUD"\s*:\s*"[0-9a-f]{64}"''']

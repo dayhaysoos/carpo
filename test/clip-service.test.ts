@@ -18,6 +18,7 @@ describe("createClipForVideo", () => {
 
     const background: Promise<unknown>[] = [];
     const result = await createClipForVideo({
+      ownerId: "legacy",
       videoId,
       input: {
         title: "Manual agent clip",

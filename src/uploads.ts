@@ -137,16 +137,33 @@ export function isValidUploadKey(key: string): boolean {
     return false;
   }
   const remainder = key.slice(UPLOAD_KEY_PREFIX.length);
-  if (!remainder || remainder.includes("/")) {
+  const segments = remainder.split("/");
+  if (
+    !remainder ||
+    segments.length > 2 ||
+    segments.some((segment) => !/^[A-Za-z0-9-]+(?:\.[A-Za-z0-9]+)?$/.test(segment))
+  ) {
     return false;
   }
-  const ext = remainder.split(".").pop()?.toLowerCase() ?? "";
+  const ext = segments.at(-1)?.split(".").pop()?.toLowerCase() ?? "";
   return ext in CONTENT_TYPE_BY_EXTENSION;
 }
 
-export function generateUploadKey(contentType: AllowedUploadContentType): string {
+export function isOwnedUploadKey(key: string, ownerId: string): boolean {
+  if (!isValidUploadKey(key)) return false;
+  const remainder = key.slice(UPLOAD_KEY_PREFIX.length);
+  return ownerId === "legacy"
+    ? !remainder.includes("/")
+    : key.startsWith(`${UPLOAD_KEY_PREFIX}${ownerId}/`);
+}
+
+export function generateUploadKey(
+  contentType: AllowedUploadContentType,
+  ownerId?: string,
+): string {
   const ext = extensionForContentType(contentType);
-  return `${UPLOAD_KEY_PREFIX}${crypto.randomUUID()}.${ext}`;
+  const ownerPrefix = ownerId && ownerId !== "legacy" ? `${ownerId}/` : "";
+  return `${UPLOAD_KEY_PREFIX}${ownerPrefix}${crypto.randomUUID()}.${ext}`;
 }
 
 export function decodeUploadPathParam(encoded: string): string | null {

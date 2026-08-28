@@ -80,6 +80,38 @@ input {
   gap: 0.5rem;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.account-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  max-width: 22rem;
+  padding-left: 1rem;
+  border-left: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.account-summary span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-summary a {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.account-summary a:hover {
+  color: var(--text);
+}
+
 .nav-link {
   padding: 0.5rem 0.875rem;
   border-radius: var(--radius-sm);
@@ -153,6 +185,17 @@ input {
 
   .app-main > * {
     min-width: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .header-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .account-summary span {
+    max-width: 9rem;
   }
 }
 

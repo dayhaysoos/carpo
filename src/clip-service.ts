@@ -1,6 +1,7 @@
 import {
-  getClipById,
+  getClipByIdForOwner,
   getSourceVideoById,
+  getSourceVideoByIdForOwner,
   insertClip,
   markClipHelperPending,
 } from "./db";
@@ -30,6 +31,7 @@ export interface ClipCreationSuccess {
 export type ClipCreationResult = ClipCreationSuccess | ClipCreationFailure;
 
 interface CreateClipForVideoOptions {
+  ownerId: string;
   videoId: string;
   input: unknown;
   env: Env;
@@ -39,6 +41,7 @@ interface CreateClipForVideoOptions {
 }
 
 interface EnqueueClipOptions {
+  ownerId: string;
   clipRequest: CreateClipRequest;
   env: Env;
   origin: string;
@@ -48,6 +51,7 @@ interface EnqueueClipOptions {
 }
 
 export async function enqueueClip({
+  ownerId,
   clipRequest,
   env,
   origin,
@@ -55,7 +59,7 @@ export async function enqueueClip({
   videoId,
   clipId = crypto.randomUUID(),
 }: EnqueueClipOptions): Promise<ClipResponse> {
-  const record = await insertClip(env.DB, clipId, clipRequest, {
+  const record = await insertClip(env.DB, ownerId, clipId, clipRequest, {
     videoId,
   });
   const sourceVideo = record.video_id
@@ -87,6 +91,7 @@ export async function enqueueClip({
 }
 
 export async function createClipForVideo({
+  ownerId,
   videoId,
   input,
   env,
@@ -94,7 +99,7 @@ export async function createClipForVideo({
   waitUntil,
   idempotencyKey,
 }: CreateClipForVideoOptions): Promise<ClipCreationResult> {
-  const video = await getSourceVideoById(env.DB, videoId);
+  const video = await getSourceVideoByIdForOwner(env.DB, videoId, ownerId);
   if (!video) {
     return { ok: false, status: 404, error: "Video not found" };
   }
@@ -152,7 +157,7 @@ export async function createClipForVideo({
     ? await idempotentClipId(videoId, idempotencyKey)
     : undefined;
   if (clipId) {
-    const existing = await getClipById(env.DB, clipId);
+    const existing = await getClipByIdForOwner(env.DB, clipId, ownerId);
     if (existing) {
       return idempotentClipResult(existing, clipRequest, videoId, env);
     }
@@ -162,6 +167,7 @@ export async function createClipForVideo({
     return {
       ok: true,
       clip: await enqueueClip({
+        ownerId,
         clipRequest,
         env,
         origin,
@@ -172,7 +178,7 @@ export async function createClipForVideo({
     };
   } catch (error) {
     if (clipId && isClipIdConflict(error)) {
-      const existing = await getClipById(env.DB, clipId);
+      const existing = await getClipByIdForOwner(env.DB, clipId, ownerId);
       if (existing) {
         return idempotentClipResult(existing, clipRequest, videoId, env);
       }

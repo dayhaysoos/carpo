@@ -3866,6 +3866,7 @@ describe("source video library", () => {
       ),
       controlledEnv,
       uploadContext,
+      null,
     );
 
     await Promise.race([

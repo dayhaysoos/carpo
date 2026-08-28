@@ -175,3 +175,7 @@ export interface ApiError {
   error: string;
   details?: ValidationError[];
 }
+
+export interface CurrentUserResponse {
+  email: string | null;
+}

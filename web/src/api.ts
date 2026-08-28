@@ -10,7 +10,17 @@ import type {
   SourceVideoResponse,
   TranscriptResponse,
   UploadUrlResponse,
+  CurrentUserResponse,
 } from "./types";
+
+export async function getCurrentUser(): Promise<CurrentUserResponse> {
+  const response = await fetch("/api/me");
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiError;
+    throw new Error(body.error || `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<CurrentUserResponse>;
+}
 
 export async function requestUploadUrl(input: {
   contentType: string;
