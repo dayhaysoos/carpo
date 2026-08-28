@@ -8,6 +8,7 @@ import {
   attachAgenticReview,
   createManualExecutionId,
   resolveExecutionMetadata,
+  resolveLeaseWaitMs,
   shouldCaptureVisualComparison,
 } from "./run-pr-review.mjs";
 import {
@@ -29,6 +30,17 @@ describe("backend-neutral PR review runner", () => {
     assert.notEqual(installIndex, -1);
     assert.ok(reviewIndex > installIndex);
     assert.match(workflow.slice(installIndex, reviewIndex), /run: npm ci/);
+    assert.match(workflow.slice(reviewIndex), /--lease-wait-ms\s+"?900000"?/);
+  });
+
+  it("grants the Gitleaks pull-request scan only the read permissions it needs", async () => {
+    const workflow = await readFile(
+      new URL("../.github/workflows/gitleaks.yml", import.meta.url),
+      "utf8",
+    );
+
+    assert.match(workflow, /permissions:\s+contents: read\s+pull-requests: read/);
+    assert.doesNotMatch(workflow, /pull-requests: write/);
   });
 
   it("creates an allowlisted manual execution identity", () => {
@@ -57,6 +69,13 @@ describe("backend-neutral PR review runner", () => {
           "https://github.com/dayhaysoos/carpo/actions/runs/32981962097",
       },
     );
+  });
+
+  it("keeps lease waiting explicit and bounded", () => {
+    assert.equal(resolveLeaseWaitMs(undefined), 0);
+    assert.equal(resolveLeaseWaitMs("900000"), 900_000);
+    assert.throws(() => resolveLeaseWaitMs("900001"), /cannot exceed/);
+    assert.throws(() => resolveLeaseWaitMs("later"), /milliseconds/);
   });
 
   it("rejects execution sources outside the Carpo repository", () => {

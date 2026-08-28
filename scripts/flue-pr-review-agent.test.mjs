@@ -98,7 +98,7 @@ describe("Flue PR review agent", () => {
   it("validates bounded execution and model identifiers", () => {
     assert.equal(
       resolveAgenticModel(""),
-      "cloudflare-workers-ai/@cf/meta/llama-4-scout-17b-16e-instruct",
+      "cloudflare-workers-ai/@cf/moonshotai/kimi-k2.6",
     );
     assert.equal(resolveAgenticModel("anthropic/claude-sonnet-4-6"), "anthropic/claude-sonnet-4-6");
     assert.throws(() => resolveAgenticModel("../../bad"), /invalid provider\/model/);
@@ -127,6 +127,7 @@ describe("Flue PR review agent", () => {
     );
     assert.equal(AGENTIC_REVIEW_LIMITS.maxToolCalls, 38);
     assert.equal(AGENTIC_REVIEW_LIMITS.maxFinishReminders, 8);
+    assert.equal(AGENTIC_REVIEW_LIMITS.maxRepeatedFinishRejections, 2);
   });
 
   it("exposes Cloudflare provider credentials only for the bounded run", async () => {
@@ -380,6 +381,50 @@ describe("Flue PR review agent", () => {
     } finally {
       console.error = originalConsoleError;
     }
+  });
+
+  it("terminates after the same rejected finish is repeated twice", async () => {
+    const faux = fauxProvider();
+    const rejectedReport = {
+      verdict: "pass",
+      summary: "Everything passed.",
+      testedAreas: ["Create", "Library"],
+      findings: [],
+      remainingRisks: ["Upload was not exercised."],
+    };
+    faux.setResponses([
+      fauxAssistantMessage(
+        [fauxToolCall("finish_review", rejectedReport)],
+        { stopReason: "toolUse" },
+      ),
+      fauxAssistantMessage(
+        [fauxToolCall("finish_review", rejectedReport)],
+        { stopReason: "toolUse" },
+      ),
+    ]);
+    const adapter = fakeAdapter();
+    adapter.finishReview = async (report) => {
+      adapter.calls.push(["finishReview", report]);
+      throw new Error(
+        "Review incomplete:\n- Capture evidence on both the Create and Library entry points",
+      );
+    };
+
+    await assert.rejects(
+      runFlueAgenticReview({
+        executionId: "test-repeated-finish",
+        expectedVersionTag: "abc123",
+        adapter,
+        model: "faux/faux-1",
+        providers: [faux.provider],
+        timeoutMs: 10_000,
+      }),
+      /repeated the same rejected finish_review call twice.*Capture evidence/s,
+    );
+    assert.equal(
+      adapter.calls.filter(([name]) => name === "finishReview").length,
+      2,
+    );
   });
 
   it("retains sanitized provider and settlement diagnostics when a model turn fails", async () => {

@@ -243,6 +243,51 @@ describe("bounded review policy contract", () => {
     );
   });
 
+  it("reports every unmet completion requirement in one rejection", () => {
+    assert.throws(
+      () =>
+        assertReviewComplete({
+          progress: {
+            ...completeProgress,
+            currentPath: "/",
+            screenshots: [
+              { file: "agentic-01.png", path: "/__carpo-review-missing" },
+              { file: "agentic-02.png", path: "/" },
+            ],
+            webMcp: {
+              status: "incomplete",
+              deterministic: "inconclusive",
+              fixtureVideoId: "7e57a4c2-20a6-4d83-8f08-57b807338ead",
+              expectedToolNames: [
+                "getCarpoInstructions",
+                "readClipWorkspace",
+                "proposeClips",
+              ],
+              discoveredToolNames: [
+                "getCarpoInstructions",
+                "readClipWorkspace",
+                "proposeClips",
+              ],
+              calls: [],
+              attempts: [],
+              proposal: {},
+              proofBoundary: "Incomplete WebMCP verification.",
+            },
+          },
+          report,
+          reviewOrigin: origin,
+          webMcpRequired: true,
+        }),
+      (error) => {
+        assert.match(error.message, /Capture evidence on both the Create and Library/);
+        assert.match(error.message, /Complete the deterministic live WebMCP/);
+        assert.match(error.message, /Capture screenshot evidence of the live WebMCP/);
+        assert.match(error.message, /Include the structured WebMCP experience report/);
+        return true;
+      },
+    );
+  });
+
   it("owns proof-challenge definitions and completion", () => {
     const challenge = resolveProofChallenge("multilingual-octopus");
     assert.equal(challenge.steps.length, 4);

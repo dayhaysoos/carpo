@@ -118,4 +118,48 @@ describe("shared Cloudflare review lease", () => {
 
     await assert.rejects(() => lease.acquire(), /leased by actions-32981962097-2/);
   });
+
+  it("waits within an explicit budget and acquires after the active review releases", async () => {
+    let now = 1_000;
+    const waits = [];
+    let attempts = 0;
+    const lease = createCloudflareReviewLease({
+      owner: OWNER,
+      sourceUrl: SOURCE_URL,
+      fencingToken: FENCING_TOKEN,
+      now: () => now,
+      wait: async (durationMs) => {
+        waits.push(durationMs);
+        now += durationMs;
+      },
+      executeSql: async () => {
+        attempts += 1;
+        return d1Result(
+          attempts === 1
+            ? {
+                owner: `actions-32981962097-2:${"c".repeat(32)}`,
+                sourceUrl:
+                  "https://github.com/dayhaysoos/carpo/actions/runs/32981962097",
+                acquiredAt: 1_787_834_400,
+                expiresAt: 1_787_837_100,
+                observedAt: 1_787_834_400,
+              }
+            : {
+                owner: FENCED_OWNER,
+                sourceUrl: SOURCE_URL,
+                acquiredAt: 1_787_837_101,
+                expiresAt: 1_787_839_801,
+                observedAt: 1_787_837_101,
+              },
+        );
+      },
+    });
+
+    assert.equal(
+      (await lease.acquire({ waitMs: 5_000, retryDelayMs: 1_000 })).owner,
+      FENCED_OWNER,
+    );
+    assert.equal(attempts, 2);
+    assert.deepEqual(waits, [1_000]);
+  });
 });

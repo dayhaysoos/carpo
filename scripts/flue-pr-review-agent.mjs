@@ -25,10 +25,11 @@ import { redactSecrets } from "./pr-browser-review-utils.mjs";
 import { resolveProofChallenge } from "./pr-review-proof-challenges.mjs";
 
 const DEFAULT_MODEL =
-  "cloudflare-workers-ai/@cf/meta/llama-4-scout-17b-16e-instruct";
+  "cloudflare-workers-ai/@cf/moonshotai/kimi-k2.6";
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 const MAX_TOOL_CALLS = 38;
 const MAX_FINISH_REMINDERS = 8;
+const MAX_REPEATED_FINISH_REJECTIONS = 2;
 const MAX_DIAGNOSTIC_TURNS = 16;
 const MAX_DIAGNOSTIC_FAILURES = 8;
 const MAX_DIAGNOSTIC_TEXT = 2_000;
@@ -457,11 +458,42 @@ function registerTools(id) {
       input: finishInput,
       async run({ data }) {
         const session = requireReviewSession(id);
-        const report = await runSessionTool(id, "finish_review", data, (adapter) =>
-          adapter.finishReview(data),
-        );
-        session.report = report;
-        return { output: report, terminate: true };
+        try {
+          const report = await runSessionTool(
+            id,
+            "finish_review",
+            data,
+            (adapter) => adapter.finishReview(data),
+          );
+          session.report = report;
+          return { output: report, terminate: true };
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          const fingerprint = JSON.stringify({ data, message });
+          if (session.lastFinishRejection === fingerprint) {
+            session.repeatedFinishRejections += 1;
+          } else {
+            session.lastFinishRejection = fingerprint;
+            session.repeatedFinishRejections = 1;
+          }
+          if (
+            session.repeatedFinishRejections >=
+            MAX_REPEATED_FINISH_REJECTIONS
+          ) {
+            session.terminalFailure = new Error(
+              `The Flue reviewer repeated the same rejected finish_review call twice. ${message}`,
+            );
+            return {
+              output: {
+                accepted: false,
+                terminated: true,
+                reason: message,
+              },
+              terminate: true,
+            };
+          }
+          throw error;
+        }
       },
     }),
   );
@@ -472,7 +504,7 @@ export function CarpoPrReviewer({ id }) {
   useModel(session.model, { thinkingLevel: "medium", compaction: false });
   registerTools(id);
   useAgentFinish(({ append }) => {
-    if (session.report) return;
+    if (session.report || session.terminalFailure) return;
     session.finishReminders += 1;
     if (session.finishReminders > MAX_FINISH_REMINDERS) {
       throw new Error(
@@ -566,6 +598,9 @@ export async function runFlueAgenticReview({
     toolCalls: 0,
     toolQueue: Promise.resolve(),
     finishReminders: 0,
+    lastFinishRejection: undefined,
+    repeatedFinishRejections: 0,
+    terminalFailure: undefined,
     proofChallengeId: resolveProofChallenge(proofChallenge?.id ?? proofChallenge)?.id,
     webMcpFixtureVideoId,
   };
@@ -603,6 +638,7 @@ export async function runFlueAgenticReview({
         signal: controller.signal,
         ...(onEvent ? { onEvent } : {}),
       });
+      if (state.terminalFailure) throw state.terminalFailure;
       if (!state.report) {
         throw new Error("The Flue reviewer settled without calling finish_review");
       }
@@ -637,5 +673,6 @@ export async function runFlueAgenticReview({
 export const AGENTIC_REVIEW_LIMITS = Object.freeze({
   maxToolCalls: MAX_TOOL_CALLS,
   maxFinishReminders: MAX_FINISH_REMINDERS,
+  maxRepeatedFinishRejections: MAX_REPEATED_FINISH_REJECTIONS,
   timeoutMs: DEFAULT_TIMEOUT_MS,
 });

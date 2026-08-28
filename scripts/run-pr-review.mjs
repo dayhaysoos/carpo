@@ -30,6 +30,7 @@ const COMPARISON_SURFACES = [
   { file: "library.png", id: "library", label: "Library" },
   { file: "archived.png", id: "archived", label: "Archived" },
 ];
+const MAX_LEASE_WAIT_MS = 15 * 60 * 1_000;
 
 function parseArgs(argv) {
   const result = {};
@@ -90,6 +91,19 @@ export function resolveExecutionMetadata(args, env = process.env) {
     throw new Error("execution source URL must be an exact URL in the Carpo repository");
   }
   return { executionId, sourceUrl: sourceUrl.href };
+}
+
+export function resolveLeaseWaitMs(value) {
+  if (value === undefined) return 0;
+  const text = String(value);
+  if (!/^[0-9]{1,7}$/.test(text)) {
+    throw new Error("lease wait must be milliseconds as a non-negative integer");
+  }
+  const waitMs = Number(text);
+  if (waitMs > MAX_LEASE_WAIT_MS) {
+    throw new Error(`lease wait cannot exceed ${MAX_LEASE_WAIT_MS} milliseconds`);
+  }
+  return waitMs;
 }
 
 export function shouldCaptureVisualComparison(files) {
@@ -864,6 +878,7 @@ export async function runPullRequestReview(args, env = process.env) {
     throw new Error(`review URL must be exactly ${REVIEW_URL}`);
   }
   const metadata = resolveExecutionMetadata(args, env);
+  const leaseWaitMs = resolveLeaseWaitMs(args["lease-wait-ms"]);
   const repoRoot = (
     await capture("git", ["rev-parse", "--show-toplevel"], { cwd: process.cwd() })
   ).trim();
@@ -895,7 +910,7 @@ export async function runPullRequestReview(args, env = process.env) {
     env: runtimeEnv,
   });
   printStep("Acquire the shared Cloudflare review lease");
-  await lease.acquire();
+  await lease.acquire({ waitMs: leaseWaitMs });
 
   let operationError;
   let completedResult;
