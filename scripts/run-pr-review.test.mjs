@@ -9,6 +9,7 @@ import {
   assembleVisualComparison,
   attachAgenticReview,
   createManualExecutionId,
+  installLeaseOwnerReviewToken,
   resolveExecutionMetadata,
   resolveLeaseWaitMs,
   shouldCaptureVisualComparison,
@@ -39,6 +40,11 @@ describe("backend-neutral PR review runner", () => {
     assert.ok(reviewIndex > installIndex);
     assert.match(workflow.slice(installIndex, reviewIndex), /run: npm ci/);
     assert.match(workflow.slice(reviewIndex), /--lease-wait-ms\s+"?900000"?/);
+    assert.match(
+      workflow,
+      /concurrency:[\s\S]*cancel-in-progress: false/,
+      "Actions must not force-cancel a process that owns the shared D1 lease",
+    );
   });
 
   it("grants the Gitleaks pull-request scan only the read permissions it needs", async () => {
@@ -121,6 +127,46 @@ describe("backend-neutral PR review runner", () => {
     assert.equal(resolveLeaseWaitMs("900000"), 900_000);
     assert.throws(() => resolveLeaseWaitMs("900001"), /cannot exceed/);
     assert.throws(() => resolveLeaseWaitMs("later"), /milliseconds/);
+  });
+
+  it("installs each lease owner's captured review token into the Worker", async () => {
+    const calls = [];
+    await installLeaseOwnerReviewToken({
+      token: "lease-owner-token".padEnd(32, "x"),
+      cwd: "/repository",
+      env: { CLOUDFLARE_API_TOKEN: "cloudflare-token" },
+      async runWithInputImpl(file, args, input, options) {
+        calls.push({ file, args, input, options });
+      },
+    });
+
+    assert.deepEqual(calls, [
+      {
+        file: "npx",
+        args: [
+          "wrangler",
+          "secret",
+          "put",
+          "PR_REVIEW_AUTH_TOKEN",
+          "--env",
+          "pr-review",
+        ],
+        input: "lease-owner-token".padEnd(32, "x"),
+        options: {
+          cwd: "/repository",
+          env: { CLOUDFLARE_API_TOKEN: "cloudflare-token" },
+        },
+      },
+    ]);
+    await assert.rejects(
+      installLeaseOwnerReviewToken({
+        token: "short",
+        cwd: "/repository",
+        env: {},
+        runWithInputImpl: async () => {},
+      }),
+      /missing or too short/,
+    );
   });
 
   it("admits only newly added D1 migrations already applied to review", async () => {

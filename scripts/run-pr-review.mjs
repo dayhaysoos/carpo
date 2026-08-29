@@ -866,15 +866,26 @@ async function publishEvidence({
   );
 }
 
-async function provisionManualReviewToken(repository, cwd, runtimeEnv) {
-  printStep("Rotate the isolated manual-review credential");
-  const token = randomBytes(32).toString("hex");
-  await runWithInput(
+export async function installLeaseOwnerReviewToken({
+  token,
+  cwd,
+  env,
+  runWithInputImpl = runWithInput,
+}) {
+  if (typeof token !== "string" || token.length < 32) {
+    throw new Error("The lease-owner review credential is missing or too short");
+  }
+  await runWithInputImpl(
     "npx",
     ["wrangler", "secret", "put", "PR_REVIEW_AUTH_TOKEN", "--env", "pr-review"],
     token,
-    { cwd, env: runtimeEnv },
+    { cwd, env },
   );
+}
+
+async function provisionManualReviewToken(repository, cwd, runtimeEnv) {
+  printStep("Generate the isolated manual-review credential");
+  const token = randomBytes(32).toString("hex");
   try {
     await runWithInput(
       "gh",
@@ -967,6 +978,12 @@ export async function runPullRequestReview(args, env = process.env) {
         runtimeEnv,
       );
     }
+    printStep("Install the lease-owner review credential");
+    await installLeaseOwnerReviewToken({
+      token: runtimeEnv.CARPO_PR_REVIEW_AUTH_TOKEN,
+      cwd: repoRoot,
+      env: runtimeEnv,
+    });
 
     const candidate = currentCheckout
       ? { checkout: repoRoot, cleanup: async () => {} }
