@@ -12,6 +12,7 @@ import {
   ClipLibraryCard,
   ClipModal,
 } from "../components/ClipLibraryCard";
+import { CaptionEditorModal } from "../components/CaptionEditorModal";
 import { ModalDialog } from "../components/ModalDialog";
 import {
   CLIPS_QUERY_KEY,
@@ -61,6 +62,7 @@ export function VideoPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [playingClip, setPlayingClip] = useState<ClipResponse | null>(null);
+  const [captionClip, setCaptionClip] = useState<ClipResponse | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ClipResponse[]>([]);
   const [clipActionError, setClipActionError] = useState<string | null>(null);
   const [gifExportClipId, setGifExportClipId] = useState<string | null>(null);
@@ -344,6 +346,7 @@ export function VideoPage() {
                     onRequestGif={(selectedClip) =>
                       gifMutation.mutate(selectedClip.id)
                     }
+                    onEditCaptions={setCaptionClip}
                     gifExporting={
                       (gifMutation.isPending && gifExportClipId === clip.id) ||
                       clip.gifStatus === "encoding"
@@ -379,6 +382,13 @@ export function VideoPage() {
               ? () => setPlayingClip(playableClips[playingClipIndex + 1])
               : undefined
           }
+        />
+      )}
+
+      {captionClip && (
+        <CaptionEditorModal
+          clip={captionClip}
+          onClose={() => setCaptionClip(null)}
         />
       )}
 

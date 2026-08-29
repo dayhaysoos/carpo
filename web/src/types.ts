@@ -91,6 +91,33 @@ export interface ClipResponse {
   updatedAt: string;
 }
 
+export interface CaptionCue {
+  id: string;
+  startSeconds: number;
+  endSeconds: number;
+  text: string;
+}
+
+export interface CaptionTrackAvailable {
+  captionStatus: "available";
+  clipId: string;
+  clipDurationSeconds: number;
+  saved: boolean;
+  sourceLanguage: string | null;
+  sourceAutomatic: boolean | null;
+  cues: CaptionCue[];
+  updatedAt: string | null;
+}
+
+export interface CaptionTrackChecking {
+  captionStatus: "checking";
+  retryAfterMs: number;
+}
+
+export type CaptionTrackResponse =
+  | CaptionTrackAvailable
+  | CaptionTrackChecking;
+
 export interface SourceVideoResponse {
   id: string;
   title: string;
