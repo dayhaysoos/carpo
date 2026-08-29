@@ -119,6 +119,18 @@ describe("bounded review policy contract", () => {
     assert.match(bounded.remainingRisks.at(-1), /Direct API behavior/);
   });
 
+  it("allows explicit negative boundaries without weakening coverage enforcement", () => {
+    const bounded = enforceCoverageBoundary({
+      ...report,
+      summary:
+        "The Create and Library shells rendered. Upload, encoding, and media playback remain outside bounded review authority.",
+    });
+
+    assert.equal(bounded.verdict, "pass");
+    assert.equal(bounded.summary, "The Create and Library shells rendered. Upload, encoding, and media playback remain outside bounded review authority.");
+    assert.deepEqual(bounded.findings, []);
+  });
+
   it("counts every local and durable diagnostic collection", () => {
     const bounded = appendDiagnosticsFinding(report, {
       console: [{}],
@@ -240,6 +252,51 @@ describe("bounded review policy contract", () => {
           webMcpRequired: true,
         }),
       /experience report/,
+    );
+  });
+
+  it("reports every unmet completion requirement in one rejection", () => {
+    assert.throws(
+      () =>
+        assertReviewComplete({
+          progress: {
+            ...completeProgress,
+            currentPath: "/",
+            screenshots: [
+              { file: "agentic-01.png", path: "/__carpo-review-missing" },
+              { file: "agentic-02.png", path: "/" },
+            ],
+            webMcp: {
+              status: "incomplete",
+              deterministic: "inconclusive",
+              fixtureVideoId: "7e57a4c2-20a6-4d83-8f08-57b807338ead",
+              expectedToolNames: [
+                "getCarpoInstructions",
+                "readClipWorkspace",
+                "proposeClips",
+              ],
+              discoveredToolNames: [
+                "getCarpoInstructions",
+                "readClipWorkspace",
+                "proposeClips",
+              ],
+              calls: [],
+              attempts: [],
+              proposal: {},
+              proofBoundary: "Incomplete WebMCP verification.",
+            },
+          },
+          report,
+          reviewOrigin: origin,
+          webMcpRequired: true,
+        }),
+      (error) => {
+        assert.match(error.message, /Capture evidence on both the Create and Library/);
+        assert.match(error.message, /Complete the deterministic live WebMCP/);
+        assert.match(error.message, /Capture screenshot evidence of the live WebMCP/);
+        assert.match(error.message, /Include the structured WebMCP experience report/);
+        return true;
+      },
     );
   });
 

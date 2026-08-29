@@ -222,7 +222,7 @@ Run the current slice locally with:
 npm run review:pr -- --pr <number>
 ```
 
-Use `npm run review:pr -- --pr <number> --no-agentic` or `CARPO_PR_REVIEW_AGENTIC=false` for a deterministic-only run. The default agentic model is Cloudflare Workers AI model `@cf/meta/llama-4-scout-17b-16e-instruct`; `CARPO_PR_REVIEW_MODEL` may select another registered `provider/model` when its credentials are configured. Local Cloudflare-native inference resolves the account and current OAuth token through Wrangler, scopes them to the Flue run, restores the process environment afterward, and never writes them into evidence. Agent failure is reported as advisory `inconclusive` and does not replace the deterministic verdict.
+Use `npm run review:pr -- --pr <number> --no-agentic` or `CARPO_PR_REVIEW_AGENTIC=false` for a deterministic-only run. The default agentic model is Cloudflare Workers AI model `@cf/moonshotai/kimi-k2.6`; `CARPO_PR_REVIEW_MODEL` may select another registered `provider/model` when its credentials are configured. Local Cloudflare-native inference resolves the account and current OAuth token through Wrangler, scopes them to the Flue run, restores the process environment afterward, and never writes them into evidence. Agent failure is reported as advisory `inconclusive` and does not replace the deterministic verdict.
 
 After provisioning the separate service, exercise the durable backend with:
 

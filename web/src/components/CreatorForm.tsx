@@ -23,11 +23,16 @@ import { useYoutubePlayer } from "../hooks/useYoutubePlayer";
 import {
   MAX_CAPTION_LENGTH,
   MAX_CLIP_LENGTH_SECONDS,
+  type ClipResponse,
   type ClipQuality,
   type CreateClipRequest,
   type CreateSourceVideoRequest,
   DEFAULT_CLIP_QUALITY,
 } from "../types";
+import {
+  deriveUploadClipTitle,
+  type OwnedUploadClipJourneyView,
+} from "../owned-upload-clip-journey";
 import {
   contentTypeForFile,
   formatUploadProgress,
@@ -38,13 +43,15 @@ import type { ClipWindowRequest } from "../timestamp-windows";
 import { toExistingClipRanges } from "../timeline";
 import { TranscriptPanel } from "./TranscriptPanel";
 import { TrimSlider } from "./TrimSlider";
+import { OwnedUploadClipResult } from "./OwnedUploadClipResult";
 
 type SourceMode = "youtube" | "upload";
 
 interface CreatorFormProps {
-  onClipCreated: () => void;
+  onClipCreated: (clip: ClipResponse) => void;
   onVideoActivated: (videoId: string) => void;
   clipWindowRequest?: ClipWindowRequest | null;
+  ownedUploadJourney: OwnedUploadClipJourneyView;
 }
 
 const DEFAULT_MAX_UPLOAD_BYTES = 95 * 1024 * 1024;
@@ -71,9 +78,10 @@ type CreatorFormAction =
   | {
       type: "load-reusable-video";
       source: CreateSourceVideoRequest["source"];
+      title: string;
     }
   | { type: "choose-another" }
-  | { type: "select-file"; file: File | null }
+  | { type: "select-file"; file: File | null; title: string }
   | { type: "clip-created" }
   | { type: "hide-clip-created-notice" };
 
@@ -119,6 +127,9 @@ function creatorFormReducer(
         selectedFile: null,
         uploadKey: null,
         url: action.source.type === "youtube" ? action.source.url : "",
+        ...(action.source.type === "upload" && state.title.trim().length === 0
+          ? { title: deriveUploadClipTitle(action.title) }
+          : {}),
       };
     case "choose-another":
       return {
@@ -131,6 +142,10 @@ function creatorFormReducer(
       return {
         ...state,
         selectedFile: action.file,
+        title:
+          action.file && action.file === state.selectedFile
+            ? state.title
+            : action.title,
         uploadKey: null,
         uploadError: null,
         uploadProgress: null,
@@ -138,8 +153,6 @@ function creatorFormReducer(
     case "clip-created":
       return {
         ...state,
-        title: "",
-        caption: "",
         clipCreatedNotice: true,
       };
     case "hide-clip-created-notice":
@@ -151,6 +164,7 @@ export function CreatorForm({
   onClipCreated,
   onVideoActivated,
   clipWindowRequest,
+  ownedUploadJourney,
 }: CreatorFormProps) {
   const [searchParams] = useSearchParams();
   const reusableVideoId = searchParams.get("video") ?? "";
@@ -397,8 +411,8 @@ export function CreatorForm({
       }
       return createClip(request);
     },
-    onSuccess: () => {
-      onClipCreated();
+    onSuccess: (clip) => {
+      onClipCreated(clip);
       dispatch({ type: "clip-created" });
     },
   });
@@ -422,7 +436,11 @@ export function CreatorForm({
 
   useEffect(() => {
     if (!reusableVideo) return;
-    dispatch({ type: "load-reusable-video", source: reusableVideo.source });
+    dispatch({
+      type: "load-reusable-video",
+      source: reusableVideo.source,
+      title: reusableVideo.title,
+    });
   }, [reusableVideo]);
 
   useEffect(() => {
@@ -435,7 +453,11 @@ export function CreatorForm({
     const generation = uploadGeneration.current + 1;
     uploadGeneration.current = generation;
     const isCurrentUpload = () => uploadGeneration.current === generation;
-    dispatch({ type: "select-file", file });
+    dispatch({
+      type: "select-file",
+      file,
+      title: file ? deriveUploadClipTitle(file.name) : "",
+    });
 
     if (!file) {
       return;
@@ -503,7 +525,7 @@ export function CreatorForm({
       await activateVideo(
         {
           source: { type: "upload", key: slot.key },
-          title: file.name,
+          title: deriveUploadClipTitle(file.name),
         },
         isCurrentUpload,
       );
@@ -547,7 +569,9 @@ export function CreatorForm({
     if (sourceMode === "upload" && (uploadKey || reusableUploadKey)) {
       mutation.mutate({
         title: title.trim(),
-        sourceTitle: reusableVideo?.title || selectedFile?.name,
+        sourceTitle:
+          reusableVideo?.title ||
+          (selectedFile ? deriveUploadClipTitle(selectedFile.name) : undefined),
         source: { type: "upload", key: uploadKey || reusableUploadKey! },
         trimStart: trim.range.start,
         trimEnd: trim.range.end,
@@ -655,26 +679,39 @@ export function CreatorForm({
           {urlValid && <span className="field-ok">Valid YouTube URL</span>}
         </label>
       ) : (
-        <label className="field">
-          <span>Video file</span>
-          <input
-            type="file"
-            accept="video/mp4,video/webm,video/quicktime,video/x-matroska,.mp4,.webm,.mov,.mkv"
-            onChange={(e) => void handleFileChange(e.target.files?.[0] ?? null)}
-          />
-          {selectedFile && !fileValidationError && !uploadError && (
-            <span className="field-ok">
-              {selectedFile.name} ({Math.round(selectedFile.size / 1024)} KB)
-            </span>
+        <>
+          <label className="field">
+            <span>Video file</span>
+            <input
+              type="file"
+              accept="video/mp4,video/webm,video/quicktime,video/x-matroska,.mp4,.webm,.mov,.mkv"
+              onChange={(e) =>
+                void handleFileChange(e.target.files?.[0] ?? null)
+              }
+            />
+            {selectedFile && !fileValidationError && !uploadError && (
+              <span className="field-ok">
+                {selectedFile.name} ({Math.round(selectedFile.size / 1024)} KB)
+              </span>
+            )}
+            {fileValidationError && (
+              <span className="field-error">{fileValidationError}</span>
+            )}
+            {uploadError && <span className="field-error">{uploadError}</span>}
+            {uploadProgress && (
+              <span className="field-hint">{uploadProgress}</span>
+            )}
+          </label>
+          {uploadError && selectedFile && !fileValidationError && (
+            <button
+              type="button"
+              className="btn-ghost upload-retry"
+              onClick={() => void handleFileChange(selectedFile)}
+            >
+              Retry upload
+            </button>
           )}
-          {fileValidationError && (
-            <span className="field-error">{fileValidationError}</span>
-          )}
-          {uploadError && <span className="field-error">{uploadError}</span>}
-          {uploadProgress && (
-            <span className="field-hint">{uploadProgress}</span>
-          )}
-        </label>
+        </>
       ))}
 
       {sourceMode === "youtube" && videoId && (
@@ -833,9 +870,11 @@ export function CreatorForm({
 
       {clipCreatedNotice && (
         <p className="form-success" role="status">
-          Clip created — check the status panel
+          Clip queued below.
         </p>
       )}
+
+      <OwnedUploadClipResult journey={ownedUploadJourney} />
     </form>
   );
 }

@@ -425,7 +425,7 @@ describe("CreatorPage", () => {
     const user = userEvent.setup();
     const video = {
       id: "fresh-upload-id",
-      title: "fresh-upload.mp4",
+      title: "fresh upload",
       source: {
         type: "upload" as const,
         key: "uploads/fresh-upload.mp4",
@@ -470,10 +470,15 @@ describe("CreatorPage", () => {
     });
     await user.upload(screen.getByLabelText("Video file"), file);
 
+    expect(
+      (screen.getByRole("textbox", { name: "Title" }) as HTMLInputElement)
+        .value,
+    ).toBe("fresh upload");
+
     await waitFor(() =>
       expect(api.createSourceVideo).toHaveBeenCalledWith({
         source: video.source,
-        title: file.name,
+        title: "fresh upload",
       }),
     );
     await waitFor(() => expect(screen.getByText("Ready")).toBeTruthy());
@@ -502,7 +507,7 @@ describe("CreatorPage", () => {
     );
     const latestVideo = {
       id: "latest-upload-id",
-      title: "second.mp4",
+      title: "second",
       source: {
         type: "upload" as const,
         key: "uploads/second.mp4",
@@ -548,7 +553,7 @@ describe("CreatorPage", () => {
     await waitFor(() =>
       expect(api.createSourceVideo).not.toHaveBeenCalledWith({
         source: { type: "upload", key: "uploads/first.mp4" },
-        title: "first.mp4",
+        title: "first",
       }),
     );
     expect(api.createSourceVideo).toHaveBeenCalledTimes(1);

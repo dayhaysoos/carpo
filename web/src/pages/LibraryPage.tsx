@@ -91,7 +91,7 @@ function VideoCardContents({
         )}
       </div>
       <div className="video-body">
-        <div>
+        <div className="video-copy">
           <h3>{video.title}</h3>
           <p>
             {sourceLabel(video)}

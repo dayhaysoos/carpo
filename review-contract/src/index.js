@@ -45,7 +45,7 @@ const COVERAGE_VERB =
 const UNAVAILABLE_COVERAGE =
   "(?:(?:direct|read-only)\\s+)?api(?:\\s+(?:smoke|checks?|tests?))?|(?:actual\\s+)?upload(?:ing|\\s+flow|\\s+execution)?|clip\\s+creat(?:e|ion)|encod(?:e|ing)|media\\s+playback|youtube(?:\\s+reliability)?|production(?:\\s+behavior)?";
 const UNSUPPORTED_COVERAGE_CLAIM = new RegExp(
-  `(?:\\b${COVERAGE_VERB}\\b[^.!?\\n]{0,100}\\b${UNAVAILABLE_COVERAGE}\\b|\\b${UNAVAILABLE_COVERAGE}\\b[^.!?\\n]{0,100}\\b${COVERAGE_VERB}\\b)`,
+  `(?:\\b${COVERAGE_VERB}\\b[^.!?\\n]{0,100}\\b(?:${UNAVAILABLE_COVERAGE})\\b|\\b(?:${UNAVAILABLE_COVERAGE})\\b[^.!?\\n]{0,100}\\b${COVERAGE_VERB}\\b)`,
   "i",
 );
 const UNSUPPORTED_TESTED_AREA =
@@ -711,12 +711,13 @@ export function assertReviewComplete({
   webMcpRequired = false,
 }) {
   const challenge = resolveProofChallenge(proofChallengeId);
+  const unmetRequirements = [];
   if (
     challenge &&
     (progress.pendingProofChallenge ||
       (progress.proofChallengeSteps?.length ?? 0) !== challenge.steps.length)
   ) {
-    throw new Error(
+    unmetRequirements.push(
       `Complete all ${challenge.steps.length} host proof challenge steps before finishing`,
     );
   }
@@ -724,21 +725,23 @@ export function assertReviewComplete({
     !includes(progress.readSources, "context") ||
     !includes(progress.readSources, "diff")
   ) {
-    throw new Error("Read both frozen context and exact diff before finishing");
+    unmetRequirements.push("Read both frozen context and exact diff before finishing");
   }
   if (
     !includes(progress.visitedPaths, "/") ||
     !includes(progress.visitedPaths, "/library")
   ) {
-    throw new Error("Inspect both the Create and Library entry points before finishing");
+    unmetRequirements.push(
+      "Inspect both the Create and Library entry points before finishing",
+    );
   }
   if (!includes(progress.visitedPaths, MISSING_ROUTE_PATH)) {
-    throw new Error(
+    unmetRequirements.push(
       `Inspect the host-defined missing route ${MISSING_ROUTE_PATH} before finishing`,
     );
   }
   if (!hasKey(progress.navigationStatuses, MISSING_ROUTE_PATH)) {
-    throw new Error(
+    unmetRequirements.push(
       `Record the ${MISSING_ROUTE_PATH} navigation status before finishing`,
     );
   }
@@ -746,43 +749,55 @@ export function assertReviewComplete({
     !includes(progress.layoutChecks, "desktop") ||
     !includes(progress.layoutChecks, "mobile")
   ) {
-    throw new Error("Inspect both desktop and mobile viewport layouts before finishing");
+    unmetRequirements.push(
+      "Inspect both desktop and mobile viewport layouts before finishing",
+    );
   }
   if (progress.currentPath === MISSING_ROUTE_PATH) {
-    throw new Error("Return to a normal Carpo route before finishing");
+    unmetRequirements.push("Return to a normal Carpo route before finishing");
   }
   if (!progress.diagnosticsRead) {
-    throw new Error("Read browser diagnostics before finishing");
+    unmetRequirements.push("Read browser diagnostics before finishing");
   }
   const screenshots = progress.screenshots ?? [];
   const evidencePaths = new Set(screenshots.map(({ path }) => path));
   if (!evidencePaths.has("/") || !evidencePaths.has("/library")) {
-    throw new Error("Capture evidence on both the Create and Library entry points");
+    unmetRequirements.push(
+      "Capture evidence on both the Create and Library entry points",
+    );
   }
   if (progress.pendingProofChallenge) {
-    throw new Error("Capture the pending proof challenge value before finishing");
+    unmetRequirements.push(
+      "Capture the pending proof challenge value before finishing",
+    );
   }
   const evidenceFiles = new Set(screenshots.map(({ file }) => file));
   if (webMcpRequired) {
     const webMcp = progress.webMcp;
+    const evidenceScreenshot = webMcp?.evidenceScreenshot;
     if (webMcp?.deterministic !== "pass") {
-      throw new Error(
+      unmetRequirements.push(
         "Complete the deterministic live WebMCP verification journey before finishing",
       );
     }
     if (
-      !webMcp.evidenceScreenshot ||
-      !evidenceFiles.has(webMcp.evidenceScreenshot)
+      !evidenceScreenshot ||
+      !evidenceFiles.has(evidenceScreenshot)
     ) {
-      throw new Error(
+      unmetRequirements.push(
         "Capture screenshot evidence of the live WebMCP proposal review before finishing",
       );
     }
     if (!report.webMcpExperience) {
-      throw new Error(
+      unmetRequirements.push(
         "Include the structured WebMCP experience report before finishing",
       );
     }
+  }
+  if (unmetRequirements.length > 0) {
+    throw new Error(
+      `Review incomplete:\n${unmetRequirements.map((requirement) => `- ${requirement}`).join("\n")}`,
+    );
   }
   for (const finding of report.findings) {
     const safePath = resolveSafeReviewPath(finding.path, reviewOrigin);
@@ -869,5 +884,5 @@ ${options.beginReviewRequired ? "5" : "4"}. Inspect desktop and mobile viewport 
 ${options.beginReviewRequired ? "6" : "5"}. Visit the host-defined missing route ${MISSING_ROUTE_PATH}, inspect its status and visible UI, then return to a normal route.
 ${options.beginReviewRequired ? "7" : "6"}. Exercise only safe interactions. Look for broken navigation, stale state, contradictory content, layout problems, and visible failures.
 ${options.beginReviewRequired ? "8" : "7"}. Capture screenshots that directly support the observed state. Findings require a category, description, exact path, evidence, and reproduction steps.
-${options.beginReviewRequired ? "9" : "8"}. Read browser diagnostics, then call finish_review exactly once. Use needs_attention for a concrete problem, inconclusive when the tools cannot establish an answer, and pass only when inspected behavior has no concrete issue.${proof}${webMcp}`;
+${options.beginReviewRequired ? "9" : "8"}. As soon as the required coverage and evidence are complete, stop exploring, read browser diagnostics, then call finish_review exactly once. Use needs_attention for a concrete problem, inconclusive when the tools cannot establish an answer, and pass only when inspected behavior has no concrete issue.${proof}${webMcp}`;
 }

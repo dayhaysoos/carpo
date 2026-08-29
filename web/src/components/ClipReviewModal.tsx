@@ -9,6 +9,7 @@ import { sourceVideoUploadUrl } from "../api";
 import type {
   ClipProposalInput,
   ClipProposalReview,
+  CreatedClipResult,
 } from "../clip-proposal-review";
 import { useClipProposalReview } from "../hooks/useClipProposalReview";
 import { useYoutubePlayer } from "../hooks/useYoutubePlayer";
@@ -27,7 +28,7 @@ interface ClipReviewModalProps {
   videoId: string;
   source?: ClipSource;
   retainedSourceReady?: boolean;
-  onClipCreated: () => void;
+  onClipCreated: (clip: CreatedClipResult) => void;
   existingClips?: ExistingClipRange[];
 }
 
@@ -320,7 +321,8 @@ export function ClipReviewModal({
   };
   const finishReview = async () => {
     const result = await review.finish();
-    if (result.created.length > 0) onClipCreated();
+    const latestCreated = result.created.at(-1);
+    if (latestCreated) onClipCreated(latestCreated);
   };
 
   return (

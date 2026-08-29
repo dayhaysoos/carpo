@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const LEASE_NAME = "shared-review-environment";
 const LEASE_TTL_SECONDS = 45 * 60;
+const DEFAULT_RETRY_DELAY_MS = 10_000;
 const REVIEW_DATABASE_ID = "27981ced-fd12-49ea-9ce8-e71205e3f36e";
 const EXECUTION_ID_PATTERN =
   /^(?:actions-[1-9][0-9]{0,19}-[1-9][0-9]{0,2}|manual-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8})$/;
@@ -30,6 +31,8 @@ function requireFencingToken(fencingToken) {
 function fencedOwner(owner, fencingToken) {
   return `${requireOwner(owner)}:${requireFencingToken(fencingToken)}`;
 }
+
+class ReviewLeaseBusyError extends Error {}
 
 function requireSourceUrl(sourceUrl) {
   const url = new URL(sourceUrl);
@@ -122,6 +125,9 @@ export function createCloudflareReviewLease({
   env,
   fencingToken = randomBytes(16).toString("hex"),
   executeSql = (sql) => executeRemoteSql(sql, { cwd, env }),
+  now = () => Date.now(),
+  wait = (durationMs) =>
+    new Promise((resolve) => setTimeout(resolve, durationMs)),
 }) {
   const safeOwner = requireOwner(owner);
   const safeSourceUrl = requireSourceUrl(sourceUrl);
@@ -133,7 +139,7 @@ export function createCloudflareReviewLease({
     if (row.owner !== safeFencedOwner) {
       const expiresAt = new Date(Number(row.expiresAt) * 1_000).toISOString();
       const activeExecutionId = String(row.owner).split(":", 1)[0];
-      throw new Error(
+      throw new ReviewLeaseBusyError(
         `The shared Cloudflare review environment is leased by ${activeExecutionId} until ${expiresAt}. Retry after that review finishes.`,
       );
     }
@@ -141,19 +147,35 @@ export function createCloudflareReviewLease({
   };
 
   return {
-    async acquire() {
-      const row = leaseRow(
-        await executeSql(
-          acquireReviewLeaseSql({
-            owner: safeOwner,
-            sourceUrl: safeSourceUrl,
-            fencingToken: safeFencingToken,
-          }),
-        ),
-      );
-      requireOwned(row);
-      acquired = true;
-      return row;
+    async acquire({ waitMs = 0, retryDelayMs = DEFAULT_RETRY_DELAY_MS } = {}) {
+      if (!Number.isSafeInteger(waitMs) || waitMs < 0) {
+        throw new Error("review lease wait must be a non-negative integer");
+      }
+      if (!Number.isSafeInteger(retryDelayMs) || retryDelayMs <= 0) {
+        throw new Error("review lease retry delay must be a positive integer");
+      }
+      const deadline = now() + waitMs;
+      while (true) {
+        const row = leaseRow(
+          await executeSql(
+            acquireReviewLeaseSql({
+              owner: safeOwner,
+              sourceUrl: safeSourceUrl,
+              fencingToken: safeFencingToken,
+            }),
+          ),
+        );
+        try {
+          requireOwned(row);
+          acquired = true;
+          return row;
+        } catch (error) {
+          if (!(error instanceof ReviewLeaseBusyError)) throw error;
+          const remainingMs = deadline - now();
+          if (remainingMs <= 0) throw error;
+          await wait(Math.min(retryDelayMs, remainingMs));
+        }
+      }
     },
     async renew() {
       if (!acquired) throw new Error("Cannot renew a review lease before acquiring it");

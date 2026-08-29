@@ -6,7 +6,9 @@ import { MemoryRouter, useNavigate } from "react-router-dom";
 import { CreatorPage } from "./CreatorPage";
 
 const api = vi.hoisted(() => ({
+  createClipFromSourceVideo: vi.fn(),
   getSourceVideo: vi.fn(),
+  getVideoTranscript: vi.fn(),
   updateSourceVideoDuration: vi.fn().mockResolvedValue({}),
 }));
 const nativePlayer = vi.hoisted(() => ({
@@ -19,7 +21,9 @@ vi.mock("../api", async (importOriginal) => {
   const original = await importOriginal<typeof import("../api")>();
   return {
     ...original,
+    createClipFromSourceVideo: api.createClipFromSourceVideo,
     getSourceVideo: api.getSourceVideo,
+    getVideoTranscript: api.getVideoTranscript,
     updateSourceVideoDuration: api.updateSourceVideoDuration,
   };
 });
@@ -153,5 +157,92 @@ describe("CreatorPage upload metadata", () => {
       firstVideo.id,
       secondVideo.durationSeconds,
     );
+  });
+
+  it("keeps the exact uploaded clip inline through completion", async () => {
+    const user = userEvent.setup();
+    const video = uploadVideo("upload-id", "Launch_day-final.MP4", 45);
+    const queuedClip = {
+      id: "first-clip",
+      videoId: video.id,
+      title: "Launch day final",
+      source: video.source,
+      trimStart: 0,
+      trimEnd: 10,
+      quality: "1080p" as const,
+      caption: null,
+      filters: [],
+      status: "queued" as const,
+      errorMessage: null,
+      gifStatus: "none" as const,
+      gifErrorMessage: null,
+      outputs: { mp4: null, thumbnail: null, gif: null },
+      createdAt: "2026-08-28T12:00:00.000Z",
+      updatedAt: "2026-08-28T12:00:00.000Z",
+    };
+    nativePlayer.mediaStateSourceUrl = `/api/videos/${video.id}/source`;
+    nativePlayer.duration = 45;
+    nativePlayer.ready = true;
+    api.getSourceVideo.mockResolvedValue({ video, clips: [] });
+    api.getVideoTranscript.mockResolvedValue({
+      transcriptStatus: "available",
+      language: "en",
+      automatic: false,
+      cached: true,
+      blocks: [],
+    });
+    api.createClipFromSourceVideo.mockResolvedValue(queuedClip);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={[`/?video=${video.id}`]}>
+          <CreatorPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    const titleInput = await screen.findByRole("textbox", { name: "Title" });
+    await waitFor(() =>
+      expect((titleInput as HTMLInputElement).value).toBe("Launch day final"),
+    );
+    const createButton = screen.getByRole("button", { name: "Create clip" });
+    await waitFor(() => expect((createButton as HTMLButtonElement).disabled).toBe(false));
+    await user.click(createButton);
+
+    await waitFor(() =>
+      expect(api.createClipFromSourceVideo).toHaveBeenCalledWith(video.id, {
+        title: "Launch day final",
+        trimStart: 0,
+        trimEnd: 10,
+        filters: [],
+        quality: "1080p",
+      }),
+    );
+    expect(
+      await screen.findByText("Your clip is being prepared."),
+    ).toBeTruthy();
+
+    queryClient.setQueryData(["source-video", video.id], {
+      video: { ...video, activeClipCount: 0 },
+      clips: [
+        {
+          ...queuedClip,
+          status: "complete",
+          outputs: {
+            mp4: "/api/clips/first-clip.mp4",
+            thumbnail: "/api/clips/first-clip.jpg",
+            gif: null,
+          },
+        },
+      ],
+    });
+
+    expect(await screen.findByText("Your clip is ready.")).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: "Download MP4" }).getAttribute("href"),
+    ).toBe("/api/clips/first-clip.mp4");
   });
 });

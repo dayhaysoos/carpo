@@ -10,8 +10,15 @@ import {
   SOURCE_VIDEOS_QUERY_KEY,
 } from "../queries";
 import { useSearchParams } from "react-router-dom";
-import { useRef, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { useWebMcpClipTools } from "../hooks/useWebMcpClipTools";
+import {
+  getOwnedUploadClipJourneyView,
+  INITIAL_OWNED_UPLOAD_CLIP_JOURNEY_STATE,
+  type OwnedUploadClipReference,
+  updateOwnedUploadClipJourney,
+} from "../owned-upload-clip-journey";
+import { isTerminalStatus } from "../status";
 import type {
   ClipWindowRequest,
   TimestampWindow,
@@ -22,6 +29,10 @@ export function CreatorPage() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const videoId = searchParams.get("video") ?? "";
+  const [ownedUploadJourneyState, updateOwnedUploadJourney] = useReducer(
+    updateOwnedUploadClipJourney,
+    INITIAL_OWNED_UPLOAD_CLIP_JOURNEY_STATE,
+  );
   const clipWindowSequence = useRef(0);
   const [proposalReview] = useState(createClipProposalReview);
   const [clipWindowRequest, setClipWindowRequest] =
@@ -30,6 +41,24 @@ export function CreatorPage() {
     queryKey: sourceVideoQueryKey(videoId),
     queryFn: () => getSourceVideo(videoId),
     enabled: Boolean(videoId),
+    refetchInterval: (query) => {
+      const clips = query.state.data?.clips ?? [];
+      const trackedStatus = ownedUploadJourneyState.createdClip?.status;
+      const trackedClip = trackedStatus
+        ? clips.find(
+            ({ id }) => id === ownedUploadJourneyState.createdClip?.id,
+          )
+        : null;
+      const trackedClipInFlight = trackedClip
+        ? !isTerminalStatus(trackedClip.status)
+        : trackedStatus
+          ? !isTerminalStatus(trackedStatus)
+          : false;
+      return clips.some((clip) => !isTerminalStatus(clip.status)) ||
+        trackedClipInFlight
+        ? 1000
+        : false;
+    },
   });
   const {
     data: transcript = null,
@@ -50,6 +79,18 @@ export function CreatorPage() {
 
   const activeVideo =
     sourceVideoData?.video.id === videoId ? sourceVideoData.video : null;
+  const ownedUploadJourney = getOwnedUploadClipJourneyView({
+    state: ownedUploadJourneyState,
+    video: activeVideo,
+    clips: sourceVideoData?.clips ?? [],
+  });
+
+  useEffect(() => {
+    updateOwnedUploadJourney({
+      type: "source-changed",
+      sourceVideoId: videoId || null,
+    });
+  }, [videoId]);
   useWebMcpClipTools({
     video: activeVideo,
     transcript,
@@ -57,7 +98,14 @@ export function CreatorPage() {
     review: proposalReview,
   });
 
-  const handleClipCreated = () => {
+  const handleClipCreated = (clip: OwnedUploadClipReference) => {
+    if (videoId) {
+      updateOwnedUploadJourney({
+        type: "clip-created",
+        sourceVideoId: videoId,
+        clip,
+      });
+    }
     void queryClient.invalidateQueries({ queryKey: CLIPS_QUERY_KEY });
     void queryClient.invalidateQueries({ queryKey: SOURCE_VIDEOS_QUERY_KEY });
     void queryClient.invalidateQueries({ queryKey: ["source-video"] });
@@ -87,6 +135,7 @@ export function CreatorPage() {
         onClipCreated={handleClipCreated}
         onVideoActivated={handleVideoActivated}
         clipWindowRequest={clipWindowRequest}
+        ownedUploadJourney={ownedUploadJourney}
       />
       <VideoAgentChat
         videoId={videoId}
@@ -98,7 +147,14 @@ export function CreatorPage() {
         existingClips={existingClips}
         proposalReview={proposalReview}
       />
-      <StatusPanel />
+      <StatusPanel
+        excludeVideoId={
+          activeVideo?.source.type === "upload" ? videoId : undefined
+        }
+        includeBlockedFailureVideoId={
+          activeVideo?.source.type === "youtube" ? videoId : undefined
+        }
+      />
     </main>
   );
 }

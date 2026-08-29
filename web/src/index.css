@@ -1032,7 +1032,6 @@ input {
   height: 100%;
   background: var(--accent);
   border-radius: 2px;
-  transition: width 0.4s ease;
 }
 
 .job-error {
@@ -1073,6 +1072,63 @@ input {
   margin: 1rem 0 0;
   font-size: 0.8125rem;
   color: var(--text-muted);
+}
+
+.owned-clip-result {
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--border);
+}
+
+.owned-clip-result-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.owned-clip-result-header h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.owned-clip-result-header p,
+.owned-clip-progress span,
+.owned-clip-recovery {
+  margin: 0.25rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.owned-clip-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+  margin-top: 1rem;
+}
+
+.owned-clip-preview {
+  width: 100%;
+  margin-top: 1rem;
+  border-radius: var(--radius-sm);
+  background: #000;
+}
+
+.owned-clip-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.owned-clip-actions .btn-secondary {
+  width: auto;
+}
+
+.upload-retry {
+  align-self: flex-start;
+  width: auto;
+  padding-inline: 0;
 }
 
 .library-main {
@@ -1376,6 +1432,10 @@ input {
   padding: 0.875rem;
 }
 
+.video-copy {
+  min-width: 0;
+}
+
 .video-body h3 {
   margin: 0 0 0.25rem;
   overflow: hidden;
@@ -1588,7 +1648,7 @@ input {
 
   .video-link {
     display: grid;
-    grid-template-columns: 120px 1fr;
+    grid-template-columns: minmax(96px, 40%) minmax(0, 1fr);
   }
 
   .video-body {
