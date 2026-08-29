@@ -1,6 +1,6 @@
 import type { Env } from "./env";
 
-export const ENCODER_PROTOCOL_VERSION = 2;
+export const ENCODER_PROTOCOL_VERSION = 3;
 export const ENCODER_POOL_INSTANCE = `encoder-v${ENCODER_PROTOCOL_VERSION}`;
 
 export interface VideoMetadata {
