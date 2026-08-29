@@ -1,7 +1,7 @@
 import type { Env } from "./env";
 
-/** Single warm encoder container instance shared by all clip and GIF jobs. */
-export const ENCODER_POOL_INSTANCE = "encoder-0";
+export const ENCODER_PROTOCOL_VERSION = 2;
+export const ENCODER_POOL_INSTANCE = `encoder-v${ENCODER_PROTOCOL_VERSION}`;
 
 export interface VideoMetadata {
   durationSeconds: number | null;

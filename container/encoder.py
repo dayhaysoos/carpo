@@ -72,6 +72,7 @@ DEJAVU_FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 KNOWN_FILTER_TYPES = frozenset({"caption"})
 CAPTION_THEMES = frozenset({"classic", "high-contrast-box", "bold-yellow"})
 MAX_TIMED_CAPTION_CUES = 200
+ENCODER_PROTOCOL_VERSION = 2
 YOUTUBE_BLOCKED_MESSAGE = (
     "YouTube is blocking downloads from this server. "
     "Try uploading the video file instead."
