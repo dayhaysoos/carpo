@@ -106,6 +106,14 @@ async function getContainerStartCount(): Promise<number> {
   return body.count;
 }
 
+async function waitForContainerStartCount(expected: number): Promise<void> {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if ((await getContainerStartCount()) === expected) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  expect(await getContainerStartCount()).toBe(expected);
+}
+
 async function getSourceTranscriptAttempts(videoId: string): Promise<number> {
   const container = env.ENCODER_CONTAINER.getByName(ENCODER_POOL_INSTANCE);
   const response = await container.fetch(
@@ -253,7 +261,7 @@ describe("POST /api/upload-url", () => {
     expect(body.contentType).toBe("video/mp4");
     expect(body.method).toBe("PUT");
 
-    expect(await getContainerStartCount()).toBe(startsBefore + 1);
+    await waitForContainerStartCount(startsBefore + 1);
   });
 
   it("does not pre-warm the encoder for invalid upload-url requests", async () => {
@@ -300,7 +308,7 @@ describe("POST /api/upload-url", () => {
       expect(body.contentType).toBe("video/mp4");
       expect(body.method).toBe("PUT");
 
-      expect(await getContainerStartCount()).toBe(startsBefore + 1);
+      await waitForContainerStartCount(startsBefore + 1);
     } finally {
       await setPrewarmStartFailure(false);
     }
