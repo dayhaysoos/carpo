@@ -13,6 +13,8 @@ import {
 import { ENCODER_POOL_INSTANCE, prewarmEncoder } from "./encoder-pool";
 import type { Env } from "./env";
 import type { ClipStatus, CreateClipRequest, EncoderJobSpec, FailureMode, GifEncoderJobSpec } from "./types";
+import type { CaptionRenderJob } from "./caption-tracks";
+import { failCaptionRender } from "./caption-tracks";
 import { extractCaptionFromFilters } from "./validation";
 
 function isStickyTerminal(
@@ -395,5 +397,53 @@ function parseGifEncoderRunResult(
     return parsed && typeof parsed === "object" ? parsed : null;
   } catch {
     return null;
+  }
+}
+
+export async function dispatchCaptionRenderJob(
+  env: Env,
+  job: CaptionRenderJob,
+): Promise<void> {
+  try {
+    const container = env.ENCODER_CONTAINER.getByName(ENCODER_POOL_INSTANCE);
+    await prewarmEncoder(env, { body: {} });
+    const response = await container.fetch(
+      "http://encoder/__carpo/caption-run",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobId: job.clipId,
+          jobType: "captioned",
+          renderId: job.renderId,
+          sourceMp4Key: job.sourceMp4Key,
+          source: { type: "file", path: `/tmp/carpo-src-${job.clipId}` },
+          cues: job.cues,
+          theme: job.theme,
+          outputs: { captionedMp4Key: job.outputCaptionedMp4Key },
+        }),
+      },
+    );
+    if (!response.ok) {
+      const detail = await response.text();
+      let message = detail;
+      try {
+        const parsed = JSON.parse(detail) as { errorMessage?: unknown };
+        if (typeof parsed.errorMessage === "string") message = parsed.errorMessage;
+      } catch {}
+      await failCaptionRender(
+        env,
+        job.clipId,
+        job.renderId,
+        message || `Caption encoder rejected job (${response.status})`,
+      );
+    }
+  } catch (error) {
+    await failCaptionRender(
+      env,
+      job.clipId,
+      job.renderId,
+      error instanceof Error ? error.message : "Unknown caption encoding error",
+    );
   }
 }

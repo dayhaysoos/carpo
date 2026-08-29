@@ -715,6 +715,7 @@ function queueClipArtifactDeletions(
     "output_thumbnail_key",
     "output_gif_key",
     "helper_upload_key",
+    "(SELECT output_captioned_mp4_key FROM caption_tracks WHERE clip_id = clips.id)",
   ];
   return expressions.map((expression) =>
     db.prepare(

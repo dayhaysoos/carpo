@@ -65,10 +65,13 @@ ENCODE_TIMEOUT_SECONDS = 600
 UPLOAD_TIMEOUT_SECONDS = 600
 VIDEO_CONTAINER_EXTENSIONS = ("mp4", "mkv", "webm")
 GIF_OUTPUT_NAME = "clip.gif"
+CAPTIONED_OUTPUT_NAME = "captioned.mp4"
 GIF_FPS = 12
 GIF_MAX_WIDTH = 480
 DEJAVU_FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 KNOWN_FILTER_TYPES = frozenset({"caption"})
+CAPTION_THEMES = frozenset({"classic", "high-contrast-box", "bold-yellow"})
+MAX_TIMED_CAPTION_CUES = 200
 YOUTUBE_BLOCKED_MESSAGE = (
     "YouTube is blocking downloads from this server. "
     "Try uploading the video file instead."
@@ -454,6 +457,40 @@ def validate_gif_job(job: dict[str, Any]) -> str | None:
     if not isinstance(outputs, dict) or not outputs.get("gifKey"):
         return "outputs.gifKey is required"
 
+    return None
+
+
+def validate_captioned_job(job: dict[str, Any]) -> str | None:
+    source = job.get("source")
+    if not isinstance(source, dict) or source.get("type") != "file":
+        return "Caption jobs require a local file source"
+    path = source.get("path")
+    if not isinstance(path, str) or not Path(path).exists():
+        return "Local file path is required for caption source"
+
+    cues = job.get("cues")
+    if not isinstance(cues, list) or len(cues) > MAX_TIMED_CAPTION_CUES:
+        return f"Caption jobs support at most {MAX_TIMED_CAPTION_CUES} cues"
+    previous_end = 0.0
+    for index, cue in enumerate(cues):
+        if not isinstance(cue, dict):
+            return f"cues[{index}] must be an object"
+        start = cue.get("startSeconds")
+        end = cue.get("endSeconds")
+        text = cue.get("text")
+        if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+            return f"cues[{index}] timing must be numeric"
+        if float(start) < previous_end or float(end) <= float(start):
+            return f"cues[{index}] timing is invalid"
+        if not isinstance(text, str) or not text.strip():
+            return f"cues[{index}].text is required"
+        previous_end = float(end)
+
+    if job.get("theme") not in CAPTION_THEMES:
+        return "Caption theme is not supported"
+    outputs = job.get("outputs")
+    if not isinstance(outputs, dict) or not outputs.get("captionedMp4Key"):
+        return "outputs.captionedMp4Key is required"
     return None
 
 
@@ -1639,6 +1676,41 @@ def build_caption_drawtext(text: str, workdir: Path, index: int) -> str:
     )
 
 
+def build_timed_caption_filters(
+    cues: list[dict[str, Any]],
+    theme: str,
+    workdir: Path,
+) -> str:
+    filters: list[str] = []
+    for index, cue in enumerate(cues):
+        text_path = workdir / f"timed-caption-{index}.txt"
+        text_path.write_text(str(cue["text"]), encoding="utf-8")
+        if theme == "high-contrast-box":
+            style = (
+                ":fontsize=h/18:fontcolor=white:borderw=0"
+                ":box=1:boxcolor=black@0.88:boxborderw=10"
+            )
+        elif theme == "bold-yellow":
+            style = (
+                ":fontsize=h/15:fontcolor=yellow:borderw=4"
+                ":bordercolor=black@0.95:box=0"
+            )
+        else:
+            style = (
+                ":fontsize=h/18:fontcolor=white:borderw=3"
+                ":bordercolor=black@0.9:box=0"
+            )
+        start = float(cue["startSeconds"])
+        end = float(cue["endSeconds"])
+        filters.append(
+            f"drawtext=fontfile={DEJAVU_FONT}"
+            f":textfile={text_path}:expansion=none{style}"
+            ":x=(w-text_w)/2:y=h*0.90-text_h"
+            f":enable='between(t\\,{start:.3f}\\,{end:.3f})'",
+        )
+    return ",".join(filters)
+
+
 def _can_stream_copy_encode(
     source: Path,
     trim_start: float,
@@ -1800,6 +1872,35 @@ def encode_gif(source_mp4: Path, output_gif: Path, workdir: Path) -> None:
     )
 
 
+def encode_captioned_mp4(
+    source_mp4: Path,
+    output_mp4: Path,
+    cues: list[dict[str, Any]],
+    theme: str,
+    workdir: Path,
+) -> None:
+    command = ["ffmpeg", "-y", "-i", str(source_mp4)]
+    filters = build_timed_caption_filters(cues, theme, workdir)
+    if filters:
+        command.extend(["-vf", filters])
+    command.extend(
+        [
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "23",
+            "-c:a",
+            "aac",
+            "-movflags",
+            "+faststart",
+            str(output_mp4),
+        ],
+    )
+    run_command(command, friendly_failure=True)
+
+
 def upload_file(
     upload_url: str,
     local_path: Path,
@@ -1896,6 +1997,10 @@ def run_result(
             result["outputs"] = {
                 "gifKey": outputs.get("gifKey", ""),
             }
+        elif job.get("jobType") == "captioned":
+            result["outputs"] = {
+                "captionedMp4Key": outputs.get("captionedMp4Key", ""),
+            }
         else:
             result["outputs"] = {
                 "mp4Key": outputs.get("mp4Key", ""),
@@ -1949,9 +2054,59 @@ def process_gif_job(job: dict[str, Any]) -> dict[str, Any]:
             return run_result("failed", job, error_message=message)
 
 
+def process_captioned_job(job: dict[str, Any]) -> dict[str, Any]:
+    try:
+        error = validate_captioned_job(job)
+        if error:
+            return run_result("failed", job, error_message=error)
+    except Exception as exc:  # noqa: BLE001
+        return run_result(
+            "failed",
+            job,
+            error_message=str(exc) or "Caption job validation failed",
+        )
+
+    job_id = sanitize_job_id(str(job.get("jobId", "")))
+    prepare_job_workspace(job_id)
+    with tempfile.TemporaryDirectory(prefix="carpo-caption-") as tmp:
+        workdir = Path(tmp)
+        try:
+            source_path = Path(job["source"]["path"])
+            output_mp4 = workdir / CAPTIONED_OUTPUT_NAME
+            encode_captioned_mp4(
+                source_path,
+                output_mp4,
+                job["cues"],
+                job["theme"],
+                workdir,
+            )
+            local_output_dir = job.get("localOutputDir")
+            if local_output_dir:
+                out_dir = Path(local_output_dir)
+                out_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(output_mp4, out_dir / CAPTIONED_OUTPUT_NAME)
+            elif job.get("deferArtifactUpload"):
+                out_dir = job_output_dir(job_id)
+                out_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(output_mp4, out_dir / CAPTIONED_OUTPUT_NAME)
+            else:
+                raise RuntimeError("Caption artifact upload is not configured")
+            if job.get("deferArtifactUpload"):
+                return run_result("staged", job)
+            return run_result("complete", job)
+        except Exception as exc:  # noqa: BLE001
+            return run_result(
+                "failed",
+                job,
+                error_message=str(exc) or "Caption encoding failed",
+            )
+
+
 def process_job(job: dict[str, Any]) -> dict[str, Any]:
     if job.get("jobType") == "gif":
         return process_gif_job(job)
+    if job.get("jobType") == "captioned":
+        return process_captioned_job(job)
 
     callback_url = job.get("callbackUrl")
     callback_secret = job.get("callbackSecret")

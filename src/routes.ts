@@ -30,7 +30,11 @@ import {
   verifyHelperToken,
   verifyJobSecret,
 } from "./auth";
-import { applyStatusUpdate, dispatchGifExportJob } from "./jobs";
+import {
+  applyStatusUpdate,
+  dispatchCaptionRenderJob,
+  dispatchGifExportJob,
+} from "./jobs";
 import { recordToResponse, sourceVideoRecordToResponse } from "./serialize";
 import type { ClipRecord, ClipStatus, CreateClipRequest } from "./types";
 import {
@@ -70,8 +74,11 @@ import {
 } from "./transcript-search";
 import {
   CaptionTrackError,
+  beginCaptionRender,
   exportCaptionTrack,
+  ownsCaptionedArtifact,
   saveCaptionTrack,
+  validateCaptionTrackProposal,
   viewCaptionTrack,
 } from "./caption-tracks";
 
@@ -214,10 +221,39 @@ export async function handleRequest(
   }
 
   const captionExportMatch = url.pathname.match(
-    /^\/api\/clips\/([^/]+)\/captions\.vtt$/,
+    /^\/api\/clips\/([^/]+)\/captions\.(vtt|srt)$/,
   );
   if (request.method === "GET" && captionExportMatch) {
-    return handleCaptionTrackExport(captionExportMatch[1], env, user!);
+    return handleCaptionTrackExport(
+      captionExportMatch[1],
+      captionExportMatch[2] as "vtt" | "srt",
+      env,
+      user!,
+    );
+  }
+
+  const captionProposalMatch = url.pathname.match(
+    /^\/api\/clips\/([^/]+)\/captions\/proposals$/,
+  );
+  if (request.method === "POST" && captionProposalMatch) {
+    return handleCaptionTrackProposal(
+      request,
+      captionProposalMatch[1],
+      env,
+      user!,
+    );
+  }
+
+  const captionRenderMatch = url.pathname.match(
+    /^\/api\/clips\/([^/]+)\/captions\/render$/,
+  );
+  if (request.method === "POST" && captionRenderMatch) {
+    return handleCaptionTrackRender(
+      captionRenderMatch[1],
+      env,
+      ctx,
+      user!,
+    );
   }
 
   const captionTrackMatch = url.pathname.match(
@@ -1001,34 +1037,28 @@ async function handleCaptionTrackSave(
   env: Env,
   user: AuthenticatedUser,
 ): Promise<Response> {
-  const contentLength = parseContentLength(
-    request.headers.get("content-length"),
-  );
-  if (
-    contentLength !== null &&
-    contentLength > MAX_CAPTION_TRACK_BODY_BYTES
-  ) {
-    return json({ error: "Caption track is too large" }, 413);
-  }
-
-  let body: unknown;
-  try {
-    const raw = await request.text();
-    if (
-      new TextEncoder().encode(raw).byteLength > MAX_CAPTION_TRACK_BODY_BYTES
-    ) {
-      return json({ error: "Caption track is too large" }, 413);
-    }
-    body = JSON.parse(raw);
-  } catch {
-    return json({ error: "Invalid JSON body" }, 400);
-  }
+  const parsed = await readCaptionJson(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
   const cues =
     body && typeof body === "object" && "cues" in body
       ? (body as { cues: unknown }).cues
       : undefined;
+  const theme =
+    body && typeof body === "object" && "theme" in body
+      ? (body as { theme: unknown }).theme
+      : undefined;
+  const proposalSource =
+    body && typeof body === "object" && "proposalSource" in body
+      ? (body as { proposalSource: unknown }).proposalSource
+      : undefined;
   try {
-    return json(await saveCaptionTrack(env, user.id, clipId, cues));
+    return json(
+      await saveCaptionTrack(env, user.id, clipId, cues, {
+        theme,
+        proposalSource,
+      }),
+    );
   } catch (error) {
     return captionTrackErrorResponse(error);
   }
@@ -1036,18 +1066,125 @@ async function handleCaptionTrackSave(
 
 async function handleCaptionTrackExport(
   clipId: string,
+  format: "vtt" | "srt",
   env: Env,
   user: AuthenticatedUser,
 ): Promise<Response> {
   try {
-    const exported = await exportCaptionTrack(env, user.id, clipId);
+    const exported = await exportCaptionTrack(env, user.id, clipId, format);
     return new Response(exported.body, {
       headers: {
         "Cache-Control": "private, no-store",
         "Content-Disposition": `attachment; filename="${exported.filename}"`,
-        "Content-Type": "text/vtt; charset=utf-8",
+        "Content-Type":
+          format === "srt"
+            ? "application/x-subrip; charset=utf-8"
+            : "text/vtt; charset=utf-8",
       },
     });
+  } catch (error) {
+    return captionTrackErrorResponse(error);
+  }
+}
+
+async function handleCaptionTrackProposal(
+  request: Request,
+  clipId: string,
+  env: Env,
+  user: AuthenticatedUser,
+): Promise<Response> {
+  const parsed = await readCaptionJson(request);
+  if (!parsed.ok) return parsed.response;
+  const body = parsed.body;
+  if (!body || typeof body !== "object") {
+    return json({ error: "Invalid proposal" }, 400);
+  }
+  const proposal = body as Record<string, unknown>;
+  try {
+    return json(
+      await validateCaptionTrackProposal(env, user.id, clipId, {
+        source: proposal.source,
+        baseRevision: proposal.baseRevision,
+        cues: proposal.cues,
+        theme: proposal.theme,
+      }),
+    );
+  } catch (error) {
+    return captionTrackErrorResponse(error);
+  }
+}
+
+async function readCaptionJson(
+  request: Request,
+): Promise<
+  | { ok: true; body: unknown }
+  | { ok: false; response: Response }
+> {
+  const contentLength = parseContentLength(
+    request.headers.get("content-length"),
+  );
+  if (
+    contentLength !== null &&
+    contentLength > MAX_CAPTION_TRACK_BODY_BYTES
+  ) {
+    return {
+      ok: false,
+      response: json({ error: "Caption track is too large" }, 413),
+    };
+  }
+  try {
+    const raw = await readBoundedText(
+      request.body,
+      MAX_CAPTION_TRACK_BODY_BYTES,
+    );
+    if (raw === null) {
+      return {
+        ok: false,
+        response: json({ error: "Caption track is too large" }, 413),
+      };
+    }
+    return { ok: true, body: JSON.parse(raw) };
+  } catch {
+    return {
+      ok: false,
+      response: json({ error: "Invalid JSON body" }, 400),
+    };
+  }
+}
+
+async function readBoundedText(
+  body: ReadableStream<Uint8Array> | null,
+  maxBytes: number,
+): Promise<string | null> {
+  if (!body) return "";
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let text = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytes += value.byteLength;
+    if (bytes > maxBytes) {
+      await reader.cancel();
+      return null;
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+  return text + decoder.decode();
+}
+
+async function handleCaptionTrackRender(
+  clipId: string,
+  env: Env,
+  ctx: ExecutionContext,
+  user: AuthenticatedUser,
+): Promise<Response> {
+  try {
+    const result = await beginCaptionRender(env, user.id, clipId);
+    if (!result.started) return json(result.track);
+    ctx.waitUntil(dispatchCaptionRenderJob(env, result.job));
+    return json(result.track, 202);
   } catch (error) {
     return captionTrackErrorResponse(error);
   }
@@ -1350,8 +1487,13 @@ async function handleArtifactRequest(
   env: Env,
   user: AuthenticatedUser,
 ): Promise<Response> {
-  const clipId = key.match(/^clips\/([^/]+)\/(?:clip\.(?:mp4|gif)|thumbnail\.jpg)$/)?.[1];
-  if (!clipId || !(await getClipByIdForOwner(env.DB, clipId, user.id))) {
+  const clipId = key.match(
+    /^clips\/([^/]+)\/(?:clip\.(?:mp4|gif)|thumbnail\.jpg|captioned-[A-Za-z0-9-]+\.mp4)$/,
+  )?.[1];
+  const ownsArtifact = key.includes("/captioned-")
+    ? await ownsCaptionedArtifact(env, user.id, key)
+    : Boolean(clipId && (await getClipByIdForOwner(env.DB, clipId, user.id)));
+  if (!clipId || !ownsArtifact) {
     return new Response("Not found", { status: 404 });
   }
   const object = await env.CLIPS_BUCKET.get(key);

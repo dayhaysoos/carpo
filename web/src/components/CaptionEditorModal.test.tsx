@@ -3,8 +3,10 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  captionTrackSrtUrl,
   captionTrackVttUrl,
   getCaptionTrack,
+  renderCaptionTrack,
   saveCaptionTrack,
 } from "../api";
 import type { CaptionTrackAvailable, ClipResponse } from "../types";
@@ -12,7 +14,9 @@ import { CaptionEditorModal } from "./CaptionEditorModal";
 
 vi.mock("../api", () => ({
   captionTrackVttUrl: vi.fn((clipId: string) => `/captions/${clipId}.vtt`),
+  captionTrackSrtUrl: vi.fn((clipId: string) => `/captions/${clipId}.srt`),
   getCaptionTrack: vi.fn(),
+  renderCaptionTrack: vi.fn(),
   saveCaptionTrack: vi.fn(),
 }));
 
@@ -49,6 +53,12 @@ const draft: CaptionTrackAvailable = {
   cues: [
     { id: "cue-1", startSeconds: 0, endSeconds: 2, text: "First idea" },
   ],
+  theme: "classic",
+  lastProposalSource: null,
+  renderStatus: "none",
+  renderErrorMessage: null,
+  outputCaptionedMp4: null,
+  revision: null,
   updatedAt: null,
 };
 
@@ -75,6 +85,12 @@ describe("CaptionEditorModal", () => {
       cues,
       updatedAt: "2026-08-28T12:05:00Z",
     }));
+    vi.mocked(renderCaptionTrack).mockResolvedValue({
+      ...draft,
+      saved: true,
+      renderStatus: "encoding",
+      revision: "revision-1",
+    });
   });
 
   afterEach(() => {
@@ -91,7 +107,7 @@ describe("CaptionEditorModal", () => {
     await user.type(text, "Corrected by hand");
     expect(screen.getByText("Unsaved changes")).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: "Download VTT" }).hasAttribute("disabled"),
+      screen.getByRole("button", { name: "Save to export" }).hasAttribute("disabled"),
     ).toBe(true);
 
     const video = screen.getByLabelText("Launch moment caption preview");
@@ -108,6 +124,7 @@ describe("CaptionEditorModal", () => {
         expect.arrayContaining([
           expect.objectContaining({ text: "Corrected by hand" }),
         ]),
+        { theme: "classic" },
       ),
     );
     expect(
@@ -116,6 +133,7 @@ describe("CaptionEditorModal", () => {
       ),
     ).toBe("/captions/clip-1.vtt");
     expect(captionTrackVttUrl).toHaveBeenCalledWith(clip.id);
+    expect(captionTrackSrtUrl).toHaveBeenCalledWith(clip.id);
   });
 
   it("protects unsaved manual corrections when the modal closes", async () => {
@@ -163,6 +181,57 @@ describe("CaptionEditorModal", () => {
         expect.arrayContaining([
           expect.objectContaining({ text: "Written by hand" }),
         ]),
+        { theme: "classic" },
+      ),
+    );
+  });
+
+  it("keeps an advisory Think proposal unsaved until the user saves it", async () => {
+    const user = userEvent.setup();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <CaptionEditorModal
+          clip={clip}
+          onClose={vi.fn()}
+          initialProposal={{
+            source: "think",
+            baseRevision: null,
+            theme: "bold-yellow",
+            cues: [
+              {
+                id: "agent-cue",
+                startSeconds: 1,
+                endSeconds: 3,
+                text: "Suggested by Think",
+              },
+            ],
+          }}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("Think suggestion")).toBeTruthy();
+    expect(screen.getByDisplayValue("Suggested by Think")).toBeTruthy();
+    expect(
+      (screen.getByRole("combobox", {
+        name: "Caption theme",
+      }) as HTMLSelectElement).value,
+    ).toBe("bold-yellow");
+    expect(
+      screen.getByRole("button", { name: "Render captioned MP4" }),
+    ).toHaveProperty("disabled", true);
+
+    await user.click(screen.getByRole("button", { name: "Save captions" }));
+    await waitFor(() =>
+      expect(saveCaptionTrack).toHaveBeenCalledWith(
+        clip.id,
+        expect.arrayContaining([
+          expect.objectContaining({ text: "Suggested by Think" }),
+        ]),
+        { theme: "bold-yellow", proposalSource: "think" },
       ),
     );
   });

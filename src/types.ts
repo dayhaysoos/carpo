@@ -238,6 +238,25 @@ export interface GifEncoderJobSpec {
   deferArtifactUpload?: boolean;
 }
 
+export interface CaptionRenderEncoderJobSpec {
+  jobId: string;
+  jobType: "captioned";
+  renderId: string;
+  sourceMp4Key: string;
+  source: { type: "file"; path: string };
+  cues: Array<{
+    id: string;
+    startSeconds: number;
+    endSeconds: number;
+    text: string;
+  }>;
+  theme: "classic" | "high-contrast-box" | "bold-yellow";
+  outputs: {
+    captionedMp4Key: string;
+  };
+  deferArtifactUpload?: boolean;
+}
+
 export interface StatusUpdateRequest {
   status: ClipStatus;
   errorMessage?: string | null;

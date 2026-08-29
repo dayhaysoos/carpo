@@ -98,6 +98,16 @@ export interface CaptionCue {
   text: string;
 }
 
+export const CAPTION_THEME_IDS = [
+  "classic",
+  "high-contrast-box",
+  "bold-yellow",
+] as const;
+
+export type CaptionThemeId = (typeof CAPTION_THEME_IDS)[number];
+export type CaptionProposalSource = "think" | "webmcp";
+export type CaptionRenderStatus = "none" | "encoding" | "complete" | "failed";
+
 export interface CaptionTrackAvailable {
   captionStatus: "available";
   clipId: string;
@@ -106,7 +116,27 @@ export interface CaptionTrackAvailable {
   sourceLanguage: string | null;
   sourceAutomatic: boolean | null;
   cues: CaptionCue[];
+  theme: CaptionThemeId;
+  lastProposalSource: CaptionProposalSource | null;
+  renderStatus: CaptionRenderStatus;
+  renderErrorMessage: string | null;
+  outputCaptionedMp4: string | null;
+  revision: string | null;
   updatedAt: string | null;
+}
+
+export interface CaptionTrackProposal {
+  source: CaptionProposalSource;
+  baseRevision: string | null;
+  cues: CaptionCue[];
+  theme: CaptionThemeId;
+}
+
+export interface CaptionTrackProposalInput {
+  clipId: string;
+  baseRevision: string | null;
+  cues: CaptionCue[];
+  theme: CaptionThemeId;
 }
 
 export interface CaptionTrackChecking {
