@@ -2302,6 +2302,7 @@ class EncoderHandler(BaseHTTPRequestHandler):
                 job_id, name = parts
                 content_types = {
                     "clip.mp4": "video/mp4",
+                    "captioned.mp4": "video/mp4",
                     "thumbnail.jpg": "image/jpeg",
                     "clip.gif": "image/gif",
                     "source.mp4": "video/mp4",

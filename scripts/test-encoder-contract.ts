@@ -2627,6 +2627,74 @@ function runEncoderTimedCaptionContract(fixturePath: string) {
       );
     }
 
+    const deferredJobId = "timed-caption-deferred";
+    const deferredJobPath = path.join(timedOutputDir, "deferred.json");
+    const deferredOutputPath = path.join(timedOutputDir, "deferred.mp4");
+    fs.writeFileSync(
+      deferredJobPath,
+      JSON.stringify({
+        jobId: deferredJobId,
+        jobType: "captioned",
+        renderId: "render-deferred",
+        sourceMp4Key: "fixture",
+        source: { type: "file", path: "/fixture/bars.mp4" },
+        cues: [
+          {
+            id: "cue-1",
+            startSeconds: 1,
+            endSeconds: 2.5,
+            text: "Deferred artifact proof",
+          },
+        ],
+        theme: "classic",
+        outputs: { captionedMp4Key: "deferred.mp4" },
+        deferArtifactUpload: true,
+      }),
+    );
+    const deferredEncode = spawnSync(
+      "curl",
+      [
+        "-fsS",
+        "-X",
+        "POST",
+        "http://127.0.0.1:18082/run",
+        "-H",
+        "Content-Type: application/json",
+        "-d",
+        `@${deferredJobPath}`,
+      ],
+      { encoding: "utf-8" },
+    );
+    if (deferredEncode.status !== 0) {
+      throw new Error(
+        `deferred timed-caption encode failed\n${deferredEncode.stderr}\n${run("docker", ["logs", timedContainer])}`,
+      );
+    }
+    const deferredResult = JSON.parse(deferredEncode.stdout) as {
+      status: string;
+      errorMessage?: string;
+    };
+    if (deferredResult.status !== "staged") {
+      throw new Error(
+        `deferred timed-caption encoder returned ${deferredResult.status}: ${deferredResult.errorMessage ?? "unknown error"}`,
+      );
+    }
+    const deferredDownload = spawnSync(
+      "curl",
+      [
+        "-fsS",
+        `http://127.0.0.1:18082/outputs/${deferredJobId}/captioned.mp4`,
+        "-o",
+        deferredOutputPath,
+      ],
+      { encoding: "utf-8" },
+    );
+    if (deferredDownload.status !== 0 || !fs.existsSync(deferredOutputPath)) {
+      throw new Error(
+        `deferred timed-caption artifact could not be downloaded\n${deferredDownload.stderr}\n${run("docker", ["logs", timedContainer])}`,
+      );
+    }
+
     const baselineInactive = readFrameRgbBuffer(
       path.join(timedOutputDir, "baseline.mp4"),
       15,
