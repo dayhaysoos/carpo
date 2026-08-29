@@ -45,7 +45,7 @@ const COVERAGE_VERB =
 const UNAVAILABLE_COVERAGE =
   "(?:(?:direct|read-only)\\s+)?api(?:\\s+(?:smoke|checks?|tests?))?|(?:actual\\s+)?upload(?:ing|\\s+flow|\\s+execution)?|clip\\s+creat(?:e|ion)|encod(?:e|ing)|media\\s+playback|youtube(?:\\s+reliability)?|production(?:\\s+behavior)?";
 const UNSUPPORTED_COVERAGE_CLAIM = new RegExp(
-  `(?:\\b${COVERAGE_VERB}\\b[^.!?\\n]{0,100}\\b${UNAVAILABLE_COVERAGE}\\b|\\b${UNAVAILABLE_COVERAGE}\\b[^.!?\\n]{0,100}\\b${COVERAGE_VERB}\\b)`,
+  `(?:\\b${COVERAGE_VERB}\\b[^.!?\\n]{0,100}\\b(?:${UNAVAILABLE_COVERAGE})\\b|\\b(?:${UNAVAILABLE_COVERAGE})\\b[^.!?\\n]{0,100}\\b${COVERAGE_VERB}\\b)`,
   "i",
 );
 const UNSUPPORTED_TESTED_AREA =

@@ -119,6 +119,18 @@ describe("bounded review policy contract", () => {
     assert.match(bounded.remainingRisks.at(-1), /Direct API behavior/);
   });
 
+  it("allows explicit negative boundaries without weakening coverage enforcement", () => {
+    const bounded = enforceCoverageBoundary({
+      ...report,
+      summary:
+        "The Create and Library shells rendered. Upload, encoding, and media playback remain outside bounded review authority.",
+    });
+
+    assert.equal(bounded.verdict, "pass");
+    assert.equal(bounded.summary, "The Create and Library shells rendered. Upload, encoding, and media playback remain outside bounded review authority.");
+    assert.deepEqual(bounded.findings, []);
+  });
+
   it("counts every local and durable diagnostic collection", () => {
     const bounded = appendDiagnosticsFinding(report, {
       console: [{}],
