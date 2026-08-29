@@ -14,17 +14,23 @@ import {
   MAX_CAPTION_LENGTH,
   MAX_CLIP_LENGTH_SECONDS,
   type ClipQuality,
+  type CaptionTrackProposal,
+  type CaptionTrackProposalInput,
+  type ClipResponse,
   type SourceVideoResponse,
   type TranscriptBlock,
   type TranscriptResponse,
 } from "./types";
+import { getCaptionTrack } from "./api";
 
-export const CARPO_WEBMCP_CONTRACT_VERSION = "2026-08-28";
+export const CARPO_WEBMCP_CONTRACT_VERSION = "2026-08-29";
 
 export const CARPO_WEBMCP_TOOL_NAMES = [
   "getCarpoInstructions",
   "readClipWorkspace",
   "proposeClips",
+  "readCaptionTrack",
+  "proposeCaptionTrack",
 ] as const;
 
 interface WebMcpToolAnnotations {
@@ -53,6 +59,10 @@ export interface WebMcpClipWorkspaceState {
   transcript: TranscriptResponse | null;
   transcriptError: string | null;
   review: ClipProposalReview;
+  clips?: ClipResponse[];
+  onCaptionProposal?: (
+    input: CaptionTrackProposalInput,
+  ) => Promise<CaptionTrackProposal>;
 }
 
 interface ProposedClipInput {
@@ -730,7 +740,135 @@ export function createCarpoWebMcpTools(
     },
   };
 
-  return [instructions, readWorkspace, proposeClips];
+  const readCaptionTrack: WebMcpToolDefinition = {
+    name: "readCaptionTrack",
+    title: "Read caption track",
+    description:
+      "Read one completed clip's private timed-caption draft, revision, theme, and render state before proposing changes.",
+    annotations: { readOnlyHint: true },
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["clipId"],
+      properties: { clipId: { type: "string", minLength: 1 } },
+    },
+    execute: async (input) => {
+      const clipId =
+        input && typeof input === "object" && "clipId" in input
+          ? (input as { clipId?: unknown }).clipId
+          : null;
+      const state = getState();
+      const clip = state.clips?.find((candidate) => candidate.id === clipId);
+      if (!clip || clip.status !== "complete") {
+        return toolFailure(
+          "clip_not_available",
+          "Choose a completed clip from the current private video.",
+        );
+      }
+      try {
+        return { ok: true, track: await getCaptionTrack(clip.id) };
+      } catch (error) {
+        return toolFailure(
+          "caption_track_unavailable",
+          error instanceof Error ? error.message : "Caption track unavailable",
+        );
+      }
+    },
+  };
+
+  const proposeCaptionTrack: WebMcpToolDefinition = {
+    name: "proposeCaptionTrack",
+    title: "Propose caption track",
+    description:
+      "Place a timed-caption suggestion into Carpo's existing editor. The suggestion remains unsaved and unrendered until the user reviews and acts.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["clipId", "baseRevision", "theme", "cues"],
+      properties: {
+        clipId: { type: "string", minLength: 1 },
+        baseRevision: { type: ["string", "null"] },
+        theme: {
+          type: "string",
+          enum: ["classic", "high-contrast-box", "bold-yellow"],
+        },
+        cues: {
+          type: "array",
+          maxItems: 200,
+          items: {
+            type: "object",
+            additionalProperties: false,
+            required: ["id", "startSeconds", "endSeconds", "text"],
+            properties: {
+              id: { type: "string" },
+              startSeconds: { type: "number", minimum: 0 },
+              endSeconds: { type: "number", exclusiveMinimum: 0 },
+              text: { type: "string", minLength: 1, maxLength: 500 },
+            },
+          },
+        },
+      },
+    },
+    execute: async (input) => {
+      const state = getState();
+      if (!state.onCaptionProposal || !input || typeof input !== "object") {
+        return toolFailure(
+          "caption_editor_unavailable",
+          "The caption editor is not available in this workspace.",
+        );
+      }
+      const candidate = input as Partial<CaptionTrackProposalInput>;
+      const clip = state.clips?.find(
+        (item) => item.id === candidate.clipId && item.status === "complete",
+      );
+      if (
+        !clip ||
+        (candidate.baseRevision !== null &&
+          typeof candidate.baseRevision !== "string") ||
+        !Array.isArray(candidate.cues) ||
+        (candidate.theme !== "classic" &&
+          candidate.theme !== "high-contrast-box" &&
+          candidate.theme !== "bold-yellow")
+      ) {
+        return toolFailure(
+          "invalid_caption_proposal",
+          "The caption proposal does not match the current completed clip.",
+        );
+      }
+      try {
+        const proposal = await state.onCaptionProposal({
+          clipId: clip.id,
+          baseRevision: candidate.baseRevision,
+          cues: candidate.cues,
+          theme: candidate.theme,
+        });
+        return {
+          ok: true,
+          status: "ready-for-review",
+          source: proposal.source,
+          clipId: clip.id,
+          cueCount: proposal.cues.length,
+          saved: false,
+          rendered: false,
+          nextAction:
+            "The user must review and explicitly save before rendering.",
+        };
+      } catch (error) {
+        return toolFailure(
+          "caption_proposal_rejected",
+          error instanceof Error ? error.message : "Caption proposal rejected",
+        );
+      }
+    },
+  };
+
+  return [
+    instructions,
+    readWorkspace,
+    proposeClips,
+    readCaptionTrack,
+    proposeCaptionTrack,
+  ];
 }
 
 export function registerCarpoWebMcpTools(

@@ -2,9 +2,12 @@ import type {
   ApiError,
   CaptionCue,
   CaptionTrackAvailable,
+  CaptionTrackProposal,
   CaptionTrackResponse,
   ClipListResponse,
   ClipResponse,
+  CaptionThemeId,
+  CaptionProposalSource,
   CreateClipRequest,
   CreateClipFromVideoRequest,
   CreateSourceVideoRequest,
@@ -124,13 +127,17 @@ export async function getCaptionTrack(
 export async function saveCaptionTrack(
   clipId: string,
   cues: CaptionCue[],
+  options: {
+    theme?: CaptionThemeId;
+    proposalSource?: CaptionProposalSource;
+  } = {},
 ): Promise<CaptionTrackAvailable> {
   const response = await fetch(
     `/api/clips/${encodeURIComponent(clipId)}/captions`,
     {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cues }),
+      body: JSON.stringify({ cues, ...options }),
     },
   );
   if (!response.ok) {
@@ -143,6 +150,49 @@ export async function saveCaptionTrack(
 
 export function captionTrackVttUrl(clipId: string): string {
   return `/api/clips/${encodeURIComponent(clipId)}/captions.vtt`;
+}
+
+export function captionTrackSrtUrl(clipId: string): string {
+  return `/api/clips/${encodeURIComponent(clipId)}/captions.srt`;
+}
+
+export async function validateCaptionTrackProposal(
+  clipId: string,
+  input: {
+    source: CaptionProposalSource;
+    baseRevision: string | null;
+    cues: CaptionCue[];
+    theme: CaptionThemeId;
+  },
+): Promise<CaptionTrackProposal> {
+  const response = await fetch(
+    `/api/clips/${encodeURIComponent(clipId)}/captions/proposals`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiError;
+    const detail = body.details?.map((item) => item.message).join("; ");
+    throw new Error(detail || body.error || `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<CaptionTrackProposal>;
+}
+
+export async function renderCaptionTrack(
+  clipId: string,
+): Promise<CaptionTrackAvailable> {
+  const response = await fetch(
+    `/api/clips/${encodeURIComponent(clipId)}/captions/render`,
+    { method: "POST" },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiError;
+    throw new Error(body.error || `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<CaptionTrackAvailable>;
 }
 
 export async function listClips(

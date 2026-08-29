@@ -30,6 +30,12 @@ import {
   searchVideoTranscript,
 } from "./transcript-search";
 import { findSemanticTranscriptMoments } from "./semantic-transcript";
+import {
+  CAPTION_THEME_IDS,
+  MAX_CAPTION_CUES,
+  MAX_CAPTION_CUE_TEXT_LENGTH,
+  viewCaptionTrackForVideo,
+} from "./caption-tracks";
 
 const MAX_AGENT_OCCUPIED_RANGES = 200;
 
@@ -159,6 +165,20 @@ const semanticTranscriptInput = z.object({
   intent: z.string().trim().min(1).max(500),
   count: z.number().int().min(1).max(10).default(5),
   ...transcriptPaddingInput,
+});
+
+const captionCueInput = z.object({
+  id: z.string().trim().regex(/^[A-Za-z0-9_-]{1,64}$/),
+  startSeconds: z.number().finite().min(0),
+  endSeconds: z.number().finite().positive(),
+  text: z.string().trim().min(1).max(MAX_CAPTION_CUE_TEXT_LENGTH),
+});
+
+const captionTrackProposalInput = z.object({
+  clipId: z.string().trim().min(1),
+  baseRevision: z.string().nullable(),
+  theme: z.enum(CAPTION_THEME_IDS),
+  cues: z.array(captionCueInput).max(MAX_CAPTION_CUES),
 });
 
 export async function loadAgentVideoContext(
@@ -305,6 +325,7 @@ export class VideoClipAgent extends Think<Env> {
       "If transcript preparation fails after a transcript tool is called, explain the returned error without claiming the user must create a clip first. If an available transcript has no matches, say the phrase or idea was not found. Do not propose clips for any empty result.",
       "If transcript search reports truncated results, clearly say that only the returned matches were proposed.",
       "Use 1080p unless the user asks for 720p. Add a caption only when requested. If no title is supplied, make a concise title from the video title and timestamp range.",
+      "When the user asks to edit timed captions for a completed clip, call readCaptionTrack first, then call proposeCaptionTrack with that exact clipId and baseRevision. The proposal opens as an unsaved Think suggestion in the caption editor. Never claim it was saved or rendered; only the user can do either action.",
       "If either timestamp is missing or ambiguous, ask one short clarifying question. Never invent a missing timestamp.",
       "After createClip succeeds, say that the clip was queued. If the user rejects it, acknowledge that nothing was created.",
       "Write responses as short plain text. Do not use Markdown formatting.",
@@ -320,6 +341,8 @@ export class VideoClipAgent extends Think<Env> {
         "checkTranscriptAvailability",
         "searchTranscript",
         "findTranscriptMoments",
+        "readCaptionTrack",
+        "proposeCaptionTrack",
         "createClip",
       ],
       temperature: 0,
@@ -401,6 +424,25 @@ export class VideoClipAgent extends Think<Env> {
         inputSchema: semanticTranscriptInput,
         execute: async (input) =>
           findSemanticTranscriptMoments(this.env, this.name, input),
+      }),
+      readCaptionTrack: tool({
+        description:
+          "Read the current editable timed caption track, revision, theme, render state, and clip-relative cue timings for one completed clip in this video.",
+        inputSchema: z.object({ clipId: z.string().trim().min(1) }),
+        execute: async ({ clipId }) => {
+          try {
+            return await viewCaptionTrackForVideo(this.env, this.name, clipId);
+          } catch (error) {
+            return {
+              error: error instanceof Error ? error.message : "Caption track unavailable",
+            };
+          }
+        },
+      }),
+      proposeCaptionTrack: tool({
+        description:
+          "Place a validated timed-caption suggestion into Carpo's existing editor for explicit human review. This does not save or render captions.",
+        inputSchema: captionTrackProposalInput,
       }),
       createClip: tool({
         description:

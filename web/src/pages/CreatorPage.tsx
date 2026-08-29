@@ -1,16 +1,21 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getSourceVideo, getVideoTranscript } from "../api";
+import {
+  getSourceVideo,
+  getVideoTranscript,
+  validateCaptionTrackProposal,
+} from "../api";
 import { createClipProposalReview } from "../create-clip-proposal-review";
 import { CreatorForm } from "../components/CreatorForm";
 import { StatusPanel } from "../components/StatusPanel";
 import { VideoAgentChat } from "../components/VideoAgentChat";
+import { CaptionEditorModal } from "../components/CaptionEditorModal";
 import {
   CLIPS_QUERY_KEY,
   sourceVideoQueryKey,
   SOURCE_VIDEOS_QUERY_KEY,
 } from "../queries";
 import { useSearchParams } from "react-router-dom";
-import { useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useWebMcpClipTools } from "../hooks/useWebMcpClipTools";
 import {
   getOwnedUploadClipJourneyView,
@@ -24,6 +29,11 @@ import type {
   TimestampWindow,
 } from "../timestamp-windows";
 import { toExistingClipRanges } from "../timeline";
+import type {
+  CaptionTrackProposal,
+  CaptionTrackProposalInput,
+  ClipResponse,
+} from "../types";
 
 export function CreatorPage() {
   const queryClient = useQueryClient();
@@ -37,6 +47,10 @@ export function CreatorPage() {
   const [proposalReview] = useState(createClipProposalReview);
   const [clipWindowRequest, setClipWindowRequest] =
     useState<ClipWindowRequest | null>(null);
+  const [captionReview, setCaptionReview] = useState<{
+    clip: ClipResponse;
+    proposal: CaptionTrackProposal;
+  } | null>(null);
   const { data: sourceVideoData } = useQuery({
     queryKey: sourceVideoQueryKey(videoId),
     queryFn: () => getSourceVideo(videoId),
@@ -91,11 +105,36 @@ export function CreatorPage() {
       sourceVideoId: videoId || null,
     });
   }, [videoId]);
+  const openCaptionProposal = useCallback(
+    async (
+      input: CaptionTrackProposalInput,
+      source: "think" | "webmcp" = "think",
+    ) => {
+      const clip = sourceVideoData?.clips.find(
+        (candidate) => candidate.id === input.clipId,
+      );
+      if (!clip || clip.status !== "complete") {
+        throw new Error("Choose a completed clip from the current video");
+      }
+      const proposal = await validateCaptionTrackProposal(clip.id, {
+        source,
+        baseRevision: input.baseRevision,
+        cues: input.cues,
+        theme: input.theme,
+      });
+      setCaptionReview({ clip, proposal });
+      return proposal;
+    },
+    [sourceVideoData?.clips],
+  );
+
   useWebMcpClipTools({
     video: activeVideo,
+    clips: sourceVideoData?.clips ?? [],
     transcript,
     transcriptError: transcriptError?.message ?? null,
     review: proposalReview,
+    onCaptionProposal: (input) => openCaptionProposal(input, "webmcp"),
   });
 
   const handleClipCreated = (clip: OwnedUploadClipReference) => {
@@ -146,6 +185,7 @@ export function CreatorPage() {
         onTimestampSelect={handleTimestampSelect}
         existingClips={existingClips}
         proposalReview={proposalReview}
+        onCaptionProposal={openCaptionProposal}
       />
       <StatusPanel
         excludeVideoId={
@@ -155,6 +195,13 @@ export function CreatorPage() {
           activeVideo?.source.type === "youtube" ? videoId : undefined
         }
       />
+      {captionReview && (
+        <CaptionEditorModal
+          clip={captionReview.clip}
+          initialProposal={captionReview.proposal}
+          onClose={() => setCaptionReview(null)}
+        />
+      )}
     </main>
   );
 }

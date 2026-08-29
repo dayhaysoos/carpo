@@ -2496,6 +2496,173 @@ function runEncoderCaptionContract(fixturePath: string, frameCounterPath: string
   }
 }
 
+function runEncoderTimedCaptionContract(fixturePath: string) {
+  const timedOutputDir = path.join(outputDir, "timed-caption-contract");
+  fs.rmSync(timedOutputDir, { recursive: true, force: true });
+  fs.mkdirSync(timedOutputDir, { recursive: true });
+  const jobs = [
+    { label: "baseline", theme: "classic", cues: [] },
+    {
+      label: "classic",
+      theme: "classic",
+      cues: [
+        {
+          id: "cue-1",
+          startSeconds: 1,
+          endSeconds: 2.5,
+          text: "It's 50% off: now!",
+        },
+      ],
+    },
+    {
+      label: "box",
+      theme: "high-contrast-box",
+      cues: [
+        {
+          id: "cue-1",
+          startSeconds: 1,
+          endSeconds: 2.5,
+          text: "It's 50% off: now!",
+        },
+      ],
+    },
+    {
+      label: "yellow",
+      theme: "bold-yellow",
+      cues: [
+        {
+          id: "cue-1",
+          startSeconds: 1,
+          endSeconds: 2.5,
+          text: "It's 50% off: now!",
+        },
+      ],
+    },
+  ] as const;
+  const jobFiles = jobs.map((job) => {
+    const jobPath = path.join(timedOutputDir, `${job.label}.json`);
+    fs.writeFileSync(
+      jobPath,
+      JSON.stringify({
+        jobId: `timed-caption-${job.label}`,
+        jobType: "captioned",
+        renderId: `render-${job.label}`,
+        sourceMp4Key: "fixture",
+        source: { type: "file", path: "/fixture/bars.mp4" },
+        cues: job.cues,
+        theme: job.theme,
+        outputs: { captionedMp4Key: `${job.label}.mp4` },
+        localOutputDir: "/output",
+      }),
+    );
+    return { ...job, jobPath };
+  });
+
+  const timedContainer = `${containerName}-timed-caption`;
+  run("docker", ["rm", "-f", timedContainer]);
+  run("docker", [
+    "run",
+    "-d",
+    "--name",
+    timedContainer,
+    "-p",
+    "18082:8080",
+    "-v",
+    `${fixturePath}:/fixture/bars.mp4:ro`,
+    "-v",
+    `${timedOutputDir}:/output`,
+    imageName,
+  ]);
+
+  try {
+    waitForHealth(18082);
+    for (const job of jobFiles) {
+      const encode = spawnSync(
+        "curl",
+        [
+          "-fsS",
+          "-X",
+          "POST",
+          "http://127.0.0.1:18082/run",
+          "-H",
+          "Content-Type: application/json",
+          "-d",
+          `@${job.jobPath}`,
+        ],
+        { encoding: "utf-8" },
+      );
+      if (encode.status !== 0) {
+        throw new Error(
+          `${job.label} timed-caption encode failed\n${encode.stderr}\n${run("docker", ["logs", timedContainer])}`,
+        );
+      }
+      const result = JSON.parse(encode.stdout) as {
+        status: string;
+        errorMessage?: string;
+      };
+      if (result.status !== "complete") {
+        throw new Error(
+          `${job.label} timed-caption encoder returned ${result.status}: ${result.errorMessage ?? "unknown error"}`,
+        );
+      }
+      fs.renameSync(
+        path.join(timedOutputDir, "captioned.mp4"),
+        path.join(timedOutputDir, `${job.label}.mp4`),
+      );
+    }
+
+    const baselineInactive = readFrameRgbBuffer(
+      path.join(timedOutputDir, "baseline.mp4"),
+      15,
+    );
+    const baselineActive = readFrameRgbBuffer(
+      path.join(timedOutputDir, "baseline.mp4"),
+      45,
+    );
+    const activeFrames = ["classic", "box", "yellow"].map((label) => ({
+      label,
+      frame: readFrameRgbBuffer(path.join(timedOutputDir, `${label}.mp4`), 45),
+      inactive: readFrameRgbBuffer(
+        path.join(timedOutputDir, `${label}.mp4`),
+        15,
+      ),
+    }));
+    for (const result of activeFrames) {
+      const activeDifferences = countPixelDifferences(
+        baselineActive,
+        result.frame,
+      );
+      if (activeDifferences < 100) {
+        throw new Error(
+          `${result.label} timed caption was not visible during its cue (${activeDifferences} differing bytes)`,
+        );
+      }
+      const inactiveDifferences = countPixelDifferences(
+        baselineInactive,
+        result.inactive,
+      );
+      if (inactiveDifferences > 100) {
+        throw new Error(
+          `${result.label} timed caption changed pixels before its cue (${inactiveDifferences} differing bytes)`,
+        );
+      }
+    }
+    if (
+      countPixelDifferences(activeFrames[0].frame, activeFrames[1].frame) < 100 ||
+      countPixelDifferences(activeFrames[1].frame, activeFrames[2].frame) < 100
+    ) {
+      throw new Error("Timed caption themes did not produce distinct frames");
+    }
+    const logs = run("docker", ["logs", timedContainer]);
+    if (!logs.includes("between(t\\,1.000\\,2.500)")) {
+      throw new Error("Encoder logs did not show the cue timing expression");
+    }
+    console.log("Encoder timed-caption contract test passed");
+  } finally {
+    run("docker", ["rm", "-f", timedContainer]);
+  }
+}
+
 function runEncoderContract(fixturePath: string, frameCounterPath: string) {
   fs.rmSync(outputDir, { recursive: true, force: true });
   fs.mkdirSync(outputDir, { recursive: true });
@@ -3473,6 +3640,7 @@ function main() {
   runRetainedYoutubeSourceContract(frameCounterPath);
   runEncoderUploadContract(frameCounterPath);
   runEncoderCaptionContract(barsPath, frameCounterPath);
+  runEncoderTimedCaptionContract(barsPath);
 }
 
 main();

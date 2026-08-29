@@ -10,7 +10,11 @@ import {
 import { createClipProposalReview } from "../create-clip-proposal-review";
 import { useClipProposalReview } from "../hooks/useClipProposalReview";
 import { extractThinkClipProposalSubmissions } from "../think-clip-proposals";
-import type { ClipSource } from "../types";
+import type {
+  CaptionTrackProposal,
+  CaptionTrackProposalInput,
+  ClipSource,
+} from "../types";
 import {
   extractTimestampEntities,
   type TimestampEntity,
@@ -28,6 +32,9 @@ interface VideoAgentChatProps {
   onTimestampSelect: (window: TimestampWindow) => void;
   existingClips?: ExistingClipRange[];
   proposalReview?: ClipProposalReview;
+  onCaptionProposal?: (
+    input: CaptionTrackProposalInput,
+  ) => Promise<CaptionTrackProposal>;
 }
 
 const DEFAULT_TIMESTAMP_WINDOW_SECONDS = 10;
@@ -107,12 +114,14 @@ function ConnectedVideoAgentChat({
   onTimestampSelect,
   existingClips = EMPTY_EXISTING_CLIPS,
   proposalReview,
+  onCaptionProposal,
 }: Omit<VideoAgentChatProps, "proposalReview"> & {
   proposalReview: ClipProposalReview;
 }) {
   const [input, setInput] = useState("");
   const [connected, setConnected] = useState(false);
   const lastAutoAppliedTimestamp = useRef<string | null>(null);
+  const handledCaptionToolCalls = useRef(new Set<string>());
   const endRef = useRef<HTMLDivElement>(null);
 
   const agent = useAgent({
@@ -163,6 +172,50 @@ function ConnectedVideoAgentChat({
       }
     }
   }, [proposalReview, thinkSubmissions, working]);
+
+  useEffect(() => {
+    if (working || !onCaptionProposal) return;
+    for (const message of chatMessages) {
+      for (const part of message.parts) {
+        if (
+          !isToolUIPart(part) ||
+          getToolName(part) !== "proposeCaptionTrack" ||
+          part.state !== "input-available" ||
+          handledCaptionToolCalls.current.has(part.toolCallId)
+        ) {
+          continue;
+        }
+        const input = part.input as CaptionTrackProposalInput;
+        handledCaptionToolCalls.current.add(part.toolCallId);
+        void onCaptionProposal(input)
+          .then((proposal) =>
+            addToolOutput({
+              toolCallId: part.toolCallId,
+              output: {
+                status: "ready-for-review",
+                source: proposal.source,
+                clipId: input.clipId,
+                cueCount: proposal.cues.length,
+                saved: false,
+                rendered: false,
+              },
+            }),
+          )
+          .catch((error: unknown) =>
+            addToolOutput({
+              toolCallId: part.toolCallId,
+              output: {
+                status: "invalid",
+                reason:
+                  error instanceof Error
+                    ? error.message
+                    : "Caption proposal could not be opened",
+              },
+            }),
+          );
+      }
+    }
+  }, [addToolOutput, chatMessages, onCaptionProposal, working]);
 
   useEffect(() => {
     const entity = timestampEntities.at(-1);
@@ -236,6 +289,14 @@ function ConnectedVideoAgentChat({
               {message.parts.map((part) => {
                 if (!isToolUIPart(part)) return null;
                 const toolName = getToolName(part);
+                if (toolName === "proposeCaptionTrack") {
+                  return part.state === "input-available" ||
+                    part.state === "input-streaming" ? (
+                    <div key={part.toolCallId} className="agent-tool-status">
+                      Opening a caption draft for review…
+                    </div>
+                  ) : null;
+                }
                 if (toolName !== "createClip") {
                   return part.state === "input-available" ||
                     part.state === "input-streaming" ? (

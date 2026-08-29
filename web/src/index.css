@@ -2173,6 +2173,33 @@ textarea {
   text-shadow: 0 2px 4px #000, 0 0 8px #000;
 }
 
+.caption-theme-high-contrast-box {
+  background: rgb(0 0 0 / 88%);
+  text-shadow: none;
+}
+
+.caption-theme-bold-yellow {
+  padding-inline: 0;
+  color: #ffe500;
+  font-size: clamp(1rem, 2.4vw, 1.5rem);
+  text-shadow: 0 2px 3px #000, 1px 0 2px #000, -1px 0 2px #000;
+}
+
+.caption-proposal-notice {
+  display: grid;
+  gap: 0.2rem;
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border-radius: var(--radius-sm);
+  background: var(--accent-glow);
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.caption-proposal-notice strong {
+  color: var(--text);
+}
+
 .caption-track-origin {
   max-width: 64ch;
   margin-top: 0.75rem;
@@ -2188,6 +2215,30 @@ textarea {
   color: var(--text-muted);
   font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
+}
+
+.caption-theme-field {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.75rem;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.caption-theme-field select {
+  width: 100%;
+  padding: 0.55rem 0.625rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.caption-theme-field select:focus {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
 .caption-cue-column {
@@ -2301,11 +2352,22 @@ textarea {
 
 .caption-editor-footer {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 0.625rem;
   margin-top: 1.25rem;
   padding-top: 1rem;
   border-top: 1px solid var(--border);
+}
+
+.caption-export-actions,
+.caption-save-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.625rem;
+}
+
+.caption-save-actions {
+  justify-content: flex-end;
 }
 
 .caption-editor-footer .btn-primary,
@@ -2340,7 +2402,13 @@ textarea {
 
   .caption-editor-footer {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
+  }
+
+  .caption-export-actions,
+  .caption-save-actions {
+    display: grid;
+    grid-template-columns: 1fr;
   }
 
   .caption-editor-footer .btn-primary,

@@ -13,7 +13,15 @@ import {
   markSourceVideoRetainedSourceImporting,
   markSourceVideoRetainedSourceReady,
 } from "../src/db";
-import type { EncoderJobSpec, GifEncoderJobSpec } from "../src/types";
+import {
+  completeCaptionRender,
+  failCaptionRender,
+} from "../src/caption-tracks";
+import type {
+  CaptionRenderEncoderJobSpec,
+  EncoderJobSpec,
+  GifEncoderJobSpec,
+} from "../src/types";
 import { youtubeRetainedSourceKey } from "../src/source-videos";
 
 const FAKE_MP4 = new Uint8Array([
@@ -429,14 +437,25 @@ export class EncoderStub extends DurableObject<Env> {
       return this.runQueuedGifRun(job);
     }
 
+    if (url.pathname === "/__carpo/caption-run") {
+      const job = (await request.json()) as CaptionRenderEncoderJobSpec;
+      return this.runQueuedCaptionRun(job);
+    }
+
     if (url.pathname !== "/run") {
       return new Response("not found", { status: 404 });
     }
 
-    const job = (await request.json()) as EncoderJobSpec | GifEncoderJobSpec;
-    if ("jobType" in job && job.jobType === "gif") {
+    const job = (await request.json()) as
+      | EncoderJobSpec
+      | GifEncoderJobSpec
+      | CaptionRenderEncoderJobSpec;
+    if ("jobType" in job) {
       return Response.json(
-        { status: "failed", errorMessage: "GIF jobs must use /__carpo/gif-run" },
+        {
+          status: "failed",
+          errorMessage: "Derivative jobs must use their dedicated endpoint",
+        },
         { status: 400 },
       );
     }
@@ -472,6 +491,12 @@ export class EncoderStub extends DurableObject<Env> {
 
   private async runQueuedGifRun(job: GifEncoderJobSpec): Promise<Response> {
     return this.enqueueJob(() => this.handleGifRun(job));
+  }
+
+  private async runQueuedCaptionRun(
+    job: CaptionRenderEncoderJobSpec,
+  ): Promise<Response> {
+    return this.enqueueJob(() => this.handleCaptionRun(job));
   }
 
   private async runQueuedJob(work: () => Promise<Response>): Promise<Response> {
@@ -690,6 +715,57 @@ export class EncoderStub extends DurableObject<Env> {
         return Response.json({
           status: "complete",
           outputs: { gifKey: job.outputs.gifKey },
+        });
+      } finally {
+        this.cleanupJob(job.jobId);
+      }
+    });
+  }
+
+  private async handleCaptionRun(
+    job: CaptionRenderEncoderJobSpec,
+  ): Promise<Response> {
+    return this.withRunSlot(async () => {
+      const source = await this.env.CLIPS_BUCKET.get(job.sourceMp4Key);
+      if (!source) {
+        await failCaptionRender(
+          this.env,
+          job.jobId,
+          job.renderId,
+          "Clip MP4 output not found",
+        );
+        return Response.json(
+          { status: "failed", errorMessage: "Clip MP4 output not found" },
+          { status: 500 },
+        );
+      }
+      this.stageSource(job.jobId);
+      this.prepareJobWorkspace(job.jobId);
+      try {
+        await this.env.CLIPS_BUCKET.put(
+          job.outputs.captionedMp4Key,
+          FAKE_MP4,
+          { httpMetadata: { contentType: "video/mp4" } },
+        );
+        const accepted = await completeCaptionRender(
+          this.env,
+          job.jobId,
+          job.renderId,
+          job.outputs.captionedMp4Key,
+        );
+        if (!accepted) {
+          await this.env.CLIPS_BUCKET.delete(job.outputs.captionedMp4Key);
+          return Response.json(
+            {
+              status: "failed",
+              errorMessage: "Caption track changed before rendering completed",
+            },
+            { status: 409 },
+          );
+        }
+        return Response.json({
+          status: "complete",
+          outputs: { captionedMp4Key: job.outputs.captionedMp4Key },
         });
       } finally {
         this.cleanupJob(job.jobId);

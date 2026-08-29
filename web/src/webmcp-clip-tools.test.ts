@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { ClipProposalReview } from "./clip-proposal-review";
 import type {
+  ClipResponse,
   SourceVideoResponse,
   TranscriptDocumentResponse,
 } from "./types";
@@ -57,6 +58,25 @@ const transcript: TranscriptDocumentResponse = {
   ],
 };
 
+const completedClip: ClipResponse = {
+  id: "clip-1",
+  videoId: video.id,
+  title: "Opening",
+  source: video.source,
+  trimStart: 4,
+  trimEnd: 9,
+  quality: "1080p",
+  caption: null,
+  filters: [],
+  status: "complete",
+  errorMessage: null,
+  gifStatus: "none",
+  gifErrorMessage: null,
+  outputs: { mp4: "/artifacts/clips/clip-1/clip.mp4", thumbnail: null, gif: null },
+  createdAt: video.createdAt,
+  updatedAt: video.updatedAt,
+};
+
 function workspace() {
   const create = vi.fn();
   const review = new ClipProposalReview({ create });
@@ -66,6 +86,7 @@ function workspace() {
     transcript,
     transcriptError: null,
     review,
+    clips: [completedClip],
   };
   const tools = new Map(
     createCarpoWebMcpTools(() => state).map((tool) => [tool.name, tool]),
@@ -204,6 +225,46 @@ describe("Carpo WebMCP clip tools", () => {
         },
       ],
     });
+  });
+
+  it("places a WebMCP caption proposal into human review without saving or rendering", async () => {
+    const { state, tools } = workspace();
+    const onCaptionProposal = vi.fn(async (input) => ({
+      source: "webmcp" as const,
+      baseRevision: input.baseRevision,
+      theme: input.theme,
+      cues: input.cues,
+    }));
+    state.onCaptionProposal = onCaptionProposal;
+
+    const result = await requiredTool(tools, "proposeCaptionTrack").execute({
+      clipId: completedClip.id,
+      baseRevision: "revision-1",
+      theme: "high-contrast-box",
+      cues: [
+        {
+          id: "cue-1",
+          startSeconds: 0,
+          endSeconds: 2,
+          text: "Agent draft",
+        },
+      ],
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      status: "ready-for-review",
+      source: "webmcp",
+      saved: false,
+      rendered: false,
+    });
+    expect(onCaptionProposal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clipId: completedClip.id,
+        baseRevision: "revision-1",
+        theme: "high-contrast-box",
+      }),
+    );
   });
 
   it("preserves a user's manual correction when an idempotent request is retried", async () => {

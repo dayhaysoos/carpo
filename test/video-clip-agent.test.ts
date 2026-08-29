@@ -151,6 +151,58 @@ describe("VideoClipAgent context", () => {
     );
   });
 
+  it("reads a clip caption track but leaves caption proposals to client review", async () => {
+    const videoId = crypto.randomUUID();
+    const clipId = crypto.randomUUID();
+    const sourceRef = `uploads/legacy/${videoId}.mp4`;
+    await env.DB.prepare(
+      `INSERT INTO source_videos (
+         id, owner_id, source_type, source_ref, title, transcript_status
+       ) VALUES (?, 'legacy', 'upload', ?, 'Caption agent video', 'available')`,
+    )
+      .bind(videoId, sourceRef)
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO clips (
+         id, owner_id, title, source_type, source_ref, trim_start, trim_end,
+         status, callback_secret, video_id, output_mp4_key
+       ) VALUES (?, 'legacy', 'Caption agent clip', 'upload', ?, 0, 5,
+         'complete', 'secret', ?, ?)`,
+    )
+      .bind(clipId, sourceRef, videoId, `clips/${clipId}/clip.mp4`)
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO caption_tracks (clip_id, cues_json, revision)
+       VALUES (?, ?, 'caption-revision')`,
+    )
+      .bind(
+        clipId,
+        JSON.stringify([
+          { id: "cue-1", startSeconds: 0, endSeconds: 2, text: "Review me" },
+        ]),
+      )
+      .run();
+
+    const agent = { env, name: videoId } as unknown as VideoClipAgent;
+    const tools = VideoClipAgent.prototype.getTools.call(agent);
+    const execute = tools.readCaptionTrack.execute;
+    if (!execute) throw new Error("readCaptionTrack tool has no execute function");
+    await expect(
+      execute(
+        { clipId },
+        { toolCallId: "read-caption-track", messages: [] },
+      ),
+    ).resolves.toMatchObject({
+      captionStatus: "available",
+      revision: "caption-revision",
+      cues: [expect.objectContaining({ text: "Review me" })],
+    });
+    expect(tools.proposeCaptionTrack.execute).toBeUndefined();
+    expect(VideoClipAgent.prototype.getSystemPrompt.call(agent)).toContain(
+      "Never claim it was saved or rendered",
+    );
+  });
+
   it("grounds semantic clip proposals in real transcript block ids", async () => {
     const videoId = crypto.randomUUID();
     await env.DB.prepare(

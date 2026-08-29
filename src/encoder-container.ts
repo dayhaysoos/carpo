@@ -20,10 +20,15 @@ import {
   markSourceVideoRetainedSourceReady,
 } from "./db";
 import type {
+  CaptionRenderEncoderJobSpec,
   EncoderJobSpec,
   GifEncoderJobSpec,
   SourceVideoRecord,
 } from "./types";
+import {
+  completeCaptionRender,
+  failCaptionRender,
+} from "./caption-tracks";
 import { UPLOAD_KEY_PREFIX } from "./uploads";
 import {
   isYoutubeRetainedSourceKey,
@@ -33,9 +38,15 @@ import {
 type RunJobSpec = Omit<EncoderJobSpec, "source"> & {
   deferArtifactUpload?: boolean;
   source?: EncoderJobSpec["source"] | { type: "file"; path: string };
-  jobType?: "gif";
+  jobType?: "gif" | "captioned";
+  renderId?: string;
+  cues?: CaptionRenderEncoderJobSpec["cues"];
+  theme?: CaptionRenderEncoderJobSpec["theme"];
   sourceMp4Key?: string;
-  outputs?: EncoderJobSpec["outputs"] | GifEncoderJobSpec["outputs"];
+  outputs?:
+    | EncoderJobSpec["outputs"]
+    | GifEncoderJobSpec["outputs"]
+    | CaptionRenderEncoderJobSpec["outputs"];
 };
 
 // Hard ceiling for stale queue keepalive. If the worker isolate dies
@@ -206,6 +217,18 @@ export class EncoderContainer extends Container<Env> {
       } catch {
         return Response.json(
           { status: "failed", errorMessage: "Invalid GIF job payload" },
+          { status: 400 },
+        );
+      }
+    }
+
+    if (url.pathname === "/__carpo/caption-run" && request.method === "POST") {
+      try {
+        const job = (await request.json()) as RunJobSpec;
+        return await this.handleCaptionRun(job);
+      } catch {
+        return Response.json(
+          { status: "failed", errorMessage: "Invalid caption job payload" },
           { status: 400 },
         );
       }
@@ -934,6 +957,130 @@ export class EncoderContainer extends Container<Env> {
     }
   }
 
+  private async handleCaptionRun(job: RunJobSpec): Promise<Response> {
+    const sourceMp4Key = job.sourceMp4Key;
+    const outputs = job.outputs as
+      | CaptionRenderEncoderJobSpec["outputs"]
+      | undefined;
+    if (
+      !sourceMp4Key ||
+      !outputs?.captionedMp4Key ||
+      !job.renderId ||
+      !job.cues ||
+      !job.theme
+    ) {
+      return Response.json(
+        {
+          status: "failed",
+          errorMessage: "Caption job is missing source, track, theme, or outputs",
+        },
+        { status: 400 },
+      );
+    }
+
+    const jobId = sanitizeJobId(job.jobId);
+    const renderId = job.renderId;
+    const cues = job.cues;
+    const theme = job.theme;
+    await this.incrementQueueDepth();
+    try {
+      return await this.enqueueJob(async () => {
+        const stopKeepalive = this.startJobKeepalive();
+        try {
+          await this.ctx.storage.put("jobStartedAt", Date.now());
+          const staged = await this.stageMp4Output(sourceMp4Key, jobId);
+          if (!staged.ok) {
+            await failCaptionRender(this.env, job.jobId, renderId, staged.error);
+            return Response.json(
+              { status: "failed", errorMessage: staged.error },
+              { status: 500 },
+            );
+          }
+
+          const captionJob: CaptionRenderEncoderJobSpec = {
+            jobId: job.jobId,
+            jobType: "captioned",
+            renderId,
+            sourceMp4Key,
+            source: { type: "file", path: stagedSourcePath(jobId) },
+            cues,
+            theme,
+            outputs,
+            deferArtifactUpload: true,
+          };
+          const response = await super.fetch(
+            new Request("http://encoder/run", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(captionJob),
+            }),
+          );
+          let result: { status?: string; errorMessage?: string };
+          try {
+            result = (await response.json()) as typeof result;
+          } catch {
+            const message = `Caption encoder returned an unreadable response (${response.status})`;
+            await failCaptionRender(this.env, job.jobId, renderId, message);
+            return Response.json(
+              { status: "failed", errorMessage: message },
+              { status: 500 },
+            );
+          }
+          if (result.status !== "staged" && result.status !== "complete") {
+            const message = result.errorMessage ?? "Caption encoding failed";
+            await failCaptionRender(this.env, job.jobId, renderId, message);
+            return Response.json(result, { status: response.status });
+          }
+
+          try {
+            await this.uploadDeferredCaptionedMp4(
+              outputs.captionedMp4Key,
+              jobId,
+            );
+          } catch (error) {
+            await this.env.CLIPS_BUCKET.delete(outputs.captionedMp4Key);
+            const message =
+              error instanceof Error
+                ? error.message
+                : "Failed to upload captioned MP4";
+            await failCaptionRender(this.env, job.jobId, renderId, message);
+            return Response.json(
+              { status: "failed", errorMessage: message },
+              { status: 500 },
+            );
+          }
+
+          const accepted = await completeCaptionRender(
+            this.env,
+            job.jobId,
+            renderId,
+            outputs.captionedMp4Key,
+          );
+          if (!accepted) {
+            await this.env.CLIPS_BUCKET.delete(outputs.captionedMp4Key);
+            return Response.json(
+              {
+                status: "failed",
+                errorMessage: "Caption track changed before rendering completed",
+              },
+              { status: 409 },
+            );
+          }
+          return Response.json({
+            status: "complete",
+            outputs: { captionedMp4Key: outputs.captionedMp4Key },
+          });
+        } finally {
+          stopKeepalive();
+          await this.ctx.storage.delete("jobStartedAt");
+          await this.cleanupJobFiles(jobId);
+        }
+      });
+    } finally {
+      await this.decrementQueueDepth();
+    }
+  }
+
   private async stageMp4Output(
     mp4Key: string,
     jobId: string,
@@ -993,6 +1140,24 @@ export class EncoderContainer extends Container<Env> {
     const head = await this.env.CLIPS_BUCKET.head(gifKey);
     if (!head) {
       throw new Error("GIF artifact was not durably stored in R2");
+    }
+  }
+
+  private async uploadDeferredCaptionedMp4(
+    key: string,
+    jobId: string,
+  ): Promise<void> {
+    const response = await super.fetch(
+      new Request(jobOutputUrl(jobId, "captioned.mp4")),
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to read captioned MP4 (${response.status})`);
+    }
+    await this.env.CLIPS_BUCKET.put(key, response.body, {
+      httpMetadata: { contentType: "video/mp4" },
+    });
+    if (!(await this.env.CLIPS_BUCKET.head(key))) {
+      throw new Error("Captioned MP4 was not durably stored in R2");
     }
   }
 
