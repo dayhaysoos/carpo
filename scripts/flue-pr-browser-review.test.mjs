@@ -243,6 +243,9 @@ describe("bounded Flue browser review", () => {
       },
       async evaluate(_fn, input) {
         if (input?.allowedNames) {
+          assert.ok(input.knownNames.includes("readCaptionTrack"));
+          assert.ok(input.knownNames.includes("proposeCaptionTrack"));
+          assert.ok(input.knownNames.includes("searchPrivateLibrary"));
           const names = currentUrl.includes(`?video=${videoId}`)
             ? input.allowedNames
             : ["getCarpoInstructions"];

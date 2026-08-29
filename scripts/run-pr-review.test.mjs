@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
+import { promisify } from "node:util";
 import {
   assembleVisualComparison,
   attachAgenticReview,
@@ -15,6 +17,12 @@ import {
   resolveProofChallenge,
   selectProofChallenge,
 } from "./pr-review-proof-challenges.mjs";
+import {
+  admitPreappliedReviewMigrations,
+  reviewMigrationChanges,
+} from "./pr-review-migration-policy.mjs";
+
+const execFileAsync = promisify(execFile);
 
 describe("backend-neutral PR review runner", () => {
   it("installs exact workspace dependencies before Actions invokes the runner", async () => {
@@ -41,6 +49,43 @@ describe("backend-neutral PR review runner", () => {
 
     assert.match(workflow, /permissions:\s+contents: read\s+pull-requests: read/);
     assert.doesNotMatch(workflow, /pull-requests: write/);
+  });
+
+  it("allowlists the isolated review Vectorize index and rejects production", async () => {
+    const repositoryRoot = new URL("../", import.meta.url);
+    const validator = new URL("./validate-pr-review-config.mjs", import.meta.url);
+    await execFileAsync(process.execPath, [validator.pathname], {
+      cwd: repositoryRoot,
+    });
+
+    const temporaryRoot = await mkdtemp(
+      path.join(os.tmpdir(), "carpo-review-config-test-"),
+    );
+    const unsafeConfigPath = path.join(temporaryRoot, "wrangler.jsonc");
+    try {
+      const config = await readFile(
+        new URL("../wrangler.jsonc", import.meta.url),
+        "utf8",
+      );
+      await writeFile(
+        unsafeConfigPath,
+        config.replace(
+          '"carpo-library-transcripts-pr-review"',
+          '"carpo-library-transcripts"',
+        ),
+      );
+      await assert.rejects(
+        execFileAsync(process.execPath, [validator.pathname, unsafeConfigPath], {
+          cwd: repositoryRoot,
+        }),
+        (error) => {
+          assert.match(error.stderr, /Vectorize index is not allowlisted/);
+          return true;
+        },
+      );
+    } finally {
+      await rm(temporaryRoot, { recursive: true, force: true });
+    }
   });
 
   it("creates an allowlisted manual execution identity", () => {
@@ -76,6 +121,65 @@ describe("backend-neutral PR review runner", () => {
     assert.equal(resolveLeaseWaitMs("900000"), 900_000);
     assert.throws(() => resolveLeaseWaitMs("900001"), /cannot exceed/);
     assert.throws(() => resolveLeaseWaitMs("later"), /milliseconds/);
+  });
+
+  it("admits only newly added D1 migrations already applied to review", async () => {
+    const files = [
+      { path: "migrations/0019_private_library_discovery.sql", status: "A" },
+      { path: "src/library-discovery.ts", status: "A" },
+    ];
+    assert.deepEqual(reviewMigrationChanges(files), {
+      status: "requires-preapplied",
+      names: ["0019_private_library_discovery.sql"],
+    });
+    assert.deepEqual(
+      await admitPreappliedReviewMigrations(files, {
+        readAppliedMigrationNames: async () => [
+          "0018_complete_caption_tracks.sql",
+          "0019_private_library_discovery.sql",
+        ],
+      }),
+      {
+        status: "preapplied",
+        names: ["0019_private_library_discovery.sql"],
+      },
+    );
+  });
+
+  it("fails closed for unapplied or rewritten review migrations", async () => {
+    const added = [
+      { path: "migrations/0020_new_search_state.sql", status: "A" },
+    ];
+    await assert.rejects(
+      admitPreappliedReviewMigrations(added, {
+        readAppliedMigrationNames: async () => [],
+      }),
+      /to be pre-applied.*0020_new_search_state\.sql/,
+    );
+    await assert.rejects(
+      admitPreappliedReviewMigrations(added, {
+        readAppliedMigrationNames: async () => ({
+          name: "0020_new_search_state.sql",
+        }),
+      }),
+      /invalid migration state/,
+    );
+    for (const status of ["M", "D"]) {
+      assert.throws(
+        () =>
+          reviewMigrationChanges([
+            { path: "migrations/0019_private_library_discovery.sql", status },
+          ]),
+        /only accepts newly added/,
+      );
+    }
+    assert.throws(
+      () =>
+        reviewMigrationChanges([
+          { path: "migrations/notes.md", status: "A" },
+        ]),
+      /top-level D1 migration files/,
+    );
   });
 
   it("rejects execution sources outside the Carpo repository", () => {

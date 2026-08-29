@@ -22,7 +22,7 @@ When a pull request is opened or updated, GitHub Actions normally invokes the ru
 1. The thin trigger adapter freezes the PR's base and head SHAs, then acquires one owner-scoped, expiring lease with a per-process fencing token by the hardcoded review-database ID before it rotates a credential or deploys anything. Reusing an execution ID cannot re-enter the lease. The runner never resolves that first mutation through a candidate-controlled Wrangler binding. Actions concurrency still cancels superseded Actions runs, while the D1 lease serializes Actions and local/manual triggers together without making GitHub Actions a dependency.
 2. It checks out the exact head and verifies that the live PR still names both commits. The manual adapter creates a temporary detached worktree so ambient local changes cannot enter the candidate.
 3. It snapshots the PR title, body, comments, commits, an exact PR-style merge-base-to-head `git diff` and changed-file list derived from the frozen base/head pair, and up to 20 linked closing issues with up to 50 comments per issue.
-4. A hardcoded allowlist proves every mutable Cloudflare binding still names the isolated review resources, migration-changing candidates are rejected before mutation, and the normal test and build commands run.
+4. A hardcoded allowlist proves every mutable Cloudflare binding still names the isolated review resources. Added top-level D1 migrations must already be recorded in the isolated review database; rewritten or otherwise unsafe migration changes are rejected before candidate mutation. The normal test and build commands then run.
 5. The candidate is deployed to one isolated Cloudflare environment named `pr-review`, with the exact head SHA attached as its Worker version tag.
 6. When the exact changed-path map contains `web/` files and the frozen base contains the review harness, the runner deploys that base first and captures advisory "Before" screenshots. It then deploys the exact head and repeats the same selected steps at the same `1440×1000` viewport for "After" screenshots. A base that predates the harness is reported explicitly as after-only evidence rather than being approximated.
 7. A Cloudflare Browser Run session authenticates to each selected deployment, proves the observed Worker tag matches the expected SHA, performs bounded browser checks selected from Carpo's permanent smoke tests plus known diff and PR/Issue context signals, proves the Worker version ID did not change during each traversal, and records screenshots plus a credential-audited Playwright trace. Head assertions remain the release signal; the base capture is comparative evidence, not a second gate.
@@ -55,12 +55,13 @@ flowchart LR
 
 ## Why one shared review environment
 
-Carpo is a full-stack Worker with D1, R2, Durable Objects, Agents SDK routes, and a Container. Cloudflare preview URLs are not available for Workers that implement Durable Objects or Containers, so a static preview would not exercise the actual product boundary.
+Carpo is a full-stack Worker with D1, R2, Vectorize, Durable Objects, Agents SDK routes, and a Container. Cloudflare preview URLs are not available for Workers that implement Durable Objects or Containers, so a static preview would not exercise the actual product boundary.
 
 Creating a separate D1 database, R2 bucket, Durable Object namespace, and Container application for every PR would add provisioning and cleanup machinery before the browser checks have proved useful. V0 therefore uses:
 
 - one Worker: `carpo-pr-review`;
 - one review-only D1 database: `carpo-pr-review`;
+- one review-only Vectorize index: `carpo-library-transcripts-pr-review`;
 - one review-only R2 bucket: `carpo-clips-pr-review`;
 - one evidence-only R2 bucket: `carpo-pr-review-evidence`, with a 14-day lifecycle and no production binding;
 - environment-specific Durable Objects and Container configuration;
@@ -71,7 +72,7 @@ Creating a separate D1 database, R2 bucket, Durable Object namespace, and Contai
 
 No review binding points at production data. If concurrent PR review later becomes a real bottleneck, that is the trigger to consider per-PR stacks.
 
-The shared D1 database and Durable Object namespaces are deliberately persistent, so v0 refuses any PR whose exact, rename-unfolded changed-file list touches `migrations/` or whose top-level Wrangler Durable Object migration array differs from the frozen base commit. Applying a rejected candidate's state migration would contaminate every later review and make evidence candidate-inexact. Migration work therefore requires an isolated/recreated review environment before this workflow may test it.
+The shared D1 database and Durable Object namespaces are deliberately persistent. The runner admits a D1-migration PR only when every migration change is a newly added top-level SQL file and every filename is already recorded in the isolated review database's `d1_migrations` table. The runner never applies an unapproved schema change to cross this gate. Modified, deleted, renamed, nested, or non-SQL migration changes still require an isolated/recreated review environment, as do incompatible top-level Wrangler Durable Object migration changes. This lets a deliberately pre-applied additive migration use the normal exact-candidate review without making GitHub Actions a schema authority.
 
 ## What PR context and the diff do
 
@@ -241,7 +242,7 @@ Add complexity only in response to evidence:
 | Observed need | Smallest next upgrade |
 | --- | --- |
 | PRs regularly wait on the shared environment | Per-PR resources or explicit application-level test tenancy |
-| A PR changes D1 or Durable Object migrations | Recreated or per-candidate state resources before running that candidate |
+| A PR rewrites a D1 migration or changes Durable Object migrations | Recreated or per-candidate state resources before running that candidate |
 | CI/browser interruptions create unreliable retries | Cloudflare Workflow around the existing steps |
 | Fourteen-day PR evidence is insufficient for retention/search | Extend the R2 lifecycle or add an evidence index/dashboard |
 | Bounded Flue exploration repeatedly finds the same issue class | Promote that observation into a deterministic repository-owned case |
@@ -262,7 +263,7 @@ V0 is ready when:
 
 - the review Worker deploys with review-only D1/R2/DO/Container bindings;
 - the resolved review configuration exactly matches the hardcoded review-resource allowlist and explicitly rejects production identities;
-- D1- or Durable Object-migration-changing PRs fail before any review state mutation;
+- newly added top-level D1 migrations run only after their filenames are present in the isolated review database, while rewritten D1 or incompatible Durable Object migration changes fail before candidate mutation;
 - the browser-facing review surface rejects a request without the review-only credential, while the exact Container callback routes retain per-job authentication;
 - all D1 migrations apply to the review database;
 - normal tests, typechecking, and build pass;

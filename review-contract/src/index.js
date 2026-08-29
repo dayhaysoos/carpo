@@ -19,6 +19,14 @@ export const CARPO_WEBMCP_REVIEW_TOOL_NAMES = Object.freeze([
   "readClipWorkspace",
   "proposeClips",
 ]);
+export const CARPO_WEBMCP_KNOWN_TOOL_NAMES = Object.freeze([
+  ...CARPO_WEBMCP_REVIEW_TOOL_NAMES,
+  "readCaptionTrack",
+  "proposeCaptionTrack",
+  "getCarpoLibraryInstructions",
+  "searchPrivateLibrary",
+  "prepareLibraryMomentReview",
+]);
 export const READ_ONLY_BROWSER_METHODS = Object.freeze([
   "GET",
   "HEAD",

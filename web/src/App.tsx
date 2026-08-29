@@ -1,9 +1,31 @@
 import { useEffect, useState } from "react";
-import { NavLink, Route, Routes } from "react-router-dom";
+import { Link, NavLink, Route, Routes } from "react-router-dom";
 import { getCurrentUser } from "./api";
 import { CreatorPage } from "./pages/CreatorPage";
 import { LibraryPage } from "./pages/LibraryPage";
 import { VideoPage } from "./pages/VideoPage";
+
+function NotFoundPage() {
+  return (
+    <main className="not-found-page" aria-labelledby="not-found-title">
+      <div className="not-found-content">
+        <h2 id="not-found-title">That page isn’t here.</h2>
+        <p>
+          The address may be outdated. Return to your Library or start a new
+          clip without losing anything you already saved.
+        </p>
+        <div className="not-found-actions">
+          <Link className="btn-primary" to="/library">
+            Open Library
+          </Link>
+          <Link className="btn-secondary" to="/">
+            Create a clip
+          </Link>
+        </div>
+      </div>
+    </main>
+  );
+}
 
 export function App() {
   const [email, setEmail] = useState<string | null>(null);
@@ -57,6 +79,7 @@ export function App() {
         <Route path="/" element={<CreatorPage />} />
         <Route path="/library" element={<LibraryPage />} />
         <Route path="/library/videos/:videoId" element={<VideoPage />} />
+        <Route path="*" element={<NotFoundPage />} />
       </Routes>
     </div>
   );
