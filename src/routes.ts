@@ -81,6 +81,16 @@ import {
   validateCaptionTrackProposal,
   viewCaptionTrack,
 } from "./caption-tracks";
+import {
+  LibraryDiscoveryError,
+  MAX_LIBRARY_SEARCH_QUERY_LENGTH,
+  MAX_LIBRARY_SEARCH_RESULTS,
+  prepareLibraryMomentReview,
+  readPreparedLibraryMomentReview,
+  searchPrivateLibrary,
+  type LibrarySearchMode,
+  type PrepareLibraryMomentInput,
+} from "./library-discovery";
 
 const MAX_CAPTION_TRACK_BODY_BYTES = 128 * 1024;
 
@@ -124,6 +134,21 @@ export async function handleRequest(
 
   if (request.method === "POST" && url.pathname === "/api/videos") {
     return handleCreateSourceVideo(request, env, user!);
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/library/search") {
+    return handleLibrarySearch(request, env, user!);
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/library/moments") {
+    return handlePrepareLibraryMoment(request, env, user!);
+  }
+
+  const libraryMomentMatch = url.pathname.match(
+    /^\/api\/library\/moments\/([^/]+)$/,
+  );
+  if (request.method === "GET" && libraryMomentMatch) {
+    return handleReadLibraryMoment(libraryMomentMatch[1], env, user!);
   }
 
   const videoSourceMatch = url.pathname.match(/^\/api\/videos\/([^/]+)\/source$/);
@@ -312,6 +337,167 @@ export async function handleRequest(
   }
 
   return env.ASSETS.fetch(request);
+}
+
+async function readObjectBody(request: Request): Promise<Record<string, unknown> | Response> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "Invalid JSON body" }, 400);
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return json({ error: "Request body must be an object" }, 400);
+  }
+  return body as Record<string, unknown>;
+}
+
+async function handleLibrarySearch(
+  request: Request,
+  env: Env,
+  user: AuthenticatedUser,
+): Promise<Response> {
+  const body = await readObjectBody(request);
+  if (body instanceof Response) return body;
+  const query = typeof body.query === "string" ? body.query.trim() : "";
+  const mode = body.mode;
+  const archived = body.archived ?? false;
+  const limit = body.limit ?? 10;
+  if (!query || query.length > MAX_LIBRARY_SEARCH_QUERY_LENGTH) {
+    return json(
+      {
+        error: `query must be between 1 and ${MAX_LIBRARY_SEARCH_QUERY_LENGTH} characters`,
+      },
+      400,
+    );
+  }
+  if (mode !== "exact" && mode !== "meaning") {
+    return json({ error: "mode must be exact or meaning" }, 400);
+  }
+  if (typeof archived !== "boolean") {
+    return json({ error: "archived must be a boolean" }, 400);
+  }
+  if (
+    !Number.isInteger(limit) ||
+    (limit as number) < 1 ||
+    (limit as number) > MAX_LIBRARY_SEARCH_RESULTS
+  ) {
+    return json(
+      { error: `limit must be an integer between 1 and ${MAX_LIBRARY_SEARCH_RESULTS}` },
+      400,
+    );
+  }
+  try {
+    return json(
+      await searchPrivateLibrary(env, user.id, {
+        query,
+        mode: mode as LibrarySearchMode,
+        archived,
+        limit: limit as number,
+      }),
+    );
+  } catch (error) {
+    return json(
+      {
+        error:
+          error instanceof Error ? error.message : "Library search failed",
+      },
+      502,
+    );
+  }
+}
+
+function prepareLibraryMomentInput(
+  body: Record<string, unknown>,
+): PrepareLibraryMomentInput | null {
+  const mode = body.mode;
+  const blockIds = body.blockIds;
+  if (
+    typeof body.resultId !== "string" ||
+    (mode !== "exact" && mode !== "meaning") ||
+    typeof body.query !== "string" ||
+    typeof body.videoId !== "string" ||
+    typeof body.transcriptRevision !== "string" ||
+    typeof body.videoRevision !== "string" ||
+    typeof body.evidenceStartSeconds !== "number" ||
+    !Number.isFinite(body.evidenceStartSeconds) ||
+    typeof body.evidenceEndSeconds !== "number" ||
+    !Number.isFinite(body.evidenceEndSeconds) ||
+    !Array.isArray(blockIds) ||
+    !blockIds.every((blockId) => typeof blockId === "string")
+  ) {
+    return null;
+  }
+  return {
+    resultId: body.resultId,
+    mode,
+    query: body.query,
+    videoId: body.videoId,
+    transcriptRevision: body.transcriptRevision,
+    videoRevision: body.videoRevision,
+    blockIds,
+    evidenceStartSeconds: body.evidenceStartSeconds,
+    evidenceEndSeconds: body.evidenceEndSeconds,
+  };
+}
+
+function libraryDiscoveryErrorResponse(error: unknown): Response {
+  if (!(error instanceof LibraryDiscoveryError)) {
+    return json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Library proposal could not be prepared",
+      },
+      502,
+    );
+  }
+  const status =
+    error.code === "RESULT_NOT_FOUND"
+      ? 404
+      : error.code === "RESULT_EXPIRED"
+        ? 410
+        : error.code === "STALE_RESULT"
+          ? 409
+          : 400;
+  return json({ error: error.message, code: error.code }, status);
+}
+
+async function handlePrepareLibraryMoment(
+  request: Request,
+  env: Env,
+  user: AuthenticatedUser,
+): Promise<Response> {
+  const body = await readObjectBody(request);
+  if (body instanceof Response) return body;
+  const input = prepareLibraryMomentInput(body);
+  if (!input) {
+    return json({ error: "Invalid Library result" }, 400);
+  }
+  try {
+    return json(await prepareLibraryMomentReview(env, user.id, input), 201);
+  } catch (error) {
+    return libraryDiscoveryErrorResponse(error);
+  }
+}
+
+async function handleReadLibraryMoment(
+  encodedProposalId: string,
+  env: Env,
+  user: AuthenticatedUser,
+): Promise<Response> {
+  let proposalId: string;
+  try {
+    proposalId = decodeURIComponent(encodedProposalId);
+  } catch {
+    return json({ error: "Invalid Library proposal id" }, 400);
+  }
+  try {
+    return json(await readPreparedLibraryMomentReview(env, user.id, proposalId));
+  } catch (error) {
+    return libraryDiscoveryErrorResponse(error);
+  }
 }
 
 async function handleTranscriptCheck(

@@ -1,6 +1,7 @@
 declare module "cloudflare:workers" {
   interface Env {
     DB: D1Database;
+    LIBRARY_TRANSCRIPT_INDEX?: VectorizeIndex;
     CLIPS_BUCKET: R2Bucket;
     ENCODER_CONTAINER: DurableObjectNamespace;
     ASSETS: Fetcher;

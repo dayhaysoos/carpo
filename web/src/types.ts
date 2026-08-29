@@ -236,3 +236,75 @@ export interface ApiError {
 export interface CurrentUserResponse {
   email: string | null;
 }
+
+export type LibrarySearchMode = "exact" | "meaning";
+
+export interface LibrarySearchResult {
+  resultId: string;
+  mode: LibrarySearchMode;
+  query: string;
+  video: {
+    id: string;
+    title: string;
+    sourceType: "youtube" | "upload";
+    archived: boolean;
+  };
+  evidence: {
+    blockIds: string[];
+    text: string;
+    startSeconds: number;
+    endSeconds: number;
+  };
+  proposedRange: {
+    startSeconds: number;
+    endSeconds: number;
+  };
+  revisions: {
+    transcriptRevision: string;
+    videoRevision: string;
+  };
+  similarityScore?: number;
+}
+
+export interface LibrarySearchResponse {
+  query: string;
+  mode: LibrarySearchMode;
+  results: LibrarySearchResult[];
+  coverage: {
+    totalVideos: number;
+    searchableVideos: number;
+    unavailableVideos: number;
+  };
+  meaningStatus?: "available" | "unavailable";
+  meaningMessage?: string;
+}
+
+export interface PrepareLibraryMomentRequest {
+  resultId: string;
+  mode: LibrarySearchMode;
+  query: string;
+  videoId: string;
+  transcriptRevision: string;
+  videoRevision: string;
+  blockIds: string[];
+  evidenceStartSeconds: number;
+  evidenceEndSeconds: number;
+}
+
+export interface PreparedLibraryMomentReview {
+  proposalId: string;
+  searchResultId: string;
+  videoId: string;
+  reviewUrl: string;
+  input: {
+    title: string;
+    startSeconds: number;
+    endSeconds: number;
+    quality: "1080p";
+  };
+  evidence: {
+    rationale: string;
+    sourceBlockIds: string[];
+    workspaceRevision: string;
+  };
+}

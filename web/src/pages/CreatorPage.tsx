@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   getSourceVideo,
   getVideoTranscript,
+  getPreparedLibraryMomentReview,
   validateCaptionTrackProposal,
 } from "../api";
 import { createClipProposalReview } from "../create-clip-proposal-review";
@@ -39,12 +40,15 @@ export function CreatorPage() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const videoId = searchParams.get("video") ?? "";
+  const libraryProposalId = searchParams.get("libraryProposal") ?? "";
   const [ownedUploadJourneyState, updateOwnedUploadJourney] = useReducer(
     updateOwnedUploadClipJourney,
     INITIAL_OWNED_UPLOAD_CLIP_JOURNEY_STATE,
   );
   const clipWindowSequence = useRef(0);
+  const admittedLibraryProposals = useRef(new Set<string>());
   const [proposalReview] = useState(createClipProposalReview);
+  const [libraryProposalError, setLibraryProposalError] = useState<string | null>(null);
   const [clipWindowRequest, setClipWindowRequest] =
     useState<ClipWindowRequest | null>(null);
   const [captionReview, setCaptionReview] = useState<{
@@ -90,6 +94,15 @@ export function CreatorPage() {
         : false;
     },
   });
+  const {
+    data: preparedLibraryProposal,
+    error: preparedLibraryProposalError,
+  } = useQuery({
+    queryKey: ["library-moment-proposal", libraryProposalId],
+    queryFn: () => getPreparedLibraryMomentReview(libraryProposalId),
+    enabled: Boolean(libraryProposalId),
+    retry: false,
+  });
 
   const activeVideo =
     sourceVideoData?.video.id === videoId ? sourceVideoData.video : null;
@@ -105,6 +118,52 @@ export function CreatorPage() {
       sourceVideoId: videoId || null,
     });
   }, [videoId]);
+
+  useEffect(() => {
+    if (!preparedLibraryProposal || activeVideo?.id !== preparedLibraryProposal.videoId) {
+      return;
+    }
+    if (admittedLibraryProposals.current.has(preparedLibraryProposal.proposalId)) {
+      return;
+    }
+    proposalReview.activate({
+      id: activeVideo.id,
+      durationSeconds: activeVideo.durationSeconds,
+    });
+    const admission = proposalReview.admit({
+      adapter: "library",
+      requestId: preparedLibraryProposal.proposalId,
+      videoId: preparedLibraryProposal.videoId,
+      atomic: true,
+      proposals: [
+        {
+          proposalId: preparedLibraryProposal.searchResultId,
+          input: { ...preparedLibraryProposal.input },
+          evidence: { ...preparedLibraryProposal.evidence },
+          settle: () => undefined,
+        },
+      ],
+    });
+    const issues = [
+      ...admission.issues,
+      ...admission.items.flatMap((item) => item.issues),
+    ];
+    if (issues.length > 0) {
+      setLibraryProposalError(issues.map((issue) => issue.message).join(" "));
+      return;
+    }
+    admittedLibraryProposals.current.add(preparedLibraryProposal.proposalId);
+    setLibraryProposalError(null);
+    const nextSearchParams = new URLSearchParams(searchParams);
+    nextSearchParams.delete("libraryProposal");
+    setSearchParams(nextSearchParams, { replace: true });
+  }, [
+    activeVideo,
+    preparedLibraryProposal,
+    proposalReview,
+    searchParams,
+    setSearchParams,
+  ]);
   const openCaptionProposal = useCallback(
     async (
       input: CaptionTrackProposalInput,
@@ -170,6 +229,11 @@ export function CreatorPage() {
 
   return (
     <main className="app-main">
+      {(preparedLibraryProposalError || libraryProposalError) && (
+        <p className="form-error library-proposal-error" role="alert">
+          {libraryProposalError ?? preparedLibraryProposalError?.message}
+        </p>
+      )}
       <CreatorForm
         onClipCreated={handleClipCreated}
         onVideoActivated={handleVideoActivated}

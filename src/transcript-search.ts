@@ -153,7 +153,7 @@ function mergeTranscriptMatchRanges(
   }, []);
 }
 
-function findTranscriptMatches(
+export function findTranscriptMatches(
   transcript: StoredTranscript,
   query: string,
   options: {
@@ -222,7 +222,7 @@ function findTranscriptMatches(
   return mergeTranscriptMatchRanges(matches);
 }
 
-function transcriptBlocks(transcript: StoredTranscript): TranscriptBlock[] {
+export function buildTranscriptBlocks(transcript: StoredTranscript): TranscriptBlock[] {
   const groups: Array<{
     startIndex: number;
     endIndex: number;
@@ -272,7 +272,7 @@ function transcriptDocument(
     language: transcript.language,
     automatic: transcript.automatic,
     cached,
-    blocks: transcriptBlocks(transcript),
+    blocks: buildTranscriptBlocks(transcript),
   };
 }
 

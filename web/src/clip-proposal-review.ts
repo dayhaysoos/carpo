@@ -10,7 +10,7 @@ import {
 export const MAX_CLIP_PROPOSALS_PER_BATCH = 10;
 export const MAX_QUEUED_CLIP_PROPOSAL_BATCHES = 3;
 
-export type ClipProposalAdapter = "think" | "webmcp";
+export type ClipProposalAdapter = "library" | "think" | "webmcp";
 
 export interface ClipProposalInput {
   title: string;
@@ -192,6 +192,7 @@ interface PendingAdmission {
 }
 
 const ADAPTER_LABELS: Record<ClipProposalAdapter, string> = {
+  library: "Library search",
   think: "Think",
   webmcp: "WebMCP",
 };
