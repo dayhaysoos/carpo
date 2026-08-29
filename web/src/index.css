@@ -1432,6 +1432,10 @@ input {
   padding: 0.875rem;
 }
 
+.video-copy {
+  min-width: 0;
+}
+
 .video-body h3 {
   margin: 0 0 0.25rem;
   overflow: hidden;
@@ -1644,7 +1648,7 @@ input {
 
   .video-link {
     display: grid;
-    grid-template-columns: 120px 1fr;
+    grid-template-columns: minmax(96px, 40%) minmax(0, 1fr);
   }
 
   .video-body {
