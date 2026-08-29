@@ -68,6 +68,14 @@ import {
   requestVideoTranscript,
   searchVideoTranscript,
 } from "./transcript-search";
+import {
+  CaptionTrackError,
+  exportCaptionTrack,
+  saveCaptionTrack,
+  viewCaptionTrack,
+} from "./caption-tracks";
+
+const MAX_CAPTION_TRACK_BODY_BYTES = 128 * 1024;
 
 export async function handleRequest(
   request: Request,
@@ -203,6 +211,23 @@ export async function handleRequest(
   ) {
     const clipId = url.pathname.slice("/api/clips/".length, -"/gif".length);
     return handleRequestGifExport(clipId, env, ctx, user!);
+  }
+
+  const captionExportMatch = url.pathname.match(
+    /^\/api\/clips\/([^/]+)\/captions\.vtt$/,
+  );
+  if (request.method === "GET" && captionExportMatch) {
+    return handleCaptionTrackExport(captionExportMatch[1], env, user!);
+  }
+
+  const captionTrackMatch = url.pathname.match(
+    /^\/api\/clips\/([^/]+)\/captions$/,
+  );
+  if (request.method === "GET" && captionTrackMatch) {
+    return handleCaptionTrackRead(captionTrackMatch[1], env, user!);
+  }
+  if (request.method === "PUT" && captionTrackMatch) {
+    return handleCaptionTrackSave(request, captionTrackMatch[1], env, user!);
   }
 
   if (request.method === "GET" && url.pathname.startsWith("/api/clips/")) {
@@ -919,6 +944,113 @@ async function handleGetClip(
   }
 
   return json(recordToResponse(record, env.R2_PUBLIC_PREFIX));
+}
+
+function captionTrackErrorResponse(error: unknown): Response {
+  if (!(error instanceof CaptionTrackError)) {
+    console.error(
+      JSON.stringify({
+        message: "caption track operation failed",
+        error: error instanceof Error ? error.message : "Unknown error",
+      }),
+    );
+    return json({ error: "Caption operation failed" }, 500);
+  }
+  if (error.kind === "internal") {
+    console.error(
+      JSON.stringify({
+        message: "caption track operation failed",
+        error: error.message,
+      }),
+    );
+    return json({ error: "Caption operation failed" }, 500);
+  }
+  const status =
+    error.kind === "not_found"
+      ? 404
+      : error.kind === "validation"
+        ? 400
+        : error.kind === "transcript"
+          ? 502
+          : 409;
+  return json(
+    {
+      error: error.message,
+      ...(error.details.length > 0 ? { details: error.details } : {}),
+    },
+    status,
+  );
+}
+
+async function handleCaptionTrackRead(
+  clipId: string,
+  env: Env,
+  user: AuthenticatedUser,
+): Promise<Response> {
+  try {
+    const track = await viewCaptionTrack(env, user.id, clipId);
+    return json(track, track.captionStatus === "checking" ? 202 : 200);
+  } catch (error) {
+    return captionTrackErrorResponse(error);
+  }
+}
+
+async function handleCaptionTrackSave(
+  request: Request,
+  clipId: string,
+  env: Env,
+  user: AuthenticatedUser,
+): Promise<Response> {
+  const contentLength = parseContentLength(
+    request.headers.get("content-length"),
+  );
+  if (
+    contentLength !== null &&
+    contentLength > MAX_CAPTION_TRACK_BODY_BYTES
+  ) {
+    return json({ error: "Caption track is too large" }, 413);
+  }
+
+  let body: unknown;
+  try {
+    const raw = await request.text();
+    if (
+      new TextEncoder().encode(raw).byteLength > MAX_CAPTION_TRACK_BODY_BYTES
+    ) {
+      return json({ error: "Caption track is too large" }, 413);
+    }
+    body = JSON.parse(raw);
+  } catch {
+    return json({ error: "Invalid JSON body" }, 400);
+  }
+  const cues =
+    body && typeof body === "object" && "cues" in body
+      ? (body as { cues: unknown }).cues
+      : undefined;
+  try {
+    return json(await saveCaptionTrack(env, user.id, clipId, cues));
+  } catch (error) {
+    return captionTrackErrorResponse(error);
+  }
+}
+
+async function handleCaptionTrackExport(
+  clipId: string,
+  env: Env,
+  user: AuthenticatedUser,
+): Promise<Response> {
+  try {
+    const exported = await exportCaptionTrack(env, user.id, clipId);
+    return new Response(exported.body, {
+      headers: {
+        "Cache-Control": "private, no-store",
+        "Content-Disposition": `attachment; filename="${exported.filename}"`,
+        "Content-Type": "text/vtt; charset=utf-8",
+      },
+    });
+  } catch (error) {
+    return captionTrackErrorResponse(error);
+  }
 }
 
 async function handleRequestGifExport(

@@ -1,5 +1,8 @@
 import type {
   ApiError,
+  CaptionCue,
+  CaptionTrackAvailable,
+  CaptionTrackResponse,
   ClipListResponse,
   ClipResponse,
   CreateClipRequest,
@@ -103,6 +106,43 @@ export async function getClip(id: string): Promise<ClipResponse> {
     throw new Error(body.error || `Request failed (${response.status})`);
   }
   return response.json() as Promise<ClipResponse>;
+}
+
+export async function getCaptionTrack(
+  clipId: string,
+): Promise<CaptionTrackResponse> {
+  const response = await fetch(
+    `/api/clips/${encodeURIComponent(clipId)}/captions`,
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiError;
+    throw new Error(body.error || `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<CaptionTrackResponse>;
+}
+
+export async function saveCaptionTrack(
+  clipId: string,
+  cues: CaptionCue[],
+): Promise<CaptionTrackAvailable> {
+  const response = await fetch(
+    `/api/clips/${encodeURIComponent(clipId)}/captions`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cues }),
+    },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiError;
+    const detail = body.details?.map((item) => item.message).join("; ");
+    throw new Error(detail || body.error || `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<CaptionTrackAvailable>;
+}
+
+export function captionTrackVttUrl(clipId: string): string {
+  return `/api/clips/${encodeURIComponent(clipId)}/captions.vtt`;
 }
 
 export async function listClips(
