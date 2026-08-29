@@ -99,4 +99,26 @@ describe("live WebMCP review fixture", () => {
     assert.ok(calls[1].args.includes("delete"));
     assert.equal(calls[0].options.cwd, "/candidate");
   });
+
+  it("retries an idempotent D1 cleanup after a transient authorization failure", async () => {
+    let d1Attempts = 0;
+    const calls = [];
+    await cleanupWebMcpReviewFixture({
+      cwd: "/candidate",
+      env: {},
+      wait: async () => {},
+      async runCommand(file, args) {
+        calls.push({ file, args });
+        if (args.includes("d1")) {
+          d1Attempts += 1;
+          if (d1Attempts === 1) {
+            throw new Error("Cloudflare API authorization failed");
+          }
+        }
+      },
+    });
+
+    assert.equal(d1Attempts, 2);
+    assert.equal(calls.filter(({ args }) => args.includes("delete")).length, 1);
+  });
 });

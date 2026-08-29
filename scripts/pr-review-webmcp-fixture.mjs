@@ -16,6 +16,23 @@ export const WEBMCP_REVIEW_FIXTURE = Object.freeze({
 });
 
 const REVIEW_BUCKET = "carpo-clips-pr-review";
+const CLEANUP_ATTEMPTS = 3;
+const CLEANUP_RETRY_DELAY_MS = 1_000;
+
+async function retryCleanup(operation, wait) {
+  let lastError;
+  for (let attempt = 1; attempt <= CLEANUP_ATTEMPTS; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (attempt < CLEANUP_ATTEMPTS) {
+        await wait(CLEANUP_RETRY_DELAY_MS);
+      }
+    }
+  }
+  throw lastError;
+}
 
 export function webMcpReviewTranscript() {
   return {
@@ -92,37 +109,47 @@ export async function cleanupWebMcpReviewFixture({
   cwd,
   env,
   runCommand,
+  wait = (milliseconds) =>
+    new Promise((resolve) => setTimeout(resolve, milliseconds)),
 }) {
   if (typeof runCommand !== "function") {
     throw new Error("A command runner is required to clean the WebMCP fixture");
   }
   const errors = [];
-  await runCommand(
-    "npx",
-    [
-      "wrangler",
-      "d1",
-      "execute",
-      "DB",
-      "--env",
-      "pr-review",
-      "--remote",
-      "--command",
-      cleanupSql(),
-    ],
-    { cwd, env },
+  await retryCleanup(
+    () =>
+      runCommand(
+        "npx",
+        [
+          "wrangler",
+          "d1",
+          "execute",
+          "DB",
+          "--env",
+          "pr-review",
+          "--remote",
+          "--command",
+          cleanupSql(),
+        ],
+        { cwd, env },
+      ),
+    wait,
   ).catch((error) => errors.push(error));
-  await runCommand(
-    "npx",
-    [
-      "wrangler",
-      "r2",
-      "object",
-      "delete",
-      `${REVIEW_BUCKET}/${WEBMCP_REVIEW_FIXTURE.transcriptKey}`,
-      "--remote",
-    ],
-    { cwd, env },
+  await retryCleanup(
+    () =>
+      runCommand(
+        "npx",
+        [
+          "wrangler",
+          "r2",
+          "object",
+          "delete",
+          `${REVIEW_BUCKET}/${WEBMCP_REVIEW_FIXTURE.transcriptKey}`,
+          "--remote",
+        ],
+        { cwd, env },
+      ),
+    wait,
   ).catch((error) => errors.push(error));
   if (errors.length > 0) {
     throw new Error(

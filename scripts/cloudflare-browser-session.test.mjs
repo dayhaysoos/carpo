@@ -122,4 +122,50 @@ describe("Cloudflare Browser Run session", () => {
     assert.deepEqual(artifact.recording.events["page-1"], [{ timestamp: 1 }]);
     assert.equal(artifact.mediaPlaybackCaptured, false);
   });
+
+  it("refreshes Wrangler OAuth credentials before closing and reading a recording", async () => {
+    let credentialReads = 0;
+    const authorizations = [];
+    const result = await runWithCloudflareBrowser({
+      reviewerPath: "/reviewer.mjs",
+      args: [],
+      env: {},
+      runReviewerImpl: async () => {},
+      resolveCredentialsImpl: async () => {
+        credentialReads += 1;
+        return {
+          accountId: ACCOUNT_ID,
+          apiToken: credentialReads === 1 ? "initial-token" : "fresh-token",
+        };
+      },
+      wait: async () => {},
+      writeFileImpl: async () => {},
+      fetchImpl: async (_url, init = {}) => {
+        authorizations.push(init.headers?.Authorization);
+        if (init.method === "POST") {
+          return jsonResponse({
+            result: {
+              sessionId: SESSION_ID,
+              targets: [{ webSocketDebuggerUrl: PAGE_ENDPOINT }],
+            },
+          });
+        }
+        if (init.headers?.Authorization === "Bearer initial-token") {
+          return jsonResponse({ errors: [{ message: "Authentication error" }] }, 401);
+        }
+        if (init.method === "DELETE") {
+          return jsonResponse({ result: { status: "closed" } });
+        }
+        return jsonResponse({ result: { events: {} } });
+      },
+    });
+
+    assert.equal(result.browserRecording.status, "captured");
+    assert.equal(credentialReads, 2);
+    assert.deepEqual(authorizations, [
+      "Bearer initial-token",
+      "Bearer fresh-token",
+      "Bearer fresh-token",
+    ]);
+  });
 });

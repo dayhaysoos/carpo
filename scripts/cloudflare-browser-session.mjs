@@ -288,6 +288,7 @@ export async function runWithCloudflareBrowser({
   recordingOutputPath,
   fetchImpl = fetch,
   runReviewerImpl = runReviewer,
+  resolveCredentialsImpl = resolveWranglerApiCredentials,
   writeFileImpl = writeFile,
   wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   lab = false,
@@ -304,7 +305,7 @@ export async function runWithCloudflareBrowser({
     accountId && apiToken ? { accountId, apiToken } : undefined;
   const credentials =
     environmentCredentials ??
-    (await resolveWranglerApiCredentials(env).catch(() => undefined));
+    (await resolveCredentialsImpl(env).catch(() => undefined));
   let recordedSession;
   if (credentials) {
     try {
@@ -333,9 +334,18 @@ export async function runWithCloudflareBrowser({
     } catch (error) {
       reviewerError = error;
     } finally {
+      let finalCredentials = credentials;
+      if (!environmentCredentials) {
+        const refreshedCredentials = await resolveCredentialsImpl(env).catch(
+          () => undefined,
+        );
+        if (refreshedCredentials?.accountId === credentials.accountId) {
+          finalCredentials = refreshedCredentials;
+        }
+      }
       await closeApiSession({
-        accountId: credentials.accountId,
-        apiToken: credentials.apiToken,
+        accountId: finalCredentials.accountId,
+        apiToken: finalCredentials.apiToken,
         sessionId: session.sessionId,
         fetchImpl,
       }).catch((error) => {
@@ -344,8 +354,8 @@ export async function runWithCloudflareBrowser({
         );
       });
       browserRecording = await finalizeRecording({
-        accountId: credentials.accountId,
-        apiToken: credentials.apiToken,
+        accountId: finalCredentials.accountId,
+        apiToken: finalCredentials.apiToken,
         sessionId: session.sessionId,
         fetchImpl,
         wait,
