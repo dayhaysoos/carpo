@@ -10,6 +10,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { ENCODER_PROTOCOL_VERSION } from "../src/encoder-pool.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.join(__dirname, "..");
@@ -155,6 +156,21 @@ function buildImage() {
 }
 
 function testImageToolchainSmoke() {
+  const protocolVersion = Number(
+    run("docker", [
+      "run",
+      "--rm",
+      imageName,
+      "python3",
+      "-c",
+      "from encoder import ENCODER_PROTOCOL_VERSION; print(ENCODER_PROTOCOL_VERSION)",
+    ]).trim(),
+  );
+  if (protocolVersion !== ENCODER_PROTOCOL_VERSION) {
+    throw new Error(
+      `Worker encoder protocol ${ENCODER_PROTOCOL_VERSION} does not match image protocol ${protocolVersion}`,
+    );
+  }
   const ytdlpVersion = run("docker", [
     "run",
     "--rm",
