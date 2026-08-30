@@ -7,6 +7,10 @@ import type {
   SourceVideoResponse,
 } from "./types";
 import { extractYoutubeVideoId } from "./source-videos";
+import {
+  matchRemoteSourceFailure,
+  viewRemoteSourceIngestion,
+} from "./remote-source-ingestion";
 
 export function parseFilters(filtersJson: string): FilterSpec[] {
   try {
@@ -40,6 +44,10 @@ export function recordToResponse(
     filters: parseFilters(record.filters_json),
     status: record.status,
     errorMessage: record.error_message,
+    sourceFailure:
+      record.status === "failed" && record.source_type === "youtube"
+        ? matchRemoteSourceFailure("youtube", record.error_message)
+        : null,
     outputs: {
       mp4: record.output_mp4_key
         ? `${artifactPrefix}/${record.output_mp4_key}`
@@ -86,6 +94,7 @@ export function sourceVideoRecordToResponse(
       source.type === "upload" ||
       (record.retained_source_status === "ready" &&
         Boolean(record.retained_source_key)),
+    remoteIngestion: viewRemoteSourceIngestion(record),
     transcriptStatus: record.transcript_status,
     transcriptCheckedAt: record.transcript_checked_at,
     transcriptCheckError: record.transcript_check_error,

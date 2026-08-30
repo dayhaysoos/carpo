@@ -43,7 +43,10 @@ export function OwnedUploadClipResult({
 
       {journey.phase === "failed" && clip?.errorMessage && (
         <>
-          <ClipFailureMessage message={clip.errorMessage} />
+          <ClipFailureMessage
+            message={clip.errorMessage}
+            failure={clip.sourceFailure}
+          />
           <p className="owned-clip-recovery">
             Adjust the title or trim above, then create the clip again.
           </p>

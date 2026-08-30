@@ -72,9 +72,17 @@ DEJAVU_FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 KNOWN_FILTER_TYPES = frozenset({"caption"})
 CAPTION_THEMES = frozenset({"classic", "high-contrast-box", "bold-yellow"})
 MAX_TIMED_CAPTION_CUES = 200
-ENCODER_PROTOCOL_VERSION = 4
+ENCODER_PROTOCOL_VERSION = 5
 YOUTUBE_BLOCKED_MESSAGE = (
     "YouTube is blocking downloads from this server. "
+    "Try uploading the video file instead."
+)
+YOUTUBE_RATE_LIMITED_MESSAGE = (
+    "YouTube is rate limiting downloads from this server. "
+    "Try again later or upload the video file instead."
+)
+YOUTUBE_LOGIN_REQUIRED_MESSAGE = (
+    "YouTube requires sign-in or cookies that Carpo cannot use. "
     "Try uploading the video file instead."
 )
 YOUTUBE_STALL_MESSAGE = (
@@ -589,15 +597,26 @@ def classify_ytdlp_error(output: str) -> str:
     """Map yt-dlp stderr/stdout to a user-facing download error."""
     text = output.lower()
 
+    rate_limit_markers = (
+        "http error 429",
+        "429: too many requests",
+        "rate limit",
+    )
+    if any(marker in text for marker in rate_limit_markers):
+        return YOUTUBE_RATE_LIMITED_MESSAGE
+
+    login_markers = (
+        "sign in to confirm you're not a bot",
+        "confirm you are not a bot",
+        "cookies are required",
+    )
+    if any(marker in text for marker in login_markers):
+        return YOUTUBE_LOGIN_REQUIRED_MESSAGE
+
     blocked_markers = (
         "http error 403",
         "403: forbidden",
         "403 forbidden",
-        "sign in to confirm you're not a bot",
-        "confirm you are not a bot",
-        "cookies are required",
-        "this content isn't available",
-        "http error 429",
     )
     if any(marker in text for marker in blocked_markers):
         return YOUTUBE_BLOCKED_MESSAGE
@@ -651,6 +670,8 @@ def _is_user_facing_ytdlp_error(message: str) -> bool:
     """Return True when run_ytdlp already mapped stderr to a user-facing error."""
     if message in (
         YOUTUBE_BLOCKED_MESSAGE,
+        YOUTUBE_RATE_LIMITED_MESSAGE,
+        YOUTUBE_LOGIN_REQUIRED_MESSAGE,
         YOUTUBE_STALL_MESSAGE,
         YOUTUBE_DOWNLOAD_TIMEOUT_MESSAGE,
     ):

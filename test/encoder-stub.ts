@@ -10,6 +10,7 @@ import {
   getSourceVideoById,
   markClipDownloadingIfQueued,
   markGifComplete,
+  markSourceVideoRetainedSourceFailed,
   markSourceVideoRetainedSourceImporting,
   markSourceVideoRetainedSourceReady,
 } from "../src/db";
@@ -194,6 +195,52 @@ export class EncoderStub extends DurableObject<Env> {
 
     if (url.pathname === "/__carpo/renew-activity") {
       return new Response(null, { status: 204 });
+    }
+
+    if (url.pathname === "/__carpo/ingest-source") {
+      const body = (await request.json()) as { videoId?: string };
+      if (!body.videoId) {
+        return Response.json(
+          { status: "failed", errorMessage: "Video ID is required" },
+          { status: 400 },
+        );
+      }
+      const videoId = body.videoId;
+      const work = this.runQueuedJob(async () => {
+        const video = await getSourceVideoById(this.env.DB, videoId);
+        if (!video || video.source_type !== "youtube") {
+          return new Response(null, { status: 404 });
+        }
+        const sourceUrl = video.source_ref;
+        const simulatedFailure = sourceUrl.includes("stub-ingest-rate-limit")
+          ? "HTTP Error 429: Too Many Requests"
+          : sourceUrl.includes("stub-ingest-login")
+            ? "Sign in to confirm you are not a bot"
+            : sourceUrl.includes("stub-ingest-unsupported")
+              ? "Unsupported URL: no video formats"
+              : sourceUrl.includes("stub-ingest-provider-change")
+                ? "Extractor failed after a provider changed its player response"
+                : sourceUrl.includes("stub-ingest-geo")
+                  ? "This video is not available in your country"
+                  : null;
+        if (simulatedFailure) {
+          await markSourceVideoRetainedSourceFailed(
+            this.env.DB,
+            videoId,
+            simulatedFailure,
+          );
+          return Response.json({ status: "failed" });
+        }
+        const key = youtubeRetainedSourceKey(videoId);
+        await this.env.CLIPS_BUCKET.put(key, FAKE_MP4, {
+          httpMetadata: { contentType: "video/mp4" },
+        });
+        await markSourceVideoRetainedSourceReady(this.env.DB, videoId, key);
+        this.recordJobEvent(`source-${videoId}`, "retain-source");
+        return Response.json({ status: "ready" });
+      });
+      this.ctx.waitUntil(work);
+      return new Response(null, { status: 202 });
     }
 
     if (url.pathname === "/__carpo/video-metadata") {
@@ -550,7 +597,7 @@ export class EncoderStub extends DurableObject<Env> {
       const simulatesRetainedSource =
         encodeJob.source.type === "youtube" &&
         encodeJob.source.url.includes("retain-source-once");
-      if (encodeJob.sourceVideoId && simulatesRetainedSource) {
+      if (encodeJob.sourceVideoId && encodeJob.source.type === "youtube") {
         const video = await getSourceVideoById(
           this.env.DB,
           encodeJob.sourceVideoId,
@@ -561,7 +608,7 @@ export class EncoderStub extends DurableObject<Env> {
           (await this.env.CLIPS_BUCKET.head(video.retained_source_key))
         ) {
           this.recordJobEvent(encodeJob.jobId, "stage-retained-source");
-        } else if (video) {
+        } else if (video && simulatesRetainedSource) {
           const key = youtubeRetainedSourceKey(video.id);
           await markSourceVideoRetainedSourceImporting(this.env.DB, video.id, key);
           await this.env.CLIPS_BUCKET.put(key, FAKE_MP4, {

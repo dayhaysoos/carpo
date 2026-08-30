@@ -84,6 +84,7 @@ export interface ClipResponse {
   filters: FilterSpec[];
   status: ClipStatus;
   errorMessage: string | null;
+  sourceFailure?: RemoteSourceFailure | null;
   gifStatus: GifStatus;
   gifErrorMessage: string | null;
   outputs: ClipOutputs;
@@ -158,6 +159,7 @@ export interface SourceVideoResponse {
   thumbnail: string | null;
   durationSeconds: number | null;
   retainedSourceReady: boolean;
+  remoteIngestion?: RemoteSourceIngestionView | null;
   transcriptStatus: TranscriptStatus;
   transcriptCheckedAt: string | null;
   transcriptCheckError: string | null;
@@ -165,6 +167,33 @@ export interface SourceVideoResponse {
   archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export type RemoteSourceFailureCode =
+  | "rate_limited"
+  | "login_required"
+  | "unsupported_media"
+  | "provider_changed"
+  | "geo_restricted"
+  | "unavailable"
+  | "unknown";
+
+export interface RemoteSourceFailure {
+  provider: "youtube";
+  code: RemoteSourceFailureCode;
+  message: string;
+  retryable: boolean;
+  recovery: {
+    type: "upload";
+    href: string;
+    label: string;
+  };
+}
+
+export interface RemoteSourceIngestionView {
+  provider: "youtube";
+  status: "pending" | "importing" | "ready" | "failed";
+  failure: RemoteSourceFailure | null;
 }
 
 export interface CreateSourceVideoRequest {

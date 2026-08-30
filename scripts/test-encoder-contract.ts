@@ -370,6 +370,8 @@ import sys
 sys.path.insert(0, ${JSON.stringify(path.join(root, "container"))})
 from encoder import (
     YOUTUBE_BLOCKED_MESSAGE,
+    YOUTUBE_LOGIN_REQUIRED_MESSAGE,
+    YOUTUBE_RATE_LIMITED_MESSAGE,
     classify_ytdlp_error,
 )
 
@@ -388,6 +390,12 @@ assert classify_ytdlp_error("ERROR: Unsupported URL") == (
 
 stdout_only = "ERROR: unable to download video data: HTTP Error 403: Forbidden\\n"
 assert classify_ytdlp_error(stdout_only) == YOUTUBE_BLOCKED_MESSAGE
+assert classify_ytdlp_error("ERROR: HTTP Error 429: Too Many Requests") == (
+    YOUTUBE_RATE_LIMITED_MESSAGE
+)
+assert classify_ytdlp_error("Sign in to confirm you're not a bot") == (
+    YOUTUBE_LOGIN_REQUIRED_MESSAGE
+)
 
 from encoder import (
     YOUTUBE_DOWNLOAD_TIMEOUT_MESSAGE,
@@ -396,6 +404,8 @@ from encoder import (
 )
 
 assert _is_user_facing_ytdlp_error(YOUTUBE_BLOCKED_MESSAGE)
+assert _is_user_facing_ytdlp_error(YOUTUBE_RATE_LIMITED_MESSAGE)
+assert _is_user_facing_ytdlp_error(YOUTUBE_LOGIN_REQUIRED_MESSAGE)
 assert _is_user_facing_ytdlp_error(YOUTUBE_DOWNLOAD_TIMEOUT_MESSAGE)
 assert _is_user_facing_ytdlp_error(
     "This YouTube video is unavailable. It may have been deleted or restricted."

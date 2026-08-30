@@ -8,6 +8,10 @@ Carpo organizes reusable source videos and the clips rendered from them. Videos 
 A YouTube reference or uploaded original that can produce one or more clips. A video and, for uploads, its original file remain available until explicitly deleted.
 _Avoid_: Project, folder, source asset
 
+**Retained Video Source**:
+A private stored original acquired from a remote Video and reused for preview, transcript work, and later Clips until the Video is deleted.
+_Avoid_: Cached download, remote clip input
+
 **Clip**:
 A rendered excerpt associated with exactly one video. Deleting a clip does not affect its video or sibling clips.
 _Avoid_: Video, project output

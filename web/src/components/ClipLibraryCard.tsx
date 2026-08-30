@@ -211,7 +211,10 @@ export function ClipLibraryCard({
         </p>
 
         {clip.status === "failed" && clip.errorMessage && (
-          <ClipFailureMessage message={clip.errorMessage} />
+          <ClipFailureMessage
+            message={clip.errorMessage}
+            failure={clip.sourceFailure}
+          />
         )}
 
         {clip.gifStatus === "failed" && clip.gifErrorMessage && (

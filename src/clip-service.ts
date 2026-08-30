@@ -15,6 +15,11 @@ import { recordToResponse } from "./serialize";
 import { normalizeClipSource, sourceReference } from "./source-videos";
 import type { ClipRecord, ClipResponse, CreateClipRequest } from "./types";
 import { validateCreateClipRequest } from "./validation";
+import {
+  performRemoteSourceIngestion,
+  remoteSourceReady,
+  viewRemoteSourceIngestion,
+} from "./remote-source-ingestion";
 
 export interface ClipCreationFailure {
   ok: false;
@@ -108,6 +113,21 @@ export async function createClipForVideo({
     video.source_type === "youtube"
       ? { type: "youtube" as const, url: video.source_ref }
       : { type: "upload" as const, key: video.source_ref };
+  if (!remoteSourceReady(video)) {
+    const ingestion = viewRemoteSourceIngestion(video);
+    if (ingestion?.status !== "importing") {
+      waitUntil(performRemoteSourceIngestion(env, video.id));
+    }
+    const message =
+      ingestion?.failure?.message ??
+      "Carpo is still importing this remote video. Wait for the retained source before creating a clip.";
+    return {
+      ok: false,
+      status: 409,
+      error: "Remote source is not ready",
+      details: [{ field: "videoId", message }],
+    };
+  }
   const validation = validateCreateClipRequest(
     {
       ...(input && typeof input === "object" ? input : {}),

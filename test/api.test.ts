@@ -1624,12 +1624,17 @@ describe("terminal status stickiness", () => {
         id: string;
         status: string;
         errorMessage: string | null;
+        sourceFailure?: { code: string; recovery: { type: string } } | null;
       }>;
     };
     const clip = body.clips.find((item) => item.id === clipId);
     expect(clip).toMatchObject({
       status: "failed",
       errorMessage: blockedMessage,
+      sourceFailure: {
+        code: "rate_limited",
+        recovery: { type: "upload" },
+      },
     });
 
     const persisted = await getClipById(env.DB, clipId);
@@ -2370,6 +2375,145 @@ describe("source video library", () => {
     expect(secondResponse.status).toBe(200);
     const second = (await secondResponse.json()) as { id: string };
     expect(second.id).toBe(first.id);
+  });
+
+  it("ingests a YouTube source before clipping and exposes the retained source", async () => {
+    const response = await workerFetch("http://example.com/api/videos", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source: {
+          type: "youtube",
+          url: "https://www.youtube.com/watch?v=ingest-before-clipping",
+        },
+        title: "Ingest before clipping",
+      }),
+    });
+    expect(response.status).toBe(200);
+    const created = (await response.json()) as {
+      id: string;
+      remoteIngestion: { status: string };
+    };
+    expect(["pending", "importing", "ready"]).toContain(
+      created.remoteIngestion.status,
+    );
+
+    let detail: {
+      video: {
+        retainedSourceReady: boolean;
+        remoteIngestion: { status: string };
+      };
+    } | null = null;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const detailResponse = await workerFetch(
+        `http://example.com/api/videos/${created.id}`,
+      );
+      detail = (await detailResponse.json()) as typeof detail;
+      if (detail?.video.remoteIngestion.status === "ready") break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    expect(detail?.video).toMatchObject({
+      retainedSourceReady: true,
+      remoteIngestion: { provider: "youtube", status: "ready", failure: null },
+    });
+
+    const sourceResponse = await workerFetch(
+      `http://example.com/api/videos/${created.id}/source`,
+    );
+    expect(sourceResponse.status).toBe(200);
+    expect(sourceResponse.headers.get("content-type")).toBe("video/mp4");
+
+    const clipResponse = await workerFetch(
+      `http://example.com/api/videos/${created.id}/clips`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: "Clip retained source",
+          trimStart: 2,
+          trimEnd: 5,
+          filters: [],
+        }),
+      },
+    );
+    expect(clipResponse.status).toBe(201);
+    const clip = (await clipResponse.json()) as { id: string };
+    let events: string[] = [];
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      events = await getEncoderJobEvents(clip.id);
+      if (events.includes("stage-retained-source")) break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    expect(events).toContain("stage-retained-source");
+    expect(events).not.toContain("retain-source");
+  });
+
+  it("returns typed provider failures with upload recovery", async () => {
+    const response = await workerFetch("http://example.com/api/videos", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source: {
+          type: "youtube",
+          url: "https://www.youtube.com/watch?v=stub-ingest-rate-limit",
+        },
+        title: "Rate-limited source",
+      }),
+    });
+    const created = (await response.json()) as { id: string };
+
+    let failure: {
+      video: {
+        remoteIngestion: {
+          status: string;
+          failure: {
+            code: string;
+            retryable: boolean;
+            recovery: { type: string; href: string };
+          } | null;
+        };
+      };
+    } | null = null;
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const detailResponse = await workerFetch(
+        `http://example.com/api/videos/${created.id}`,
+      );
+      failure = (await detailResponse.json()) as typeof failure;
+      if (failure?.video.remoteIngestion.status === "failed") break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    expect(failure?.video.remoteIngestion).toMatchObject({
+      status: "failed",
+      failure: {
+        code: "rate_limited",
+        retryable: true,
+        recovery: { type: "upload", href: "/?source=upload" },
+      },
+    });
+
+    const clipResponse = await workerFetch(
+      `http://example.com/api/videos/${created.id}/clips`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: "Blocked clip",
+          trimStart: 1,
+          trimEnd: 3,
+          filters: [],
+        }),
+      },
+    );
+    expect(clipResponse.status).toBe(409);
+    expect(await clipResponse.json()).toMatchObject({
+      error: "Remote source is not ready",
+      details: [
+        {
+          field: "videoId",
+          message: expect.stringContaining("upload the video file"),
+        },
+      ],
+    });
   });
 
   it("persists player duration as reusable video context", async () => {
@@ -3384,6 +3528,19 @@ describe("source video library", () => {
 
   it("does not duplicate a clip when a video clip request is retried", async () => {
     const first = await createYoutubeClip("idempotent source clip");
+    await workerFetch(
+      `http://example.com/api/videos/${first.videoId}/ingest`,
+      { method: "POST" },
+    );
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const source = await env.DB.prepare(
+        "SELECT retained_source_status FROM source_videos WHERE id = ?",
+      )
+        .bind(first.videoId)
+        .first<{ retained_source_status: string }>();
+      if (source?.retained_source_status === "ready") break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
     const beforeResponse = await workerFetch(
       `http://example.com/api/videos/${first.videoId}`,
     );
@@ -3571,18 +3728,35 @@ describe("source video library", () => {
       )
       .run();
 
+    const request = {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "legacy source clip",
+        trimStart: 1,
+        trimEnd: 4,
+        filters: [],
+      }),
+    };
+    const notReadyResponse = await workerFetch(
+      `http://example.com/api/videos/${legacyVideoId}/clips`,
+      request,
+    );
+    expect(notReadyResponse.status).toBe(409);
+
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const source = await env.DB.prepare(
+        "SELECT retained_source_status FROM source_videos WHERE id = ?",
+      )
+        .bind(legacyVideoId)
+        .first<{ retained_source_status: string }>();
+      if (source?.retained_source_status === "ready") break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
     const response = await workerFetch(
       `http://example.com/api/videos/${legacyVideoId}/clips`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: "legacy source clip",
-          trimStart: 1,
-          trimEnd: 4,
-          filters: [],
-        }),
-      },
+      request,
     );
 
     expect(response.status).toBe(201);

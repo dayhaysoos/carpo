@@ -25,7 +25,8 @@ export function visibleStatusPanelClips(
         (clip) =>
           clip.videoId === scope.includeBlockedFailureVideoId &&
           clip.status === "failed" &&
-          isYoutubeBlockedError(clip.errorMessage),
+          (Boolean(clip.sourceFailure) ||
+            isYoutubeBlockedError(clip.errorMessage)),
       )
     : [];
   return {
@@ -61,7 +62,10 @@ function JobCard({ clip }: { clip: ClipResponse }) {
       </div>
 
       {clip.status === "failed" && clip.errorMessage && (
-        <ClipFailureMessage message={clip.errorMessage} />
+        <ClipFailureMessage
+          message={clip.errorMessage}
+          failure={clip.sourceFailure}
+        />
       )}
     </article>
   );

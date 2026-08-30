@@ -24,6 +24,7 @@ const api = vi.hoisted(() => ({
   getPreparedLibraryMomentReview: vi.fn(),
   getPreparedVisualMomentReview: vi.fn(),
   requestUploadUrl: vi.fn(),
+  retryRemoteSourceIngestion: vi.fn(),
   uploadFileWithProgress: vi.fn(),
 }));
 const youtubePlayer = vi.hoisted(() => ({
@@ -70,6 +71,7 @@ vi.mock("../api", async (importOriginal) => {
     getPreparedVisualMomentReview: api.getPreparedVisualMomentReview,
     createClipFromSourceVideo: api.createClipFromSourceVideo,
     requestUploadUrl: api.requestUploadUrl,
+    retryRemoteSourceIngestion: api.retryRemoteSourceIngestion,
     uploadFileWithProgress: api.uploadFileWithProgress,
   };
 });
@@ -528,6 +530,103 @@ describe("CreatorPage", () => {
     );
     await waitFor(() => expect(screen.getByText("Ready")).toBeTruthy());
     expect(api.createSourceVideo).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps clip creation locked while a remote source is importing", async () => {
+    const video: SourceVideoResponse = {
+      ...uploadedVideo("remote-importing", "Remote importing"),
+      source: {
+        type: "youtube",
+        url: "https://www.youtube.com/watch?v=remote-importing",
+      },
+      retainedSourceReady: false,
+      remoteIngestion: {
+        provider: "youtube",
+        status: "importing",
+        failure: null,
+      },
+    };
+    api.getSourceVideo.mockResolvedValue({ video, clips: [] });
+    api.getVideoTranscript.mockRejectedValue(new Error("not ready"));
+
+    renderPage(`/?video=${video.id}`);
+
+    expect(
+      await screen.findByText(/Importing this YouTube video/),
+    ).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: "Create clip" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+  });
+
+  it("uses the private native player after remote ingestion is ready", async () => {
+    const video: SourceVideoResponse = {
+      ...uploadedVideo("remote-ready", "Remote ready"),
+      source: {
+        type: "youtube",
+        url: "https://www.youtube.com/watch?v=remote-ready",
+      },
+      retainedSourceReady: true,
+      remoteIngestion: {
+        provider: "youtube",
+        status: "ready",
+        failure: null,
+      },
+    };
+    api.getSourceVideo.mockResolvedValue({ video, clips: [] });
+    api.getVideoTranscript.mockRejectedValue(new Error("not available"));
+
+    const { container } = renderPage(`/?video=${video.id}`);
+
+    await screen.findByText(video.title);
+    await waitFor(() =>
+      expect(container.querySelector("video.native-player")).toBeTruthy(),
+    );
+    expect(document.getElementById("creator-youtube-player")).toBeNull();
+  });
+
+  it("offers typed upload recovery and retry for retryable provider failures", async () => {
+    const user = userEvent.setup();
+    const video: SourceVideoResponse = {
+      ...uploadedVideo("remote-failed", "Remote failed"),
+      source: {
+        type: "youtube",
+        url: "https://www.youtube.com/watch?v=remote-failed",
+      },
+      retainedSourceReady: false,
+      remoteIngestion: {
+        provider: "youtube",
+        status: "failed",
+        failure: {
+          provider: "youtube",
+          code: "rate_limited",
+          message: "YouTube temporarily blocked this download.",
+          retryable: true,
+          recovery: {
+            type: "upload",
+            href: "/?source=upload",
+            label: "Upload the video instead",
+          },
+        },
+      },
+    };
+    api.getSourceVideo.mockResolvedValue({ video, clips: [] });
+    api.getVideoTranscript.mockRejectedValue(new Error("not ready"));
+    api.retryRemoteSourceIngestion.mockResolvedValue(video);
+
+    renderPage(`/?video=${video.id}`);
+
+    expect(
+      await screen.findByText("YouTube temporarily blocked this download."),
+    ).toBeTruthy();
+    expect(
+      screen
+        .getByRole("link", { name: "Upload the video instead" })
+        .getAttribute("href"),
+    ).toBe("/?source=upload");
+    await user.click(screen.getByRole("button", { name: "Retry import" }));
+    expect(api.retryRemoteSourceIngestion).toHaveBeenCalledWith(video.id);
   });
 
   it("ignores a stale activation after the pasted URL changes", async () => {

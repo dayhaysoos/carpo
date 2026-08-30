@@ -102,6 +102,11 @@ import {
   ClipDistributionError,
 } from "./clip-distribution";
 import { R2MediaDelivery } from "./r2-media-delivery";
+import {
+  performRemoteSourceIngestion,
+  remoteSourceReady,
+  viewRemoteSourceIngestion,
+} from "./remote-source-ingestion";
 
 const MAX_CAPTION_TRACK_BODY_BYTES = 128 * 1024;
 
@@ -152,7 +157,7 @@ export async function handleRequest(
   }
 
   if (request.method === "POST" && url.pathname === "/api/videos") {
-    return handleCreateSourceVideo(request, env, user!);
+    return handleCreateSourceVideo(request, env, ctx, user!);
   }
 
   if (request.method === "POST" && url.pathname === "/api/library/search") {
@@ -198,6 +203,13 @@ export async function handleRequest(
   const videoSourceMatch = url.pathname.match(/^\/api\/videos\/([^/]+)\/source$/);
   if (request.method === "GET" && videoSourceMatch) {
     return handleSourceVideoSource(request, videoSourceMatch[1], env, user!);
+  }
+
+  const videoIngestionMatch = url.pathname.match(
+    /^\/api\/videos\/([^/]+)\/ingest$/,
+  );
+  if (request.method === "POST" && videoIngestionMatch) {
+    return handleRetrySourceIngestion(videoIngestionMatch[1], env, user!);
   }
 
   const videoClipsMatch = url.pathname.match(/^\/api\/videos\/([^/]+)\/clips$/);
@@ -1037,6 +1049,7 @@ async function handleListSourceVideos(
 async function handleCreateSourceVideo(
   request: Request,
   env: Env,
+  ctx: ExecutionContext,
   user: AuthenticatedUser,
 ): Promise<Response> {
   let body: unknown;
@@ -1087,7 +1100,30 @@ async function handleCreateSourceVideo(
   if (!video) {
     return json({ error: "Failed to create video" }, 500);
   }
+  if (video.source_type === "youtube" && !remoteSourceReady(video)) {
+    ctx.waitUntil(performRemoteSourceIngestion(env, video.id));
+  }
   return json(sourceVideoRecordToResponse(video, env.R2_PUBLIC_PREFIX));
+}
+
+async function handleRetrySourceIngestion(
+  videoId: string,
+  env: Env,
+  user: AuthenticatedUser,
+): Promise<Response> {
+  const video = await getSourceVideoByIdForOwner(env.DB, videoId, user.id);
+  if (!video) return json({ error: "Video not found" }, 404);
+  const ingestion = viewRemoteSourceIngestion(video);
+  if (!ingestion) {
+    return json({ error: "Uploaded videos do not require ingestion" }, 409);
+  }
+  if (remoteSourceReady(video)) {
+    return json(sourceVideoRecordToResponse(video, env.R2_PUBLIC_PREFIX));
+  }
+  await performRemoteSourceIngestion(env, video.id);
+  const updated = await getSourceVideoByIdForOwner(env.DB, video.id, user.id);
+  if (!updated) return json({ error: "Video not found" }, 404);
+  return json(sourceVideoRecordToResponse(updated, env.R2_PUBLIC_PREFIX), 202);
 }
 
 async function handleUpdateSourceVideo(
@@ -1226,6 +1262,13 @@ async function handleGetSourceVideo(
 
   if (!video) {
     return json({ error: "Video not found" }, 404);
+  }
+  const ingestion = viewRemoteSourceIngestion(video);
+  if (
+    ingestion?.status === "pending" ||
+    ingestion?.status === "importing"
+  ) {
+    ctx.waitUntil(performRemoteSourceIngestion(env, video.id));
   }
   const [titledVideo] = await resolveUnresolvedYoutubeTitles(
     env.DB,
