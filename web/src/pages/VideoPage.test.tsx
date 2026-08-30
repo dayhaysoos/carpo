@@ -12,6 +12,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import {
   deleteClip,
   deleteSourceVideo,
+  getClipDistribution,
   getSourceVideo,
   requestGifExport,
   setSourceVideoArchived,
@@ -22,8 +23,12 @@ import { VideoPage } from "./VideoPage";
 vi.mock("../api", () => ({
   deleteClip: vi.fn(),
   deleteSourceVideo: vi.fn(),
+  createClipExport: vi.fn(),
+  createClipShare: vi.fn(),
+  getClipDistribution: vi.fn(),
   getSourceVideo: vi.fn(),
   requestGifExport: vi.fn(),
+  revokeClipShare: vi.fn(),
   setSourceVideoArchived: vi.fn(),
 }));
 
@@ -100,6 +105,37 @@ function renderVideoPage() {
 describe("VideoPage clip actions", () => {
   beforeEach(() => {
     vi.mocked(getSourceVideo).mockResolvedValue(detail);
+    vi.mocked(getClipDistribution).mockResolvedValue({
+      clipId: "clip-1",
+      clipTitle: "First clip",
+      shares: [],
+      exports: [
+        {
+          id: "original-mp4",
+          label: "Original MP4",
+          description: "Original",
+          status: "ready",
+          downloadUrl: "/clips/clip-1.mp4",
+          errorMessage: null,
+        },
+        {
+          id: "captioned-mp4",
+          label: "Captioned MP4",
+          description: "Captioned",
+          status: "unavailable",
+          downloadUrl: null,
+          errorMessage: null,
+        },
+        {
+          id: "looping-gif",
+          label: "Looping GIF",
+          description: "GIF",
+          status: "unavailable",
+          downloadUrl: null,
+          errorMessage: null,
+        },
+      ],
+    });
     vi.mocked(deleteClip).mockResolvedValue();
     vi.mocked(deleteSourceVideo).mockResolvedValue();
     vi.mocked(requestGifExport).mockResolvedValue(detail.clips[0]);
@@ -197,5 +233,21 @@ describe("VideoPage clip actions", () => {
     expect(
       screen.getByRole("heading", { level: 2, name: "First clip" }),
     ).toBeTruthy();
+  });
+
+  it("opens owner-managed sharing and export controls for a completed clip", async () => {
+    const user = userEvent.setup();
+    renderVideoPage();
+    await screen.findByText("First clip");
+
+    const distributionButtons = screen.getAllByRole("button", {
+      name: "Share & export",
+    });
+    await user.click(distributionButtons[0]);
+
+    expect(
+      await screen.findByRole("heading", { name: "Private share links" }),
+    ).toBeTruthy();
+    expect(getClipDistribution).toHaveBeenCalledWith("clip-1");
   });
 });

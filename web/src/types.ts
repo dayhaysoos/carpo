@@ -223,6 +223,61 @@ export interface ClipListResponse {
   offset: number;
 }
 
+export type ClipShareStatus = "active" | "expired" | "revoked";
+export type ShareExpirationPreset = "day" | "week" | "month" | "never";
+export type ClipExportPreset =
+  | "original-mp4"
+  | "captioned-mp4"
+  | "looping-gif";
+export type ClipExportStatus =
+  | "ready"
+  | "preparing"
+  | "unavailable"
+  | "failed";
+
+export interface ClipShareSummary {
+  id: string;
+  status: ClipShareStatus;
+  createdAt: string;
+  expiresAt: string | null;
+  revokedAt: string | null;
+  createdByEmail: string;
+}
+
+export interface ClipDistributionExport {
+  id: ClipExportPreset;
+  label: string;
+  description: string;
+  status: ClipExportStatus;
+  downloadUrl: string | null;
+  errorMessage: string | null;
+}
+
+export interface ClipDistributionView {
+  clipId: string;
+  clipTitle: string;
+  shares: ClipShareSummary[];
+  exports: ClipDistributionExport[];
+}
+
+export interface ClipShareCreatedResult {
+  type: "share-created";
+  share: ClipShareSummary;
+  token: string;
+  url: string;
+}
+
+export interface ClipShareRevokedResult {
+  type: "share-revoked";
+  share: ClipShareSummary;
+}
+
+export interface ClipExportResult {
+  type: "export";
+  export: ClipDistributionExport;
+  started: boolean;
+}
+
 export interface ValidationError {
   field: string;
   message: string;

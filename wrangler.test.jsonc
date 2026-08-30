@@ -6,7 +6,7 @@
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
-    "run_worker_first": ["/api/*", "/artifacts/*", "/agents/*"]
+    "run_worker_first": ["/api/*", "/artifacts/*", "/agents/*", "/share/*"]
   },
   "vars": {
     "MAX_CLIP_LENGTH_SECONDS": "60",

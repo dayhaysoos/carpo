@@ -13,6 +13,7 @@ import {
   ClipModal,
 } from "../components/ClipLibraryCard";
 import { CaptionEditorModal } from "../components/CaptionEditorModal";
+import { ClipDistributionModal } from "../components/ClipDistributionModal";
 import { ModalDialog } from "../components/ModalDialog";
 import {
   CLIPS_QUERY_KEY,
@@ -63,6 +64,8 @@ export function VideoPage() {
   const queryClient = useQueryClient();
   const [playingClip, setPlayingClip] = useState<ClipResponse | null>(null);
   const [captionClip, setCaptionClip] = useState<ClipResponse | null>(null);
+  const [distributionClip, setDistributionClip] =
+    useState<ClipResponse | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ClipResponse[]>([]);
   const [clipActionError, setClipActionError] = useState<string | null>(null);
   const [gifExportClipId, setGifExportClipId] = useState<string | null>(null);
@@ -347,6 +350,7 @@ export function VideoPage() {
                       gifMutation.mutate(selectedClip.id)
                     }
                     onEditCaptions={setCaptionClip}
+                    onManageDistribution={setDistributionClip}
                     gifExporting={
                       (gifMutation.isPending && gifExportClipId === clip.id) ||
                       clip.gifStatus === "encoding"
@@ -389,6 +393,13 @@ export function VideoPage() {
         <CaptionEditorModal
           clip={captionClip}
           onClose={() => setCaptionClip(null)}
+        />
+      )}
+
+      {distributionClip && (
+        <ClipDistributionModal
+          clip={distributionClip}
+          onClose={() => setDistributionClip(null)}
         />
       )}
 

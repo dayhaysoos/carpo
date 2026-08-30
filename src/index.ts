@@ -12,6 +12,7 @@ import {
   isMachineRequest,
   type AuthenticatedUser,
 } from "./identity";
+import { handlePublicClipDistribution } from "./clip-distribution-http";
 
 export { EncoderContainer, TranscriptPreparation, VideoClipAgent };
 
@@ -52,6 +53,14 @@ export default {
     const reviewAccessResponse = await handleReviewAccess(request, env);
     if (reviewAccessResponse) {
       return reviewAccessResponse;
+    }
+
+    const publicDistributionResponse = await handlePublicClipDistribution(
+      request,
+      env,
+    );
+    if (publicDistributionResponse) {
+      return publicDistributionResponse;
     }
 
     let user: AuthenticatedUser | null = null;

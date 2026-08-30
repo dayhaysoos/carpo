@@ -24,6 +24,12 @@ import type {
   VisualSearchResponse,
   PrepareVisualMomentRequest,
   PreparedVisualMomentReview,
+  ClipDistributionView,
+  ClipExportPreset,
+  ClipExportResult,
+  ClipShareCreatedResult,
+  ClipShareRevokedResult,
+  ShareExpirationPreset,
 } from "./types";
 
 export async function getCurrentUser(): Promise<CurrentUserResponse> {
@@ -454,4 +460,66 @@ export async function requestGifExport(id: string): Promise<ClipResponse> {
     throw new Error(body.error || `Request failed (${response.status})`);
   }
   return response.json() as Promise<ClipResponse>;
+}
+
+export async function getClipDistribution(
+  clipId: string,
+): Promise<ClipDistributionView> {
+  const response = await fetch(
+    `/api/clips/${encodeURIComponent(clipId)}/distribution`,
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiError;
+    throw new Error(body.error || `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<ClipDistributionView>;
+}
+
+export async function createClipShare(
+  clipId: string,
+  expiration: ShareExpirationPreset,
+): Promise<ClipShareCreatedResult> {
+  const response = await fetch(
+    `/api/clips/${encodeURIComponent(clipId)}/distribution/shares`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ expiration }),
+    },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiError;
+    throw new Error(body.error || `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<ClipShareCreatedResult>;
+}
+
+export async function revokeClipShare(
+  clipId: string,
+  shareId: string,
+): Promise<ClipShareRevokedResult> {
+  const response = await fetch(
+    `/api/clips/${encodeURIComponent(clipId)}/distribution/shares/${encodeURIComponent(shareId)}`,
+    { method: "DELETE" },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiError;
+    throw new Error(body.error || `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<ClipShareRevokedResult>;
+}
+
+export async function createClipExport(
+  clipId: string,
+  preset: ClipExportPreset,
+): Promise<ClipExportResult> {
+  const response = await fetch(
+    `/api/clips/${encodeURIComponent(clipId)}/distribution/exports/${encodeURIComponent(preset)}`,
+    { method: "POST" },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiError;
+    throw new Error(body.error || `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<ClipExportResult>;
 }
