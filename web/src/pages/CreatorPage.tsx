@@ -19,6 +19,7 @@ import {
 } from "../queries";
 import { useSearchParams } from "react-router-dom";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import type { PreparedClipProposalHandoff } from "../clip-proposal-review";
 import { useWebMcpClipTools } from "../hooks/useWebMcpClipTools";
 import { useWebMcpVisualTools } from "../hooks/useWebMcpVisualTools";
 import {
@@ -50,11 +51,8 @@ export function CreatorPage() {
     INITIAL_OWNED_UPLOAD_CLIP_JOURNEY_STATE,
   );
   const clipWindowSequence = useRef(0);
-  const admittedLibraryProposals = useRef(new Set<string>());
-  const admittedVisualProposals = useRef(new Set<string>());
   const [proposalReview] = useState(createClipProposalReview);
-  const [libraryProposalError, setLibraryProposalError] = useState<string | null>(null);
-  const [visualProposalError, setVisualProposalError] = useState<string | null>(null);
+  const [preparedProposalError, setPreparedProposalError] = useState<string | null>(null);
   const [clipWindowRequest, setClipWindowRequest] =
     useState<ClipWindowRequest | null>(null);
   const [captionReview, setCaptionReview] = useState<{
@@ -135,91 +133,72 @@ export function CreatorPage() {
   }, [videoId]);
 
   useEffect(() => {
-    if (!preparedLibraryProposal || activeVideo?.id !== preparedLibraryProposal.videoId) {
+    if (!activeVideo) {
+      setPreparedProposalError(null);
       return;
     }
-    if (admittedLibraryProposals.current.has(preparedLibraryProposal.proposalId)) {
+    if (
+      libraryProposalId &&
+      !preparedLibraryProposal &&
+      !preparedLibraryProposalError
+    ) {
+      setPreparedProposalError(null);
       return;
     }
-    proposalReview.activate({
-      id: activeVideo.id,
-      durationSeconds: activeVideo.durationSeconds,
-    });
-    const admission = proposalReview.admit({
-      adapter: "library",
-      requestId: preparedLibraryProposal.proposalId,
-      videoId: preparedLibraryProposal.videoId,
-      atomic: true,
-      proposals: [
-        {
+    const handoffs: Array<{
+      parameter: "libraryProposal" | "visualProposal";
+      handoff: PreparedClipProposalHandoff;
+    }> = [];
+    if (preparedLibraryProposal) {
+      handoffs.push({
+        parameter: "libraryProposal",
+        handoff: {
+          adapter: "library",
+          requestId: preparedLibraryProposal.proposalId,
+          videoId: preparedLibraryProposal.videoId,
           proposalId: preparedLibraryProposal.searchResultId,
           input: { ...preparedLibraryProposal.input },
           evidence: { ...preparedLibraryProposal.evidence },
-          settle: () => undefined,
         },
-      ],
-    });
-    const issues = [
-      ...admission.issues,
-      ...admission.items.flatMap((item) => item.issues),
-    ];
-    if (issues.length > 0) {
-      setLibraryProposalError(issues.map((issue) => issue.message).join(" "));
-      return;
+      });
     }
-    admittedLibraryProposals.current.add(preparedLibraryProposal.proposalId);
-    setLibraryProposalError(null);
-    const nextSearchParams = new URLSearchParams(searchParams);
-    nextSearchParams.delete("libraryProposal");
-    setSearchParams(nextSearchParams, { replace: true });
-  }, [
-    activeVideo,
-    preparedLibraryProposal,
-    proposalReview,
-    searchParams,
-    setSearchParams,
-  ]);
-
-  useEffect(() => {
-    if (!preparedVisualProposal || activeVideo?.id !== preparedVisualProposal.videoId) {
-      return;
-    }
-    if (admittedVisualProposals.current.has(preparedVisualProposal.proposalId)) {
-      return;
-    }
-    proposalReview.activate({
-      id: activeVideo.id,
-      durationSeconds: activeVideo.durationSeconds,
-    });
-    const admission = proposalReview.admit({
-      adapter: "visual",
-      requestId: preparedVisualProposal.proposalId,
-      videoId: preparedVisualProposal.videoId,
-      atomic: true,
-      proposals: [
-        {
+    if (preparedVisualProposal) {
+      handoffs.push({
+        parameter: "visualProposal",
+        handoff: {
+          adapter: "visual",
+          requestId: preparedVisualProposal.proposalId,
+          videoId: preparedVisualProposal.videoId,
           proposalId: preparedVisualProposal.searchResultId,
           input: { ...preparedVisualProposal.input },
           evidence: { ...preparedVisualProposal.evidence },
-          settle: () => undefined,
         },
-      ],
-    });
-    const issues = [
-      ...admission.issues,
-      ...admission.items.flatMap((item) => item.issues),
-    ];
-    if (issues.length > 0) {
-      setVisualProposalError(issues.map((issue) => issue.message).join(" "));
-      return;
+      });
     }
-    admittedVisualProposals.current.add(preparedVisualProposal.proposalId);
-    setVisualProposalError(null);
+
     const nextSearchParams = new URLSearchParams(searchParams);
-    nextSearchParams.delete("visualProposal");
-    setSearchParams(nextSearchParams, { replace: true });
+    const errors: string[] = [];
+    let consumed = false;
+    for (const candidate of handoffs) {
+      const result = proposalReview.intakePrepared(
+        { id: activeVideo.id, durationSeconds: activeVideo.durationSeconds },
+        candidate.handoff,
+      );
+      if (result.consumable) {
+        nextSearchParams.delete(candidate.parameter);
+        consumed = true;
+      } else {
+        errors.push(...result.issues.map((issue) => issue.message));
+      }
+    }
+
+    setPreparedProposalError(errors.length > 0 ? errors.join(" ") : null);
+    if (consumed) setSearchParams(nextSearchParams, { replace: true });
   }, [
     activeVideo,
+    libraryProposalId,
+    preparedLibraryProposal,
+    preparedLibraryProposalError,
     preparedVisualProposal,
     proposalReview,
     searchParams,
@@ -298,9 +277,9 @@ export function CreatorPage() {
 
   return (
     <main className="app-main">
-      {(preparedLibraryProposalError || libraryProposalError || preparedVisualProposalError || visualProposalError) && (
+      {(preparedLibraryProposalError || preparedVisualProposalError || preparedProposalError) && (
         <p className="form-error library-proposal-error" role="alert">
-          {libraryProposalError ?? preparedLibraryProposalError?.message ?? visualProposalError ?? preparedVisualProposalError?.message}
+          {preparedProposalError ?? preparedLibraryProposalError?.message ?? preparedVisualProposalError?.message}
         </p>
       )}
       <CreatorForm

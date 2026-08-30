@@ -113,6 +113,94 @@ describe("ClipProposalReview", () => {
     ]);
   });
 
+  it("intakes prepared Library and Visual handoffs through one review-owned path", () => {
+    const library = review.intakePrepared(
+      { id: "video-1", durationSeconds: 90 },
+      {
+        adapter: "library",
+        requestId: "library-handoff",
+        videoId: "video-1",
+        proposalId: "library-result",
+        input: proposal("library-result", 2).input,
+        evidence: {
+          rationale: "A grounded transcript result.",
+          sourceBlockIds: ["block-1"],
+          workspaceRevision: "workspace-1",
+        },
+      },
+    );
+    const visual = review.intakePrepared(
+      { id: "video-1", durationSeconds: 90 },
+      {
+        adapter: "visual",
+        requestId: "visual-handoff",
+        videoId: "video-1",
+        proposalId: "visual-result",
+        input: proposal("visual-result", 8).input,
+        evidence: {
+          rationale: "A grounded sampled-frame result.",
+          sourceFrameIds: ["frame-1"],
+          sourceRevision: "source-1",
+        },
+      },
+    );
+    const replay = review.intakePrepared(
+      { id: "video-1", durationSeconds: 90 },
+      {
+        adapter: "library",
+        requestId: "library-handoff",
+        videoId: "video-1",
+        proposalId: "library-result",
+        input: proposal("library-result", 2).input,
+      },
+    );
+
+    expect(library).toMatchObject({
+      status: "accepted",
+      consumable: true,
+      issues: [],
+    });
+    expect(visual).toMatchObject({
+      status: "queued",
+      consumable: true,
+      issues: [],
+    });
+    expect(replay).toMatchObject({
+      status: "replayed",
+      consumable: true,
+      issues: [],
+    });
+    expect(review.getSnapshot().items).toMatchObject([
+      {
+        provenance: {
+          adapter: "library",
+          sourceBlockIds: ["block-1"],
+          workspaceRevision: "workspace-1",
+        },
+      },
+    ]);
+  });
+
+  it("rejects a prepared handoff for a different active Video", () => {
+    const result = review.intakePrepared(
+      { id: "video-1", durationSeconds: 90 },
+      {
+        adapter: "visual",
+        requestId: "wrong-video-handoff",
+        videoId: "video-2",
+        proposalId: "visual-result",
+        input: proposal("visual-result", 8).input,
+      },
+    );
+
+    expect(result).toMatchObject({
+      status: "rejected",
+      consumable: false,
+      issues: [{ code: "VIDEO_MISMATCH" }],
+    });
+    expect(review.getSnapshot().items).toEqual([]);
+  });
+
   it("refreshes adapter callbacks without publishing an unchanged snapshot", async () => {
     const originalSettle = vi.fn();
     const refreshedSettle = vi.fn();

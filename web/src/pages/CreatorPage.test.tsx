@@ -9,8 +9,12 @@ import {
 import userEvent from "@testing-library/user-event";
 import { useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { CreatorPage } from "./CreatorPage";
+import type {
+  PreparedLibraryMomentReview,
+  SourceVideoResponse,
+} from "../types";
 
 const api = vi.hoisted(() => ({
   createSourceVideo: vi.fn(),
@@ -18,12 +22,42 @@ const api = vi.hoisted(() => ({
   getVideoTranscript: vi.fn(),
   createClipFromSourceVideo: vi.fn(),
   getPreparedLibraryMomentReview: vi.fn(),
+  getPreparedVisualMomentReview: vi.fn(),
   requestUploadUrl: vi.fn(),
   uploadFileWithProgress: vi.fn(),
 }));
 const youtubePlayer = vi.hoisted(() => ({
   ready: true,
 }));
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
+function uploadedVideo(id: string, title: string): SourceVideoResponse {
+  return {
+    id,
+    title,
+    source: { type: "upload", key: `uploads/${id}.mp4` },
+    clipCount: 0,
+    activeClipCount: 0,
+    failedClipCount: 0,
+    thumbnail: null,
+    durationSeconds: 90,
+    retainedSourceReady: true,
+    transcriptStatus: "available",
+    transcriptCheckedAt: "2026-08-30T01:00:00.000Z",
+    transcriptCheckError: null,
+    transcriptRetryAt: null,
+    archivedAt: null,
+    createdAt: "2026-08-30T00:00:00.000Z",
+    updatedAt: "2026-08-30T01:00:00.000Z",
+  };
+}
 
 vi.mock("../api", async (importOriginal) => {
   const original = await importOriginal<typeof import("../api")>();
@@ -33,6 +67,7 @@ vi.mock("../api", async (importOriginal) => {
     getSourceVideo: api.getSourceVideo,
     getVideoTranscript: api.getVideoTranscript,
     getPreparedLibraryMomentReview: api.getPreparedLibraryMomentReview,
+    getPreparedVisualMomentReview: api.getPreparedVisualMomentReview,
     createClipFromSourceVideo: api.createClipFromSourceVideo,
     requestUploadUrl: api.requestUploadUrl,
     uploadFileWithProgress: api.uploadFileWithProgress,
@@ -89,9 +124,15 @@ describe("CreatorPage", () => {
       <QueryClientProvider client={queryClient}>
         <MemoryRouter initialEntries={[initialEntry]}>
           <CreatorPage />
+          <LocationProbe />
         </MemoryRouter>
       </QueryClientProvider>,
     );
+  }
+
+  function LocationProbe() {
+    const location = useLocation();
+    return <output data-testid="location-search">{location.search}</output>;
   }
 
   it("always shows Think before a video is selected", () => {
@@ -286,6 +327,159 @@ describe("CreatorPage", () => {
     expect(screen.getByText(/Suggested via Library search/)).toBeTruthy();
     expect(screen.getByText("Exact transcript match for a grounded moment.")).toBeTruthy();
     expect(api.createClipFromSourceVideo).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(screen.getByTestId("location-search").textContent).not.toContain(
+        "libraryProposal",
+      ),
+    );
+  });
+
+  it("opens a revision-checked Visual result through the same prepared intake", async () => {
+    const video = uploadedVideo("visual-result-video", "Visual source");
+    api.getSourceVideo.mockResolvedValue({ video, clips: [] });
+    api.getVideoTranscript.mockResolvedValue({
+      transcriptStatus: "available",
+      language: "en",
+      automatic: true,
+      cached: true,
+      blocks: [],
+    });
+    api.getPreparedVisualMomentReview.mockResolvedValue({
+      proposalId: "prepared-visual-proposal",
+      searchResultId: "visual-result-id",
+      videoId: video.id,
+      reviewUrl: `/?video=${video.id}&visualProposal=prepared-visual-proposal`,
+      input: {
+        title: "Blue logo — Visual source",
+        startSeconds: 12,
+        endSeconds: 18,
+        quality: "1080p",
+      },
+      evidence: {
+        rationale: "A blue logo appears in the sampled frames.",
+        sourceFrameIds: ["frame-1"],
+        sourceRevision: "source-1",
+      },
+    });
+
+    renderPage(`/?video=${video.id}&visualProposal=prepared-visual-proposal`);
+
+    expect(await screen.findByRole("heading", { name: "Review clips" })).toBeTruthy();
+    expect(screen.getByText("Blue logo — Visual source")).toBeTruthy();
+    expect(screen.getByText(/Suggested via Visual search/)).toBeTruthy();
+    expect(screen.getByText("A blue logo appears in the sampled frames.")).toBeTruthy();
+    expect(api.createClipFromSourceVideo).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(screen.getByTestId("location-search").textContent).not.toContain(
+        "visualProposal",
+      ),
+    );
+  });
+
+  it("keeps a mismatched prepared handoff recoverable in the URL", async () => {
+    const video = uploadedVideo("active-video", "Active source");
+    api.getSourceVideo.mockResolvedValue({ video, clips: [] });
+    api.getVideoTranscript.mockResolvedValue({
+      transcriptStatus: "available",
+      language: "en",
+      automatic: true,
+      cached: true,
+      blocks: [],
+    });
+    api.getPreparedVisualMomentReview.mockResolvedValue({
+      proposalId: "wrong-video-proposal",
+      searchResultId: "visual-result-id",
+      videoId: "another-video",
+      reviewUrl: "/?video=another-video&visualProposal=wrong-video-proposal",
+      input: {
+        title: "Wrong video",
+        startSeconds: 12,
+        endSeconds: 18,
+        quality: "1080p",
+      },
+      evidence: {
+        rationale: "Mismatched evidence.",
+        sourceFrameIds: ["frame-1"],
+        sourceRevision: "source-1",
+      },
+    });
+
+    renderPage(`/?video=${video.id}&visualProposal=wrong-video-proposal`);
+
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "The proposal Video does not match the active Video.",
+    );
+    expect(screen.getByTestId("location-search").textContent).toContain(
+      "visualProposal=wrong-video-proposal",
+    );
+    expect(screen.queryByRole("heading", { name: "Review clips" })).toBeNull();
+  });
+
+  it("keeps Library ahead of Visual when both prepared handoffs load out of order", async () => {
+    const video = uploadedVideo("ordered-handoff-video", "Ordered source");
+    const library = deferred<PreparedLibraryMomentReview>();
+    api.getSourceVideo.mockResolvedValue({ video, clips: [] });
+    api.getVideoTranscript.mockResolvedValue({
+      transcriptStatus: "available",
+      language: "en",
+      automatic: true,
+      cached: true,
+      blocks: [],
+    });
+    api.getPreparedLibraryMomentReview.mockReturnValue(library.promise);
+    api.getPreparedVisualMomentReview.mockResolvedValue({
+      proposalId: "ordered-visual-proposal",
+      searchResultId: "ordered-visual-result",
+      videoId: video.id,
+      reviewUrl: `/?video=${video.id}&visualProposal=ordered-visual-proposal`,
+      input: {
+        title: "Visual second",
+        startSeconds: 12,
+        endSeconds: 18,
+        quality: "1080p",
+      },
+      evidence: {
+        rationale: "Sampled visual evidence.",
+        sourceFrameIds: ["frame-1"],
+        sourceRevision: "source-1",
+      },
+    });
+
+    renderPage(
+      `/?video=${video.id}&libraryProposal=ordered-library-proposal&visualProposal=ordered-visual-proposal`,
+    );
+
+    await screen.findByText(video.title);
+    await waitFor(() =>
+      expect(api.getPreparedVisualMomentReview).toHaveBeenCalled(),
+    );
+    expect(screen.queryByRole("heading", { name: "Review clips" })).toBeNull();
+
+    library.resolve({
+      proposalId: "ordered-library-proposal",
+      searchResultId: "ordered-library-result",
+      videoId: video.id,
+      reviewUrl: `/?video=${video.id}&libraryProposal=ordered-library-proposal`,
+      input: {
+        title: "Library first",
+        startSeconds: 2,
+        endSeconds: 8,
+        quality: "1080p",
+      },
+      evidence: {
+        rationale: "Grounded Library evidence.",
+        sourceBlockIds: ["block-1"],
+        workspaceRevision: "workspace-1",
+      },
+    });
+
+    expect(await screen.findByText("Library first")).toBeTruthy();
+    expect(screen.queryByText("Visual second")).toBeNull();
+    await waitFor(() => {
+      const search = screen.getByTestId("location-search").textContent;
+      expect(search).not.toContain("libraryProposal");
+      expect(search).not.toContain("visualProposal");
+    });
   });
 
   it("activates Think for a valid URL before the player is ready", async () => {
