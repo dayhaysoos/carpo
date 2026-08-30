@@ -26,6 +26,9 @@ export const CARPO_WEBMCP_KNOWN_TOOL_NAMES = Object.freeze([
   "getCarpoLibraryInstructions",
   "searchPrivateLibrary",
   "prepareLibraryMomentReview",
+  "getCarpoVisualInstructions",
+  "searchVisualMoments",
+  "prepareVisualMomentReview",
 ]);
 export const READ_ONLY_BROWSER_METHODS = Object.freeze([
   "GET",

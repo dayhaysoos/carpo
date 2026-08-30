@@ -72,7 +72,7 @@ DEJAVU_FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 KNOWN_FILTER_TYPES = frozenset({"caption"})
 CAPTION_THEMES = frozenset({"classic", "high-contrast-box", "bold-yellow"})
 MAX_TIMED_CAPTION_CUES = 200
-ENCODER_PROTOCOL_VERSION = 3
+ENCODER_PROTOCOL_VERSION = 4
 YOUTUBE_BLOCKED_MESSAGE = (
     "YouTube is blocking downloads from this server. "
     "Try uploading the video file instead."
@@ -202,6 +202,54 @@ def cleanup_job_outputs(job_id: str) -> None:
     output_dir = job_output_dir(sanitize_job_id(job_id))
     if output_dir.exists():
         shutil.rmtree(output_dir, ignore_errors=True)
+
+
+def extract_sample_frames(
+    source_path: Path,
+    job_id: str,
+    samples: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not source_path.exists():
+        raise FileNotFoundError("Staged video source not found")
+    if not samples or len(samples) > 8:
+        raise ValueError("Between 1 and 8 frame samples are required")
+    output_dir = job_output_dir(job_id)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    extracted: list[dict[str, Any]] = []
+    for sample in samples:
+        sample_id = sample.get("id")
+        timestamp = sample.get("timestampSeconds")
+        if (
+            not isinstance(sample_id, str)
+            or not re.fullmatch(r"frame-[A-Za-z0-9-]+", sample_id)
+            or not isinstance(timestamp, (int, float))
+            or float(timestamp) < 0
+        ):
+            raise ValueError("Invalid frame sample")
+        output_path = output_dir / f"{sample_id}.jpg"
+        command = [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-ss",
+            f"{float(timestamp):.3f}",
+            "-i",
+            str(source_path),
+            "-frames:v",
+            "1",
+            "-vf",
+            "scale='min(640,iw)':-2",
+            "-q:v",
+            "3",
+            "-y",
+            str(output_path),
+        ]
+        completed = subprocess.run(command, capture_output=True, text=True, check=False)
+        if completed.returncode != 0 or not output_path.exists():
+            raise RuntimeError(completed.stderr.strip() or "Frame extraction failed")
+        extracted.append({"id": sample_id, "timestampSeconds": float(timestamp)})
+    return extracted
 
 
 def sweep_stale_job_artifacts() -> None:
@@ -2307,6 +2355,8 @@ class EncoderHandler(BaseHTTPRequestHandler):
                     "clip.gif": "image/gif",
                     "source.mp4": "video/mp4",
                 }
+                if re.fullmatch(r"frame-[A-Za-z0-9-]+\.jpg", name):
+                    content_types[name] = "image/jpeg"
                 if re.fullmatch(r"audio-\d{3}\.mp3", name):
                     content_types[name] = "audio/mpeg"
                 if name in content_types:
@@ -2456,6 +2506,31 @@ class EncoderHandler(BaseHTTPRequestHandler):
                         "status": "failed",
                         "errorMessage": str(exc)
                         or "Audio extraction failed",
+                    },
+                )
+            return
+
+        if self.path.startswith("/sample-frames"):
+            try:
+                job_id = parse_job_id_from_query(self.path)
+                if not job_id:
+                    raise ValueError("job query parameter required")
+                body = self._read_json()
+                samples = body.get("samples")
+                if not isinstance(samples, list):
+                    raise ValueError("samples are required")
+                extracted = extract_sample_frames(
+                    staged_source_path(job_id),
+                    job_id,
+                    samples,
+                )
+                self._send_json(200, {"samples": extracted})
+            except Exception as exc:  # noqa: BLE001
+                self._send_json(
+                    502,
+                    {
+                        "status": "failed",
+                        "errorMessage": str(exc) or "Frame extraction failed",
                     },
                 )
             return

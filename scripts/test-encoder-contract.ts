@@ -670,6 +670,46 @@ print("Audio chunk extraction contract test passed")
   console.log("Encoder audio chunk extraction contract test passed");
 }
 
+function testSampleFrameExtraction(sourcePath: string) {
+  const script = `
+import sys
+from pathlib import Path
+
+sys.path.insert(0, "/app")
+from encoder import extract_sample_frames
+
+samples = extract_sample_frames(
+    Path("/tmp/source.mp4"),
+    "visual-contract",
+    [
+        {"id": "frame-00-1000", "timestampSeconds": 1.0},
+        {"id": "frame-01-5000", "timestampSeconds": 5.0},
+    ],
+)
+assert samples == [
+    {"id": "frame-00-1000", "timestampSeconds": 1.0},
+    {"id": "frame-01-5000", "timestampSeconds": 5.0},
+]
+for sample in samples:
+    output = Path("/outputs/visual-contract") / f"{sample['id']}.jpg"
+    assert output.exists()
+    assert output.stat().st_size > 0
+print("Visual frame sampling contract test passed")
+`;
+
+  run("docker", [
+    "run",
+    "--rm",
+    "-v",
+    `${sourcePath}:/tmp/source.mp4:ro`,
+    imageName,
+    "python3",
+    "-c",
+    script,
+  ]);
+  console.log("Encoder visual frame sampling contract test passed");
+}
+
 function testSectionEncodeBounds() {
   const script = `
 import sys
@@ -3713,6 +3753,7 @@ function main() {
   buildImage();
   testImageToolchainSmoke();
   testAudioChunkExtraction(barsPath);
+  testSampleFrameExtraction(barsPath);
   testProcessGroupKill();
   runStageSourceContract(frameCounterPath);
   runSequentialTwoJobContract(frameCounterPath);

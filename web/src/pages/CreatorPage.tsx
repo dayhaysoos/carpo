@@ -3,6 +3,7 @@ import {
   getSourceVideo,
   getVideoTranscript,
   getPreparedLibraryMomentReview,
+  getPreparedVisualMomentReview,
   validateCaptionTrackProposal,
 } from "../api";
 import { createClipProposalReview } from "../create-clip-proposal-review";
@@ -10,6 +11,7 @@ import { CreatorForm } from "../components/CreatorForm";
 import { StatusPanel } from "../components/StatusPanel";
 import { VideoAgentChat } from "../components/VideoAgentChat";
 import { CaptionEditorModal } from "../components/CaptionEditorModal";
+import { VisualMomentSearchPanel } from "../components/VisualMomentSearchPanel";
 import {
   CLIPS_QUERY_KEY,
   sourceVideoQueryKey,
@@ -18,6 +20,7 @@ import {
 import { useSearchParams } from "react-router-dom";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { useWebMcpClipTools } from "../hooks/useWebMcpClipTools";
+import { useWebMcpVisualTools } from "../hooks/useWebMcpVisualTools";
 import {
   getOwnedUploadClipJourneyView,
   INITIAL_OWNED_UPLOAD_CLIP_JOURNEY_STATE,
@@ -41,14 +44,17 @@ export function CreatorPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const videoId = searchParams.get("video") ?? "";
   const libraryProposalId = searchParams.get("libraryProposal") ?? "";
+  const visualProposalId = searchParams.get("visualProposal") ?? "";
   const [ownedUploadJourneyState, updateOwnedUploadJourney] = useReducer(
     updateOwnedUploadClipJourney,
     INITIAL_OWNED_UPLOAD_CLIP_JOURNEY_STATE,
   );
   const clipWindowSequence = useRef(0);
   const admittedLibraryProposals = useRef(new Set<string>());
+  const admittedVisualProposals = useRef(new Set<string>());
   const [proposalReview] = useState(createClipProposalReview);
   const [libraryProposalError, setLibraryProposalError] = useState<string | null>(null);
+  const [visualProposalError, setVisualProposalError] = useState<string | null>(null);
   const [clipWindowRequest, setClipWindowRequest] =
     useState<ClipWindowRequest | null>(null);
   const [captionReview, setCaptionReview] = useState<{
@@ -93,6 +99,15 @@ export function CreatorPage() {
         ? result.retryAfterMs
         : false;
     },
+  });
+  const {
+    data: preparedVisualProposal,
+    error: preparedVisualProposalError,
+  } = useQuery({
+    queryKey: ["visual-moment-proposal", visualProposalId],
+    queryFn: () => getPreparedVisualMomentReview(visualProposalId),
+    enabled: Boolean(visualProposalId),
+    retry: false,
   });
   const {
     data: preparedLibraryProposal,
@@ -164,6 +179,52 @@ export function CreatorPage() {
     searchParams,
     setSearchParams,
   ]);
+
+  useEffect(() => {
+    if (!preparedVisualProposal || activeVideo?.id !== preparedVisualProposal.videoId) {
+      return;
+    }
+    if (admittedVisualProposals.current.has(preparedVisualProposal.proposalId)) {
+      return;
+    }
+    proposalReview.activate({
+      id: activeVideo.id,
+      durationSeconds: activeVideo.durationSeconds,
+    });
+    const admission = proposalReview.admit({
+      adapter: "visual",
+      requestId: preparedVisualProposal.proposalId,
+      videoId: preparedVisualProposal.videoId,
+      atomic: true,
+      proposals: [
+        {
+          proposalId: preparedVisualProposal.searchResultId,
+          input: { ...preparedVisualProposal.input },
+          evidence: { ...preparedVisualProposal.evidence },
+          settle: () => undefined,
+        },
+      ],
+    });
+    const issues = [
+      ...admission.issues,
+      ...admission.items.flatMap((item) => item.issues),
+    ];
+    if (issues.length > 0) {
+      setVisualProposalError(issues.map((issue) => issue.message).join(" "));
+      return;
+    }
+    admittedVisualProposals.current.add(preparedVisualProposal.proposalId);
+    setVisualProposalError(null);
+    const nextSearchParams = new URLSearchParams(searchParams);
+    nextSearchParams.delete("visualProposal");
+    setSearchParams(nextSearchParams, { replace: true });
+  }, [
+    activeVideo,
+    preparedVisualProposal,
+    proposalReview,
+    searchParams,
+    setSearchParams,
+  ]);
   const openCaptionProposal = useCallback(
     async (
       input: CaptionTrackProposalInput,
@@ -195,6 +256,9 @@ export function CreatorPage() {
     review: proposalReview,
     onCaptionProposal: (input) => openCaptionProposal(input, "webmcp"),
   });
+  useWebMcpVisualTools(
+    activeVideo?.source.type === "upload" ? activeVideo.id : null,
+  );
 
   const handleClipCreated = (clip: OwnedUploadClipReference) => {
     if (videoId) {
@@ -226,12 +290,17 @@ export function CreatorPage() {
   const existingClips = toExistingClipRanges(
     activeVideo ? sourceVideoData?.clips : undefined,
   );
+  const handleVisualProposalPrepared = (proposalId: string) => {
+    const nextSearchParams = new URLSearchParams(searchParams);
+    nextSearchParams.set("visualProposal", proposalId);
+    setSearchParams(nextSearchParams);
+  };
 
   return (
     <main className="app-main">
-      {(preparedLibraryProposalError || libraryProposalError) && (
+      {(preparedLibraryProposalError || libraryProposalError || preparedVisualProposalError || visualProposalError) && (
         <p className="form-error library-proposal-error" role="alert">
-          {libraryProposalError ?? preparedLibraryProposalError?.message}
+          {libraryProposalError ?? preparedLibraryProposalError?.message ?? visualProposalError ?? preparedVisualProposalError?.message}
         </p>
       )}
       <CreatorForm
@@ -240,6 +309,12 @@ export function CreatorPage() {
         clipWindowRequest={clipWindowRequest}
         ownedUploadJourney={ownedUploadJourney}
       />
+      {activeVideo?.source.type === "upload" && (
+        <VisualMomentSearchPanel
+          videoId={activeVideo.id}
+          onPrepared={handleVisualProposalPrepared}
+        />
+      )}
       <VideoAgentChat
         videoId={videoId}
         source={activeVideo?.source}

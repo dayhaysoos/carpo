@@ -198,6 +198,55 @@ export class EncoderContainer extends Container<Env> {
       }
     }
 
+    if (
+      url.pathname === "/__carpo/sample-frames" &&
+      request.method === "POST"
+    ) {
+      try {
+        const body = (await request.json()) as {
+          videoId?: unknown;
+          sourceRevision?: unknown;
+          samples?: unknown;
+        };
+        if (
+          typeof body.videoId !== "string" ||
+          typeof body.sourceRevision !== "string" ||
+          !Array.isArray(body.samples)
+        ) {
+          return Response.json(
+            { errorMessage: "Video frame sampling payload is invalid" },
+            { status: 400 },
+          );
+        }
+        const samples = body.samples.filter(
+          (sample): sample is { id: string; timestampSeconds: number; key: string } => {
+            if (!sample || typeof sample !== "object") return false;
+            const candidate = sample as Record<string, unknown>;
+            return (
+              typeof candidate.id === "string" &&
+              typeof candidate.timestampSeconds === "number" &&
+              Number.isFinite(candidate.timestampSeconds) &&
+              candidate.timestampSeconds >= 0 &&
+              typeof candidate.key === "string" &&
+              candidate.key.startsWith("visual-samples/")
+            );
+          },
+        );
+        if (samples.length !== body.samples.length || samples.length < 1 || samples.length > 8) {
+          return Response.json(
+            { errorMessage: "Between 1 and 8 valid frame samples are required" },
+            { status: 400 },
+          );
+        }
+        return await this.handleSampleFrames(body.videoId, samples);
+      } catch {
+        return Response.json(
+          { errorMessage: "Invalid video frame sampling payload" },
+          { status: 400 },
+        );
+      }
+    }
+
     if (url.pathname === "/__carpo/dispatch" && request.method === "POST") {
       try {
         const job = (await request.json()) as RunJobSpec;
@@ -683,6 +732,88 @@ export class EncoderContainer extends Container<Env> {
                 error instanceof Error
                   ? error.message
                   : "Retained-source transcription failed",
+            },
+            { status: 502 },
+          );
+        } finally {
+          stopKeepalive();
+          await this.ctx.storage.delete("jobStartedAt");
+          await this.cleanupJobFiles(jobId);
+        }
+      });
+    } finally {
+      await this.decrementQueueDepth();
+    }
+  }
+
+  private async handleSampleFrames(
+    videoId: string,
+    samples: Array<{ id: string; timestampSeconds: number; key: string }>,
+  ): Promise<Response> {
+    const jobId = crypto.randomUUID();
+    await this.incrementQueueDepth();
+    try {
+      return await this.enqueueJob(async () => {
+        const stopKeepalive = this.startJobKeepalive();
+        try {
+          await this.ctx.storage.put("jobStartedAt", Date.now());
+          const video = await getSourceVideoById(this.env.DB, videoId);
+          if (!video || video.source_type !== "upload") {
+            return Response.json(
+              { errorMessage: "Uploaded video source not found" },
+              { status: 404 },
+            );
+          }
+          const staged = await this.stageBucketSource(video.source_ref, jobId);
+          if (!staged.ok) {
+            return Response.json({ errorMessage: staged.error }, { status: 502 });
+          }
+          const extraction = await super.fetch(
+            new Request(
+              `http://encoder/sample-frames?job=${encodeURIComponent(jobId)}`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  samples: samples.map(({ id, timestampSeconds }) => ({
+                    id,
+                    timestampSeconds,
+                  })),
+                }),
+              },
+            ),
+          );
+          if (!extraction.ok) {
+            return Response.json(
+              {
+                errorMessage: await this.readEncoderError(
+                  extraction,
+                  "Frame extraction failed",
+                ),
+              },
+              { status: 502 },
+            );
+          }
+          for (const sample of samples) {
+            const response = await super.fetch(
+              new Request(jobOutputUrl(jobId, `${sample.id}.jpg`)),
+            );
+            if (!response.ok || !response.body) {
+              return Response.json(
+                { errorMessage: `Sampled frame ${sample.id} is unavailable` },
+                { status: 502 },
+              );
+            }
+            await this.env.CLIPS_BUCKET.put(sample.key, response.body, {
+              httpMetadata: { contentType: "image/jpeg" },
+            });
+          }
+          return Response.json({ sampled: samples.length });
+        } catch (error) {
+          return Response.json(
+            {
+              errorMessage:
+                error instanceof Error ? error.message : "Frame extraction failed",
             },
             { status: 502 },
           );
