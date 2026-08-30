@@ -174,18 +174,30 @@ export async function sampleStoredVideoFrames(
     samples: StoredVideoFrameSample[];
   },
 ): Promise<void> {
-  await prewarmEncoder(env);
-  const container = env.ENCODER_CONTAINER.getByName(ENCODER_POOL_INSTANCE);
-  const response = await container.fetch(
-    "http://encoder/__carpo/sample-frames",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(input),
-    },
-  );
-  if (!response.ok) {
-    const detail = await encoderErrorDetail(response);
-    throw new Error(detail || `Video frame sampling failed (${response.status})`);
+  const body = JSON.stringify(input);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let response: Response;
+    try {
+      await prewarmEncoder(env);
+      const container = env.ENCODER_CONTAINER.getByName(ENCODER_POOL_INSTANCE);
+      response = await container.fetch(
+        "http://encoder/__carpo/sample-frames",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+        },
+      );
+    } catch (error) {
+      if (attempt === 0) continue;
+      throw error;
+    }
+    if (!response.ok) {
+      const detail = await encoderErrorDetail(response);
+      throw new Error(
+        detail || `Video frame sampling failed (${response.status})`,
+      );
+    }
+    return;
   }
 }
