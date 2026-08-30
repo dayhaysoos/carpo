@@ -11,7 +11,14 @@ import {
   prepareReviewOutput,
   redactSecrets,
 } from "./pr-browser-review-utils.mjs";
-import { createCloudflareReviewLease } from "./pr-review-lease.mjs";
+import {
+  createCloudflareReviewLease,
+  REVIEW_DATABASE_ID,
+} from "./pr-review-lease.mjs";
+import {
+  admitPreappliedReviewMigrations,
+  reviewMigrationChanges,
+} from "./pr-review-migration-policy.mjs";
 import { selectProofChallenge } from "./pr-review-proof-challenges.mjs";
 import { agenticExecution } from "./pr-review-agentic-execution.mjs";
 import {
@@ -270,18 +277,27 @@ async function freezeContext({ repository, pr, baseSha, headSha, cwd, outputDir 
       "diff",
       "--no-ext-diff",
       "--no-renames",
-      "--name-only",
+      "--name-status",
       "-z",
       `${baseSha}...${headSha}`,
       "--",
     ],
     { cwd, encoding: null },
   );
-  const files = changedFilesBuffer
-    .toString("utf8")
-    .split("\0")
-    .filter(Boolean)
-    .map((filePath) => ({ path: filePath }));
+  const changedFileParts = changedFilesBuffer.toString("utf8").split("\0");
+  changedFileParts.pop();
+  if (changedFileParts.length % 2 !== 0) {
+    throw new Error("Git returned malformed changed-file status data");
+  }
+  const files = [];
+  for (let index = 0; index < changedFileParts.length; index += 2) {
+    const status = changedFileParts[index];
+    const filePath = changedFileParts[index + 1];
+    if (!/^[A-Z]$/.test(status) || !filePath) {
+      throw new Error("Git returned invalid changed-file status data");
+    }
+    files.push({ path: filePath, status });
+  }
 
   const context = {
     ...prContext,
@@ -313,6 +329,34 @@ async function freezeContext({ repository, pr, baseSha, headSha, cwd, outputDir 
     await capture("git", ["show", `${baseSha}:wrangler.jsonc`], { cwd }),
   );
   return { files };
+}
+
+async function readAppliedReviewMigrationNames(cwd, runtimeEnv) {
+  const output = await capture(
+    "npx",
+    [
+      "wrangler",
+      "d1",
+      "execute",
+      REVIEW_DATABASE_ID,
+      "--remote",
+      "--command",
+      "SELECT name FROM d1_migrations ORDER BY id",
+      "--json",
+    ],
+    { cwd, env: runtimeEnv },
+  );
+  const payload = JSON.parse(output);
+  if (!Array.isArray(payload)) {
+    throw new Error("Review database returned invalid migration state");
+  }
+  return payload.flatMap((statement) =>
+    Array.isArray(statement?.results)
+      ? statement.results.flatMap((row) =>
+          typeof row?.name === "string" ? [row.name] : [],
+        )
+      : [],
+  );
 }
 
 async function writeFailureEvidence(outputDir, error) {
@@ -585,15 +629,16 @@ async function executeReview({
     cwd,
     outputDir,
   });
-  if (
-    frozen.files.some(
-      (file) => file.path === "migrations" || file.path.startsWith("migrations/"),
-    )
-  ) {
-    throw new Error(
-      "V0 refuses migration-changing PRs against its persistent shared D1 database",
+  const migrationChanges = reviewMigrationChanges(frozen.files);
+  if (migrationChanges.status === "requires-preapplied") {
+    printStep(
+      "Verify new D1 migrations were pre-applied to the isolated review database",
     );
   }
+  await admitPreappliedReviewMigrations(frozen.files, {
+    readAppliedMigrationNames: () =>
+      readAppliedReviewMigrationNames(repoRoot, runtimeEnv),
+  });
   const proofChallenge = selectProofChallenge(frozen.files);
   const agenticPlan = agenticExecution.prepare({
     args: agenticArgs,
@@ -821,15 +866,26 @@ async function publishEvidence({
   );
 }
 
-async function provisionManualReviewToken(repository, cwd, runtimeEnv) {
-  printStep("Rotate the isolated manual-review credential");
-  const token = randomBytes(32).toString("hex");
-  await runWithInput(
+export async function installLeaseOwnerReviewToken({
+  token,
+  cwd,
+  env,
+  runWithInputImpl = runWithInput,
+}) {
+  if (typeof token !== "string" || token.length < 32) {
+    throw new Error("The lease-owner review credential is missing or too short");
+  }
+  await runWithInputImpl(
     "npx",
     ["wrangler", "secret", "put", "PR_REVIEW_AUTH_TOKEN", "--env", "pr-review"],
     token,
-    { cwd, env: runtimeEnv },
+    { cwd, env },
   );
+}
+
+async function provisionManualReviewToken(repository, cwd, runtimeEnv) {
+  printStep("Generate the isolated manual-review credential");
+  const token = randomBytes(32).toString("hex");
   try {
     await runWithInput(
       "gh",
@@ -922,6 +978,12 @@ export async function runPullRequestReview(args, env = process.env) {
         runtimeEnv,
       );
     }
+    printStep("Install the lease-owner review credential");
+    await installLeaseOwnerReviewToken({
+      token: runtimeEnv.CARPO_PR_REVIEW_AUTH_TOKEN,
+      cwd: repoRoot,
+      env: runtimeEnv,
+    });
 
     const candidate = currentCheckout
       ? { checkout: repoRoot, cleanup: async () => {} }

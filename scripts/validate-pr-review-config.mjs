@@ -8,6 +8,7 @@ const EXPECTED = {
   clipBucketName: "carpo-clips-pr-review",
   evidenceBucketName: "carpo-pr-review-evidence",
   containerName: "carpo-pr-review-encodercontainer",
+  vectorIndexName: "carpo-library-transcripts-pr-review",
 };
 
 const PRODUCTION = {
@@ -15,6 +16,7 @@ const PRODUCTION = {
   databaseName: "carpo",
   databaseId: "c130b680-e7fc-489e-927f-3c2139bc0afb",
   bucketName: "carpo-clips",
+  vectorIndexName: "carpo-library-transcripts",
 };
 
 function invariant(condition, message) {
@@ -84,6 +86,7 @@ async function main() {
       "preview_urls",
       "routes",
       "ai",
+      "vectorize",
       "assets",
       "version_metadata",
       "secrets",
@@ -102,6 +105,24 @@ async function main() {
   invariant(hasNoRoutes(review), "Review Worker must not define custom or production routes");
   exactKeys(review.ai, ["binding", "remote"], "Review AI binding");
   invariant(review.ai.binding === "AI" && review.ai.remote === true, "Review AI binding is not allowlisted");
+  invariant(
+    review.vectorize?.length === 1,
+    "Review Worker must have exactly one Vectorize binding",
+  );
+  const vectorIndex = review.vectorize[0];
+  exactKeys(vectorIndex, ["binding", "index_name"], "Review Vectorize binding");
+  invariant(
+    vectorIndex.binding === "LIBRARY_TRANSCRIPT_INDEX",
+    "Review Vectorize binding name is not allowlisted",
+  );
+  invariant(
+    vectorIndex.index_name === EXPECTED.vectorIndexName,
+    "Review Vectorize index is not allowlisted",
+  );
+  invariant(
+    vectorIndex.index_name !== PRODUCTION.vectorIndexName,
+    "Review Vectorize binding must not use the production index",
+  );
   exactKeys(
     review.assets,
     ["directory", "binding", "not_found_handling", "run_worker_first"],

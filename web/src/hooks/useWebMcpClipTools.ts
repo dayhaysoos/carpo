@@ -2,27 +2,8 @@ import { useEffect, useRef } from "react";
 import {
   registerCarpoWebMcpTools,
   type WebMcpClipWorkspaceState,
-  type WebMcpModelContext,
 } from "../webmcp-clip-tools";
-
-function currentModelContext(): WebMcpModelContext | null {
-  if (typeof document === "undefined" || typeof window === "undefined") {
-    return null;
-  }
-  if (window.top !== window) return null;
-  const documentCandidate = (document as Document & {
-    modelContext?: Partial<WebMcpModelContext>;
-  }).modelContext;
-  if (typeof documentCandidate?.registerTool === "function") {
-    return documentCandidate as WebMcpModelContext;
-  }
-  const navigatorCandidate = (navigator as Navigator & {
-    modelContext?: Partial<WebMcpModelContext>;
-  }).modelContext;
-  return typeof navigatorCandidate?.registerTool === "function"
-    ? (navigatorCandidate as WebMcpModelContext)
-    : null;
-}
+import { currentWebMcpModelContext } from "../webmcp-model-context";
 
 export function useWebMcpClipTools(state: WebMcpClipWorkspaceState): void {
   const stateRef = useRef(state);
@@ -33,7 +14,7 @@ export function useWebMcpClipTools(state: WebMcpClipWorkspaceState): void {
   }, [state]);
 
   useEffect(() => {
-    const modelContext = currentModelContext();
+    const modelContext = currentWebMcpModelContext();
     if (!modelContext) return;
     return registerCarpoWebMcpTools(
       modelContext,

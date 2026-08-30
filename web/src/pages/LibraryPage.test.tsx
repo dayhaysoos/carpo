@@ -6,6 +6,8 @@ import { MemoryRouter } from "react-router-dom";
 import {
   deleteSourceVideo,
   listSourceVideos,
+  prepareLibraryMomentReview,
+  searchPrivateLibrary,
   setSourceVideoArchived,
 } from "../api";
 import type { SourceVideoResponse } from "../types";
@@ -14,6 +16,8 @@ import { LibraryPage } from "./LibraryPage";
 vi.mock("../api", () => ({
   deleteSourceVideo: vi.fn(),
   listSourceVideos: vi.fn(),
+  prepareLibraryMomentReview: vi.fn(),
+  searchPrivateLibrary: vi.fn(),
   setSourceVideoArchived: vi.fn(),
 }));
 
@@ -78,6 +82,29 @@ describe("Library video actions", () => {
       offset: 0,
     });
     vi.mocked(deleteSourceVideo).mockResolvedValue();
+    vi.mocked(searchPrivateLibrary).mockResolvedValue({
+      query: "",
+      mode: "exact",
+      results: [],
+      coverage: { totalVideos: 2, searchableVideos: 0, unavailableVideos: 2 },
+    });
+    vi.mocked(prepareLibraryMomentReview).mockResolvedValue({
+      proposalId: "prepared-library-proposal",
+      searchResultId: "search-result",
+      videoId: "first-video",
+      reviewUrl: "/?video=first-video&libraryProposal=prepared-library-proposal",
+      input: {
+        title: "Private launch — First video",
+        startSeconds: 9,
+        endSeconds: 16,
+        quality: "1080p",
+      },
+      evidence: {
+        rationale: "Grounded transcript match",
+        sourceBlockIds: ["cue-0-1"],
+        workspaceRevision: "video-revision:transcript-revision",
+      },
+    });
     vi.mocked(setSourceVideoArchived).mockImplementation(async (id, archived) => ({
       ...videos.find((video) => video.id === id)!,
       archivedAt: archived ? "2026-07-22T12:00:00Z" : null,
@@ -87,6 +114,8 @@ describe("Library video actions", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+    delete (document as Document & { modelContext?: unknown }).modelContext;
+    delete (navigator as Navigator & { modelContext?: unknown }).modelContext;
   });
 
   it("selects multiple videos and deletes them after one confirmation", async () => {
@@ -207,5 +236,104 @@ describe("Library video actions", () => {
     expect(
       screen.getByRole("button", { name: "Delete video" }),
     ).toBeTruthy();
+  });
+
+  it("searches exact transcript evidence and prepares the selected moment for review", async () => {
+    vi.mocked(searchPrivateLibrary).mockResolvedValue({
+      query: "private launch",
+      mode: "exact",
+      coverage: { totalVideos: 2, searchableVideos: 1, unavailableVideos: 1 },
+      results: [
+        {
+          resultId: "search-result",
+          mode: "exact",
+          query: "private launch",
+          video: {
+            id: "first-video",
+            title: "First video",
+            sourceType: "youtube",
+            archived: false,
+          },
+          evidence: {
+            blockIds: ["cue-0-1"],
+            text: "The private launch starts tomorrow",
+            startSeconds: 10,
+            endSeconds: 14,
+          },
+          proposedRange: { startSeconds: 9, endSeconds: 16 },
+          revisions: {
+            transcriptRevision: "transcript-revision",
+            videoRevision: "video-revision",
+          },
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    renderLibrary();
+    await screen.findByText("First video");
+
+    await user.type(screen.getByRole("searchbox", { name: "Word or phrase" }), "private launch");
+    await user.click(screen.getByRole("button", { name: "Search" }));
+
+    expect(await screen.findByText("The private launch starts tomorrow")).toBeTruthy();
+    expect(screen.getByText(/Searched 1 of 2 videos/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Review moment" }));
+    await waitFor(() => {
+      expect(prepareLibraryMomentReview).toHaveBeenCalledWith({
+        resultId: "search-result",
+        mode: "exact",
+        query: "private launch",
+        videoId: "first-video",
+        transcriptRevision: "transcript-revision",
+        videoRevision: "video-revision",
+        blockIds: ["cue-0-1"],
+        evidenceStartSeconds: 10,
+        evidenceEndSeconds: 14,
+      });
+    });
+  });
+
+  it("keeps Exact available when optional Meaning search reports an outage", async () => {
+    vi.mocked(searchPrivateLibrary).mockResolvedValue({
+      query: "trustworthy design",
+      mode: "meaning",
+      results: [],
+      coverage: { totalVideos: 2, searchableVideos: 2, unavailableVideos: 0 },
+      meaningStatus: "unavailable",
+      meaningMessage: "Meaning search is unavailable. Exact search is still available.",
+    });
+    const user = userEvent.setup();
+    renderLibrary();
+    await screen.findByText("First video");
+
+    await user.click(screen.getByRole("radio", { name: "Meaning" }));
+    await user.type(screen.getByRole("searchbox", { name: "Idea or moment" }), "trustworthy design");
+    await user.click(screen.getByRole("button", { name: "Search" }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain(
+      "Exact search is still available",
+    );
+    expect(screen.getByRole("radio", { name: "Exact" })).toBeTruthy();
+  });
+
+  it("registers the bounded private-Library WebMCP tools on the Library surface", async () => {
+    const registered: string[] = [];
+    Object.defineProperty(document, "modelContext", {
+      configurable: true,
+      value: {
+        registerTool: (tool: { name: string }) => registered.push(tool.name),
+      },
+    });
+
+    renderLibrary();
+
+    await waitFor(() => {
+      expect(registered).toContain("searchPrivateLibrary");
+    });
+    expect(registered).toEqual([
+      "getCarpoLibraryInstructions",
+      "searchPrivateLibrary",
+      "prepareLibraryMomentReview",
+    ]);
   });
 });

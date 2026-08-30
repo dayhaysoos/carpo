@@ -6,7 +6,7 @@ const execFileAsync = promisify(execFile);
 const LEASE_NAME = "shared-review-environment";
 const LEASE_TTL_SECONDS = 45 * 60;
 const DEFAULT_RETRY_DELAY_MS = 10_000;
-const REVIEW_DATABASE_ID = "27981ced-fd12-49ea-9ce8-e71205e3f36e";
+export const REVIEW_DATABASE_ID = "27981ced-fd12-49ea-9ce8-e71205e3f36e";
 const EXECUTION_ID_PATTERN =
   /^(?:actions-[1-9][0-9]{0,19}-[1-9][0-9]{0,2}|manual-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8})$/;
 

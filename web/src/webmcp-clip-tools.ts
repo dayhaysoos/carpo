@@ -22,6 +22,9 @@ import {
   type TranscriptResponse,
 } from "./types";
 import { getCaptionTrack } from "./api";
+import type {
+  BrowserWebMcpToolDefinition,
+} from "./webmcp-model-context";
 
 export const CARPO_WEBMCP_CONTRACT_VERSION = "2026-08-29";
 
@@ -38,7 +41,7 @@ interface WebMcpToolAnnotations {
   untrustedContentHint?: boolean;
 }
 
-export interface WebMcpToolDefinition {
+export interface WebMcpToolDefinition extends BrowserWebMcpToolDefinition {
   name: (typeof CARPO_WEBMCP_TOOL_NAMES)[number];
   title: string;
   description: string;

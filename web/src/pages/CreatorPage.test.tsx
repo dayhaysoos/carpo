@@ -17,6 +17,7 @@ const api = vi.hoisted(() => ({
   getSourceVideo: vi.fn(),
   getVideoTranscript: vi.fn(),
   createClipFromSourceVideo: vi.fn(),
+  getPreparedLibraryMomentReview: vi.fn(),
   requestUploadUrl: vi.fn(),
   uploadFileWithProgress: vi.fn(),
 }));
@@ -31,6 +32,7 @@ vi.mock("../api", async (importOriginal) => {
     createSourceVideo: api.createSourceVideo,
     getSourceVideo: api.getSourceVideo,
     getVideoTranscript: api.getVideoTranscript,
+    getPreparedLibraryMomentReview: api.getPreparedLibraryMomentReview,
     createClipFromSourceVideo: api.createClipFromSourceVideo,
     requestUploadUrl: api.requestUploadUrl,
     uploadFileWithProgress: api.uploadFileWithProgress,
@@ -220,6 +222,69 @@ describe("CreatorPage", () => {
       .find((element) => element.tagName === "INPUT") as HTMLInputElement;
     fireEvent.change(trimStart, { target: { value: "7" } });
     expect(trimStart.value).toBe("7");
+    expect(api.createClipFromSourceVideo).not.toHaveBeenCalled();
+  });
+
+  it("opens a revision-checked Library result in the existing editable review", async () => {
+    const video = {
+      id: "library-result-video",
+      title: "Library source",
+      source: { type: "upload" as const, key: "uploads/library-source.mp4" },
+      clipCount: 0,
+      activeClipCount: 0,
+      failedClipCount: 0,
+      thumbnail: null,
+      durationSeconds: 90,
+      retainedSourceReady: true,
+      transcriptStatus: "available" as const,
+      transcriptCheckedAt: "2026-08-29T12:00:00.000Z",
+      transcriptCheckError: null,
+      transcriptRetryAt: null,
+      archivedAt: null,
+      createdAt: "2026-08-29T11:00:00.000Z",
+      updatedAt: "2026-08-29T12:00:00.000Z",
+    };
+    api.getSourceVideo.mockResolvedValue({ video, clips: [] });
+    api.getVideoTranscript.mockResolvedValue({
+      transcriptStatus: "available",
+      language: "en",
+      automatic: true,
+      cached: true,
+      blocks: [
+        {
+          id: "cue-0-0",
+          startCueId: "cue-0",
+          endCueId: "cue-0",
+          startSeconds: 20,
+          endSeconds: 24,
+          text: "A grounded Library moment",
+        },
+      ],
+    });
+    api.getPreparedLibraryMomentReview.mockResolvedValue({
+      proposalId: "prepared-proposal",
+      searchResultId: "library-result-id",
+      videoId: video.id,
+      reviewUrl: `/?video=${video.id}&libraryProposal=prepared-proposal`,
+      input: {
+        title: "Grounded moment — Library source",
+        startSeconds: 19,
+        endSeconds: 26,
+        quality: "1080p",
+      },
+      evidence: {
+        rationale: "Exact transcript match for a grounded moment.",
+        sourceBlockIds: ["cue-0-0"],
+        workspaceRevision: "video-revision:transcript-revision",
+      },
+    });
+
+    renderPage(`/?video=${video.id}&libraryProposal=prepared-proposal`);
+
+    expect(await screen.findByRole("heading", { name: "Review clips" })).toBeTruthy();
+    expect(screen.getByText("Grounded moment — Library source")).toBeTruthy();
+    expect(screen.getByText(/Suggested via Library search/)).toBeTruthy();
+    expect(screen.getByText("Exact transcript match for a grounded moment.")).toBeTruthy();
     expect(api.createClipFromSourceVideo).not.toHaveBeenCalled();
   });
 

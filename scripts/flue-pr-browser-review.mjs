@@ -300,7 +300,11 @@ export class BoundedPlaywrightReviewAdapter {
     return { preset, ...viewport };
   }
 
-  async discoverLiveWebMcpTools({ fixtureVideoId, expectedToolNames }) {
+  async discoverLiveWebMcpTools({
+    fixtureVideoId,
+    expectedToolNames,
+    knownToolNames,
+  }) {
     const currentUrl = new URL(this.page.url());
     if (
       currentUrl.pathname !== "/" ||
@@ -310,7 +314,7 @@ export class BoundedPlaywrightReviewAdapter {
     }
     this.recordCurrentPath();
     const discovery = await this.page.evaluate(
-      async ({ allowedNames }) => {
+      async ({ allowedNames, knownNames }) => {
         const normalizeSchema = (value) => {
           if (typeof value !== "string") return value ?? {};
           try {
@@ -377,11 +381,11 @@ export class BoundedPlaywrightReviewAdapter {
           ),
           unexpectedToolNames: (last?.tools ?? [])
             .map((tool) => tool.name)
-            .filter((name) => name && !allowedNames.includes(name))
+            .filter((name) => name && !knownNames.includes(name))
             .slice(0, 20),
         };
       },
-      { allowedNames: expectedToolNames },
+      { allowedNames: expectedToolNames, knownNames: knownToolNames },
     );
     return discovery;
   }

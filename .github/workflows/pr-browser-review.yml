@@ -9,12 +9,12 @@ permissions:
   issues: read
   pull-requests: write
 
-# V0 deliberately uses one shared review stack. A newer PR supersedes an older
-# run so candidates cannot race through shared D1, R2, Durable Object, or
-# Container state.
+# V0 deliberately uses one shared review stack. Runs stay queued instead of
+# force-cancelling a lease owner, so every owner can release its fenced D1 lease.
+# The runner's exact-ref checks reject a superseded candidate before publication.
 concurrency:
   group: carpo-pr-review
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   review:

@@ -1,17 +1,25 @@
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   deleteSourceVideo,
   listSourceVideos,
+  prepareLibraryMomentReview,
+  searchPrivateLibrary,
   setSourceVideoArchived,
 } from "../api";
 import { ModalDialog } from "../components/ModalDialog";
 import { VideoActionMenu } from "../components/VideoActionMenu";
 import { CLIPS_QUERY_KEY, SOURCE_VIDEOS_QUERY_KEY, sourceVideosQueryKey } from "../queries";
 import { settleWithConcurrency } from "../settleWithConcurrency";
-import type { SourceVideoResponse } from "../types";
+import type {
+  LibrarySearchMode,
+  LibrarySearchResult,
+  SourceVideoResponse,
+} from "../types";
 import { useSelection } from "../useSelection";
+import { formatTimestamp } from "../youtube";
+import { useWebMcpLibraryTools } from "../hooks/useWebMcpLibraryTools";
 
 type LibraryAction = "archive" | "restore" | "delete";
 
@@ -44,6 +52,43 @@ function sourceLabel(video: SourceVideoResponse): string {
 
 function errorMessage(reason: unknown): string {
   return reason instanceof Error ? reason.message : "The request failed";
+}
+
+function LibrarySearchResultCard({
+  result,
+  opening,
+  onOpen,
+}: {
+  result: LibrarySearchResult;
+  opening: boolean;
+  onOpen: () => void;
+}) {
+  return (
+    <article className="library-search-result">
+      <div className="library-search-result-copy">
+        <div className="library-search-result-heading">
+          <strong>{result.video.title}</strong>
+          <span>{result.video.sourceType === "youtube" ? "YouTube" : "Upload"}</span>
+        </div>
+        <blockquote>{result.evidence.text}</blockquote>
+        <p>
+          Transcript evidence {formatTimestamp(result.evidence.startSeconds)}–
+          {formatTimestamp(result.evidence.endSeconds)}
+          <span className="library-meta-sep">·</span>
+          Proposed clip {formatTimestamp(result.proposedRange.startSeconds)}–
+          {formatTimestamp(result.proposedRange.endSeconds)}
+        </p>
+      </div>
+      <button
+        type="button"
+        className="btn-secondary library-search-open"
+        onClick={onOpen}
+        disabled={opening}
+      >
+        {opening ? "Opening…" : "Review moment"}
+      </button>
+    </article>
+  );
 }
 
 async function performLibraryAction(request: ActionRequest): Promise<ActionResult> {
@@ -163,8 +208,12 @@ function VideoCard({
 
 export function LibraryPage() {
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const archived = searchParams.get("view") === "archived";
+  const [libraryQuery, setLibraryQuery] = useState("");
+  const [librarySearchMode, setLibrarySearchMode] =
+    useState<LibrarySearchMode>("exact");
   const [pendingDelete, setPendingDelete] = useState<SourceVideoResponse[]>([]);
   const [actionError, setActionError] = useState<string | null>(null);
   const {
@@ -210,10 +259,38 @@ export function LibraryPage() {
     0,
   );
 
+  const searchMutation = useMutation({
+    mutationFn: () =>
+      searchPrivateLibrary({
+        query: libraryQuery,
+        mode: librarySearchMode,
+        archived,
+      }),
+  });
+  const prepareMutation = useMutation({
+    mutationFn: (result: LibrarySearchResult) =>
+      prepareLibraryMomentReview({
+        resultId: result.resultId,
+        mode: result.mode,
+        query: result.query,
+        videoId: result.video.id,
+        transcriptRevision: result.revisions.transcriptRevision,
+        videoRevision: result.revisions.videoRevision,
+        blockIds: result.evidence.blockIds,
+        evidenceStartSeconds: result.evidence.startSeconds,
+        evidenceEndSeconds: result.evidence.endSeconds,
+      }),
+    onSuccess: (prepared) => navigate(prepared.reviewUrl),
+  });
+
+  useWebMcpLibraryTools({ archived });
+
   useEffect(() => {
     cancelSelection();
     setPendingDelete([]);
     setActionError(null);
+    searchMutation.reset();
+    prepareMutation.reset();
     // The library view is a new selection context.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [archived]);
@@ -320,6 +397,136 @@ export function LibraryPage() {
             Archived
           </Link>
         </div>
+
+        <section className="library-search" aria-labelledby="library-search-title">
+          <div className="library-search-intro">
+            <div>
+              <h3 id="library-search-title">Find a moment</h3>
+              <p>
+                Search the private transcripts in this Library view, then review
+                and edit a grounded clip suggestion.
+              </p>
+            </div>
+            <div className="library-search-modes" role="radiogroup" aria-label="Search mode">
+              {(["exact", "meaning"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  role="radio"
+                  aria-checked={librarySearchMode === mode}
+                  className={librarySearchMode === mode ? "active" : undefined}
+                  onClick={() => {
+                    setLibrarySearchMode(mode);
+                    searchMutation.reset();
+                    prepareMutation.reset();
+                  }}
+                >
+                  {mode === "exact" ? "Exact" : "Meaning"}
+                </button>
+              ))}
+            </div>
+          </div>
+          <form
+            className="library-search-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (libraryQuery.trim()) searchMutation.mutate();
+            }}
+          >
+            <label htmlFor="library-search-query">
+              {librarySearchMode === "exact"
+                ? "Word or phrase"
+                : "Idea or moment"}
+            </label>
+            <div className="library-search-controls">
+              <input
+                id="library-search-query"
+                type="search"
+                value={libraryQuery}
+                maxLength={200}
+                placeholder={
+                  librarySearchMode === "exact"
+                    ? "Try a phrase someone said"
+                    : "Try an idea, argument, or explanation"
+                }
+                onChange={(event) => setLibraryQuery(event.target.value)}
+              />
+              <button
+                type="submit"
+                className="btn-primary"
+                disabled={!libraryQuery.trim() || searchMutation.isPending}
+              >
+                {searchMutation.isPending ? "Searching…" : "Search"}
+              </button>
+            </div>
+            <p className="library-search-help">
+              {librarySearchMode === "exact"
+                ? "Exact search is deterministic and does not require an AI provider."
+                : "Meaning search is optional; Exact remains available if AI search is unavailable."}
+            </p>
+          </form>
+
+          {searchMutation.error && (
+            <p className="form-error" role="alert">
+              {searchMutation.error.message}
+            </p>
+          )}
+          {prepareMutation.error && (
+            <p className="form-error" role="alert">
+              {prepareMutation.error.message}
+            </p>
+          )}
+          {searchMutation.data && (
+            <div className="library-search-response" aria-live="polite">
+              <p className="library-search-coverage">
+                Searched {searchMutation.data.coverage.searchableVideos} of{" "}
+                {searchMutation.data.coverage.totalVideos} video
+                {searchMutation.data.coverage.totalVideos === 1 ? "" : "s"} with
+                ready transcripts.
+                {searchMutation.data.coverage.unavailableVideos > 0
+                  ? ` ${searchMutation.data.coverage.unavailableVideos} video${
+                      searchMutation.data.coverage.unavailableVideos === 1 ? "" : "s"
+                    } still need a transcript.`
+                  : ""}
+              </p>
+              {searchMutation.data.meaningMessage && (
+                <p
+                  className={
+                    searchMutation.data.meaningStatus === "unavailable"
+                      ? "library-search-notice unavailable"
+                      : "library-search-notice"
+                  }
+                  role={
+                    searchMutation.data.meaningStatus === "unavailable"
+                      ? "alert"
+                      : undefined
+                  }
+                >
+                  {searchMutation.data.meaningMessage}
+                </p>
+              )}
+              {searchMutation.data.results.length === 0 ? (
+                <p className="library-search-empty">
+                  No grounded transcript matches found.
+                </p>
+              ) : (
+                <div className="library-search-results">
+                  {searchMutation.data.results.map((result) => (
+                    <LibrarySearchResultCard
+                      key={result.resultId}
+                      result={result}
+                      opening={
+                        prepareMutation.isPending &&
+                        prepareMutation.variables?.resultId === result.resultId
+                      }
+                      onOpen={() => prepareMutation.mutate(result)}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </section>
 
         {selecting && videos.length > 0 && (
           <div className="library-bulk-bar" role="toolbar" aria-label="Selected video actions">

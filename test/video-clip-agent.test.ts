@@ -203,6 +203,83 @@ describe("VideoClipAgent context", () => {
     );
   });
 
+  it("uses the shared owner-scoped Library discovery tools for cross-video requests", async () => {
+    const currentVideoId = crypto.randomUUID();
+    const matchingVideoId = crypto.randomUUID();
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO source_videos (
+           id, owner_id, source_type, source_ref, title, duration_seconds,
+           transcript_status
+         ) VALUES (?, 'legacy', 'upload', ?, 'Current video', 60, 'available')`,
+      ).bind(currentVideoId, `uploads/legacy/${currentVideoId}.mp4`),
+      env.DB.prepare(
+        `INSERT INTO source_videos (
+           id, owner_id, source_type, source_ref, title, duration_seconds,
+           transcript_status
+         ) VALUES (?, 'legacy', 'upload', ?, 'Matching Library video', 60, 'available')`,
+      ).bind(matchingVideoId, `uploads/legacy/${matchingVideoId}.mp4`),
+    ]);
+    await Promise.all(
+      [currentVideoId, matchingVideoId].map((videoId, index) =>
+        env.CLIPS_BUCKET.put(
+          transcriptObjectKey(videoId),
+          JSON.stringify({
+            version: 1,
+            fetchedAt: `2026-08-29T12:00:0${index}.000Z`,
+            language: "en",
+            automatic: true,
+            cues: [
+              {
+                startSeconds: 10,
+                endSeconds: 14,
+                text:
+                  videoId === matchingVideoId
+                    ? "The library architecture remains grounded"
+                    : "A different current-video sentence",
+              },
+            ],
+          }),
+        ),
+      ),
+    );
+    const agent = { env, name: currentVideoId } as unknown as VideoClipAgent;
+    const tools = VideoClipAgent.prototype.getTools.call(agent);
+    const search = tools.searchPrivateLibrary.execute;
+    const prepare = tools.prepareLibraryMomentReview.execute;
+    if (!search || !prepare) throw new Error("Expected Library discovery tools");
+
+    const searchResult = (await search(
+      { query: "library architecture", mode: "exact", archived: false, limit: 10 },
+      { toolCallId: "library-search", messages: [] },
+    )) as Awaited<ReturnType<NonNullable<typeof search>>>;
+    if (!("results" in searchResult) || searchResult.results.length !== 1) {
+      throw new Error("Expected one grounded Library result");
+    }
+    const result = searchResult.results[0];
+    expect(result.video.id).toBe(matchingVideoId);
+
+    const prepared = await prepare(
+      {
+        resultId: result.resultId,
+        mode: result.mode,
+        query: result.query,
+        videoId: result.video.id,
+        transcriptRevision: result.revisions.transcriptRevision,
+        videoRevision: result.revisions.videoRevision,
+        blockIds: result.evidence.blockIds,
+        evidenceStartSeconds: result.evidence.startSeconds,
+        evidenceEndSeconds: result.evidence.endSeconds,
+      },
+      { toolCallId: "prepare-library-result", messages: [] },
+    );
+    expect(prepared).toMatchObject({ videoId: matchingVideoId });
+    expect(prepared).not.toHaveProperty("createdClipIds");
+    expect(VideoClipAgent.prototype.getSystemPrompt.call(agent)).toContain(
+      "whole private Library",
+    );
+  });
+
   it("grounds semantic clip proposals in real transcript block ids", async () => {
     const videoId = crypto.randomUUID();
     await env.DB.prepare(

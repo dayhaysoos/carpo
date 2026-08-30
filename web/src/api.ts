@@ -17,6 +17,10 @@ import type {
   TranscriptResponse,
   UploadUrlResponse,
   CurrentUserResponse,
+  LibrarySearchMode,
+  LibrarySearchResponse,
+  PrepareLibraryMomentRequest,
+  PreparedLibraryMomentReview,
 } from "./types";
 
 export async function getCurrentUser(): Promise<CurrentUserResponse> {
@@ -227,6 +231,52 @@ export async function listSourceVideos(
     throw new Error(body.error || `Request failed (${response.status})`);
   }
   return response.json() as Promise<SourceVideoListResponse>;
+}
+
+export async function searchPrivateLibrary(input: {
+  query: string;
+  mode: LibrarySearchMode;
+  archived?: boolean;
+  limit?: number;
+}): Promise<LibrarySearchResponse> {
+  const response = await fetch("/api/library/search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiError;
+    throw new Error(body.error || `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<LibrarySearchResponse>;
+}
+
+export async function prepareLibraryMomentReview(
+  input: PrepareLibraryMomentRequest,
+): Promise<PreparedLibraryMomentReview> {
+  const response = await fetch("/api/library/moments", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiError;
+    throw new Error(body.error || `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<PreparedLibraryMomentReview>;
+}
+
+export async function getPreparedLibraryMomentReview(
+  proposalId: string,
+): Promise<PreparedLibraryMomentReview> {
+  const response = await fetch(
+    `/api/library/moments/${encodeURIComponent(proposalId)}`,
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiError;
+    throw new Error(body.error || `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<PreparedLibraryMomentReview>;
 }
 
 export async function createSourceVideo(

@@ -3,6 +3,8 @@ import { describe, it } from "node:test";
 import * as v from "valibot";
 import {
   AGENTIC_REVIEW_SCHEMA_VERSION,
+  CARPO_WEBMCP_KNOWN_TOOL_NAMES,
+  CARPO_WEBMCP_REVIEW_TOOL_NAMES,
   agenticReviewResultSchema,
   appendDiagnosticsFinding,
   assertProofChallengeEvidence,
@@ -64,6 +66,24 @@ describe("bounded review policy contract", () => {
     assert.ok(agenticReviewResultSchema);
     assert.ok(durableReviewInitialDataSchema);
     assert.ok(durableReviewResultSchema);
+  });
+
+  it("distinguishes required fixture tools from legitimate Carpo capabilities", () => {
+    assert.deepEqual(CARPO_WEBMCP_REVIEW_TOOL_NAMES, [
+      "getCarpoInstructions",
+      "readClipWorkspace",
+      "proposeClips",
+    ]);
+    assert.deepEqual(CARPO_WEBMCP_KNOWN_TOOL_NAMES, [
+      "getCarpoInstructions",
+      "readClipWorkspace",
+      "proposeClips",
+      "readCaptionTrack",
+      "proposeCaptionTrack",
+      "getCarpoLibraryInstructions",
+      "searchPrivateLibrary",
+      "prepareLibraryMomentReview",
+    ]);
   });
 
   it("owns the shared route and action safety policy", () => {

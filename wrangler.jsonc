@@ -4,6 +4,12 @@
   "compatibility_date": "2026-06-11",
   "compatibility_flags": ["nodejs_compat"],
   "ai": { "binding": "AI", "remote": true },
+  "vectorize": [
+    {
+      "binding": "LIBRARY_TRANSCRIPT_INDEX",
+      "index_name": "carpo-library-transcripts"
+    }
+  ],
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
@@ -79,6 +85,12 @@
       "preview_urls": false,
       "routes": [],
       "ai": { "binding": "AI", "remote": true },
+      "vectorize": [
+        {
+          "binding": "LIBRARY_TRANSCRIPT_INDEX",
+          "index_name": "carpo-library-transcripts-pr-review"
+        }
+      ],
       "assets": {
         "directory": "./public",
         "binding": "ASSETS",

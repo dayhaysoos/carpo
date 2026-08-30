@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  CARPO_WEBMCP_KNOWN_TOOL_NAMES,
   CARPO_WEBMCP_REVIEW_TOOL_NAMES,
   parseLiveWebMcpVerificationDossier,
   parseWebMcpProposeClipInput,
@@ -187,6 +188,7 @@ export function createLiveWebMcpVerificationJourney({
       observation = await browser.discoverTools({
         fixtureVideoId,
         expectedToolNames: CARPO_WEBMCP_REVIEW_TOOL_NAMES,
+        knownToolNames: CARPO_WEBMCP_KNOWN_TOOL_NAMES,
       });
     } catch (error) {
       throw new JourneyProblem(

@@ -1,5 +1,6 @@
 export interface Env {
   AI: Ai;
+  LIBRARY_TRANSCRIPT_INDEX?: VectorizeIndex;
   DB: D1Database;
   CLIPS_BUCKET: R2Bucket;
   ENCODER_CONTAINER: DurableObjectNamespace;
