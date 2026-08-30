@@ -1962,6 +1962,124 @@ textarea {
   min-height: 560px;
 }
 
+.visual-search {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.visual-search-heading,
+.visual-search-form > div,
+.visual-search-result {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.visual-search-heading h2,
+.visual-search-result p,
+.visual-search-frames figure {
+  margin: 0;
+}
+
+.visual-search-scope,
+.visual-search-coverage,
+.visual-search-empty,
+.visual-search-uncertainty,
+.visual-search-frames figcaption {
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.visual-search-intro {
+  max-width: 720px;
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.visual-search-form label {
+  display: block;
+  margin-bottom: 0.375rem;
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+
+.visual-search-form input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  background: var(--bg);
+}
+
+.visual-search-form .btn-primary,
+.visual-search-result .btn-primary {
+  width: auto;
+  flex: none;
+}
+
+.visual-search-results {
+  display: grid;
+  gap: 0.875rem;
+}
+
+.visual-search-result {
+  align-items: stretch;
+  padding: 0.875rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.visual-search-frames {
+  display: flex;
+  gap: 0.5rem;
+  max-width: 55%;
+  overflow-x: auto;
+}
+
+.visual-search-frames figure {
+  flex: 0 0 150px;
+}
+
+.visual-search-frames img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: 6px;
+  object-fit: cover;
+  background: var(--bg-hover);
+}
+
+.visual-search-result-copy {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+@media (max-width: 640px) {
+  .visual-search-heading,
+  .visual-search-form > div,
+  .visual-search-result {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .visual-search-frames {
+    max-width: 100%;
+  }
+
+  .visual-search-form .btn-primary,
+  .visual-search-result .btn-primary {
+    width: 100%;
+  }
+}
+
 .agent-chat-header {
   display: flex;
   align-items: flex-start;

@@ -40,6 +40,7 @@ Carpo does not initially expose an arbitrary JavaScript executor through WebMCP.
 | Inspect transcript and Source Caption availability | Required | Required | Required |
 | Search for exact spoken words or phrases | Required | Required | Required |
 | Find semantic moments grounded in real transcript blocks | Required | Required | Required |
+| Find visible moments from bounded, revision-bound sampled frames | Required | Required | Required |
 | Propose one or more clip ranges | Required | Required | Required |
 | Edit trim range, title, quality, Overlay Text, and caption proposal options | Required | Draft only | Draft only |
 | Preview Clip Proposals | Required | Required | Required |
@@ -79,6 +80,11 @@ Every agent-authored proposal mutation records, when available:
 - the source video, transcript, caption, and proposal revisions it used;
 - the tool-contract version and timestamp;
 - the proposed rationale and deterministic validation result.
+
+Visual discovery evidence additionally records the uploaded source revision,
+sample timestamps, private representative-frame identifiers, model confidence,
+and uncertainty. Its tools must disclose that bounded frame sampling is not an
+exhaustive claim about every frame in the video.
 
 Carpo preserves the user's edits and final review outcome instead of replacing them when an agent regenerates a suggestion. Authorized future runs may use this durable product state as context, but Carpo does not require or preserve private chain-of-thought.
 

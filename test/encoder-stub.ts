@@ -371,6 +371,24 @@ export class EncoderStub extends DurableObject<Env> {
       return Response.json({ durationSeconds: 42 });
     }
 
+    if (url.pathname === "/__carpo/sample-frames") {
+      const body = (await request.json()) as {
+        samples?: Array<{ key?: string }>;
+      };
+      if (!Array.isArray(body.samples)) {
+        return Response.json({ errorMessage: "samples are required" }, { status: 400 });
+      }
+      for (const sample of body.samples) {
+        if (typeof sample.key !== "string") {
+          return Response.json({ errorMessage: "sample key is required" }, { status: 400 });
+        }
+        await this.env.CLIPS_BUCKET.put(sample.key, FAKE_JPEG, {
+          httpMetadata: { contentType: "image/jpeg" },
+        });
+      }
+      return Response.json({ sampled: body.samples.length });
+    }
+
     if (url.pathname === "/stage-source") {
       const jobId = url.searchParams.get("job");
       if (!jobId || !/^[A-Za-z0-9-]+$/.test(jobId)) {

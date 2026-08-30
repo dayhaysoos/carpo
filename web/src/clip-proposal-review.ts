@@ -10,7 +10,7 @@ import {
 export const MAX_CLIP_PROPOSALS_PER_BATCH = 10;
 export const MAX_QUEUED_CLIP_PROPOSAL_BATCHES = 3;
 
-export type ClipProposalAdapter = "library" | "think" | "webmcp";
+export type ClipProposalAdapter = "library" | "visual" | "think" | "webmcp";
 
 export interface ClipProposalInput {
   title: string;
@@ -27,6 +27,8 @@ export interface ClipProposalProvenance {
   sourceBlockIds?: string[];
   workspaceRevision?: string;
   contractVersion?: string;
+  sourceFrameIds?: string[];
+  sourceRevision?: string;
   proposedAt: string;
 }
 
@@ -35,6 +37,8 @@ export interface ClipProposalEvidence {
   sourceBlockIds?: string[];
   workspaceRevision?: string;
   contractVersion?: string;
+  sourceFrameIds?: string[];
+  sourceRevision?: string;
 }
 
 export interface CreatedClipResult {
@@ -193,6 +197,7 @@ interface PendingAdmission {
 
 const ADAPTER_LABELS: Record<ClipProposalAdapter, string> = {
   library: "Library search",
+  visual: "Visual search",
   think: "Think",
   webmcp: "WebMCP",
 };
@@ -208,6 +213,9 @@ function cloneProvenance(
     ...provenance,
     sourceBlockIds: provenance.sourceBlockIds
       ? [...provenance.sourceBlockIds]
+      : undefined,
+    sourceFrameIds: provenance.sourceFrameIds
+      ? [...provenance.sourceFrameIds]
       : undefined,
   };
 }

@@ -1,6 +1,6 @@
 import type { Env } from "./env";
 
-export const ENCODER_PROTOCOL_VERSION = 3;
+export const ENCODER_PROTOCOL_VERSION = 4;
 export const ENCODER_POOL_INSTANCE = `encoder-v${ENCODER_PROTOCOL_VERSION}`;
 
 export interface VideoMetadata {
@@ -10,6 +10,12 @@ export interface VideoMetadata {
 
 export interface StoredVideoMetadata {
   durationSeconds: number | null;
+}
+
+export interface StoredVideoFrameSample {
+  id: string;
+  timestampSeconds: number;
+  key: string;
 }
 
 export interface TranscriptCue {
@@ -158,4 +164,28 @@ export async function inspectStoredVideo(
     );
   }
   return response.json() as Promise<StoredVideoMetadata>;
+}
+
+export async function sampleStoredVideoFrames(
+  env: Env,
+  input: {
+    videoId: string;
+    sourceRevision: string;
+    samples: StoredVideoFrameSample[];
+  },
+): Promise<void> {
+  await prewarmEncoder(env);
+  const container = env.ENCODER_CONTAINER.getByName(ENCODER_POOL_INSTANCE);
+  const response = await container.fetch(
+    "http://encoder/__carpo/sample-frames",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+  if (!response.ok) {
+    const detail = await encoderErrorDetail(response);
+    throw new Error(detail || `Video frame sampling failed (${response.status})`);
+  }
 }

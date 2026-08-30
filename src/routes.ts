@@ -91,6 +91,12 @@ import {
   type LibrarySearchMode,
   type PrepareLibraryMomentInput,
 } from "./library-discovery";
+import {
+  MAX_VISUAL_QUERY_LENGTH,
+  visualDiscovery,
+  VisualDiscoveryError,
+  type PrepareVisualMomentInput,
+} from "./visual-discovery";
 
 const MAX_CAPTION_TRACK_BODY_BYTES = 128 * 1024;
 
@@ -142,6 +148,31 @@ export async function handleRequest(
 
   if (request.method === "POST" && url.pathname === "/api/library/moments") {
     return handlePrepareLibraryMoment(request, env, user!);
+  }
+
+  const visualSearchMatch = url.pathname.match(
+    /^\/api\/videos\/([^/]+)\/visual-search$/,
+  );
+  if (request.method === "POST" && visualSearchMatch) {
+    return handleVisualSearch(request, visualSearchMatch[1], env, user!);
+  }
+
+  if (request.method === "POST" && url.pathname === "/api/visual-moments") {
+    return handlePrepareVisualMoment(request, env, user!);
+  }
+
+  const visualMomentMatch = url.pathname.match(
+    /^\/api\/visual-moments\/([^/]+)$/,
+  );
+  if (request.method === "GET" && visualMomentMatch) {
+    return handleReadVisualMoment(visualMomentMatch[1], env, user!);
+  }
+
+  const visualEvidenceMatch = url.pathname.match(
+    /^\/api\/visual-evidence\/([^/]+)$/,
+  );
+  if (request.method === "GET" && visualEvidenceMatch) {
+    return handleVisualEvidence(visualEvidenceMatch[1], env, user!);
   }
 
   const libraryMomentMatch = url.pathname.match(
@@ -498,6 +529,144 @@ async function handleReadLibraryMoment(
   } catch (error) {
     return libraryDiscoveryErrorResponse(error);
   }
+}
+
+function visualDiscoveryErrorResponse(error: unknown): Response {
+  if (!(error instanceof VisualDiscoveryError)) {
+    return json(
+      { error: error instanceof Error ? error.message : "Visual search failed" },
+      502,
+    );
+  }
+  const status =
+    error.code === "SOURCE_NOT_FOUND" || error.code === "RESULT_NOT_FOUND"
+      ? 404
+      : error.code === "RESULT_EXPIRED"
+        ? 410
+        : error.code === "STALE_RESULT"
+          ? 409
+          : 400;
+  return json({ error: error.message, code: error.code }, status);
+}
+
+async function handleVisualSearch(
+  request: Request,
+  encodedVideoId: string,
+  env: Env,
+  user: AuthenticatedUser,
+): Promise<Response> {
+  const body = await readObjectBody(request);
+  if (body instanceof Response) return body;
+  const query = typeof body.query === "string" ? body.query.trim() : "";
+  if (!query || query.length > MAX_VISUAL_QUERY_LENGTH) {
+    return json(
+      { error: `query must be between 1 and ${MAX_VISUAL_QUERY_LENGTH} characters` },
+      400,
+    );
+  }
+  try {
+    return json(
+      await visualDiscovery.view(env, user.id, {
+        videoId: decodeURIComponent(encodedVideoId),
+        query,
+      }),
+    );
+  } catch (error) {
+    return visualDiscoveryErrorResponse(error);
+  }
+}
+
+function prepareVisualMomentInput(
+  body: Record<string, unknown>,
+): PrepareVisualMomentInput | null {
+  if (
+    typeof body.resultId !== "string" ||
+    typeof body.query !== "string" ||
+    typeof body.videoId !== "string" ||
+    typeof body.sourceRevision !== "string" ||
+    !Array.isArray(body.observationIds) ||
+    !body.observationIds.every((item) => typeof item === "string") ||
+    typeof body.startSeconds !== "number" ||
+    !Number.isFinite(body.startSeconds) ||
+    typeof body.endSeconds !== "number" ||
+    !Number.isFinite(body.endSeconds)
+  ) {
+    return null;
+  }
+  return {
+    resultId: body.resultId,
+    query: body.query,
+    videoId: body.videoId,
+    sourceRevision: body.sourceRevision,
+    observationIds: body.observationIds,
+    startSeconds: body.startSeconds,
+    endSeconds: body.endSeconds,
+  };
+}
+
+async function handlePrepareVisualMoment(
+  request: Request,
+  env: Env,
+  user: AuthenticatedUser,
+): Promise<Response> {
+  const body = await readObjectBody(request);
+  if (body instanceof Response) return body;
+  const input = prepareVisualMomentInput(body);
+  if (!input) return json({ error: "Invalid visual result" }, 400);
+  try {
+    return json(await visualDiscovery.perform(env, user.id, input), 201);
+  } catch (error) {
+    return visualDiscoveryErrorResponse(error);
+  }
+}
+
+async function handleReadVisualMoment(
+  encodedProposalId: string,
+  env: Env,
+  user: AuthenticatedUser,
+): Promise<Response> {
+  try {
+    return json(
+      await visualDiscovery.dossier(
+        env,
+        user.id,
+        decodeURIComponent(encodedProposalId),
+      ),
+    );
+  } catch (error) {
+    return visualDiscoveryErrorResponse(error);
+  }
+}
+
+async function handleVisualEvidence(
+  encodedObservationId: string,
+  env: Env,
+  user: AuthenticatedUser,
+): Promise<Response> {
+  let observationId: string;
+  try {
+    observationId = decodeURIComponent(encodedObservationId);
+  } catch {
+    return json({ error: "Invalid visual evidence id" }, 400);
+  }
+  const row = await env.DB.prepare(
+    `SELECT frame_key FROM visual_frame_observations
+     WHERE id = ? AND owner_id = ?`,
+  )
+    .bind(observationId, user.id)
+    .first<{ frame_key: string }>();
+  if (!row) return json({ error: "Visual evidence not found" }, 404);
+  const object = await env.CLIPS_BUCKET.get(row.frame_key);
+  if (!object || !object.body) {
+    return json({ error: "Visual evidence not found" }, 404);
+  }
+  return new Response(object.body, {
+    headers: {
+      "Content-Type": object.httpMetadata?.contentType ?? "image/jpeg",
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
 }
 
 async function handleTranscriptCheck(

@@ -20,6 +20,13 @@ _Avoid_: Pending clip, draft clip
 The user-controlled session in which one or more clip proposals are previewed, corrected, approved, or rejected before any clip is created. Think and WebMCP may supply proposals, but neither has review authority.
 _Avoid_: Think review, agent approval, pending clips
 
+**Visual Observation**:
+A time-indexed, owner-private observation derived from one sampled frame of an
+uploaded Video and cached against that source revision and visual query. It is
+evidence for a Clip Proposal, not proof of exhaustive video coverage and not a
+Clip-creation instruction.
+_Avoid_: detection, AI clip, visual clip
+
 **Clip Proposal Batch**:
 A session-scoped group of clip proposals supplied together for one video. It remains separate from later submissions and is reviewed before the next batch begins.
 _Avoid_: Mixed review, proposal queue

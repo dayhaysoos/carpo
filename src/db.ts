@@ -609,6 +609,12 @@ export async function deleteSourceVideoRecords(
        FROM source_videos
        WHERE id = ?`,
     ).bind(transcriptObjectKey(id), id),
+    db.prepare(
+      `INSERT OR IGNORE INTO artifact_deletions (key)
+       SELECT frame_key
+       FROM visual_frame_observations
+       WHERE video_id = ?`,
+    ).bind(id),
     db.prepare("DELETE FROM clips WHERE video_id = ?").bind(id),
     db.prepare("DELETE FROM source_videos WHERE id = ?").bind(id),
   ]);

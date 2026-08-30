@@ -21,6 +21,9 @@ import type {
   LibrarySearchResponse,
   PrepareLibraryMomentRequest,
   PreparedLibraryMomentReview,
+  VisualSearchResponse,
+  PrepareVisualMomentRequest,
+  PreparedVisualMomentReview,
 } from "./types";
 
 export async function getCurrentUser(): Promise<CurrentUserResponse> {
@@ -277,6 +280,53 @@ export async function getPreparedLibraryMomentReview(
     throw new Error(body.error || `Request failed (${response.status})`);
   }
   return response.json() as Promise<PreparedLibraryMomentReview>;
+}
+
+export async function searchVisualMoments(
+  videoId: string,
+  query: string,
+): Promise<VisualSearchResponse> {
+  const response = await fetch(
+    `/api/videos/${encodeURIComponent(videoId)}/visual-search`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query }),
+    },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiError;
+    throw new Error(body.error || `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<VisualSearchResponse>;
+}
+
+export async function prepareVisualMomentReview(
+  input: PrepareVisualMomentRequest,
+): Promise<PreparedVisualMomentReview> {
+  const response = await fetch("/api/visual-moments", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiError;
+    throw new Error(body.error || `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<PreparedVisualMomentReview>;
+}
+
+export async function getPreparedVisualMomentReview(
+  proposalId: string,
+): Promise<PreparedVisualMomentReview> {
+  const response = await fetch(
+    `/api/visual-moments/${encodeURIComponent(proposalId)}`,
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiError;
+    throw new Error(body.error || `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<PreparedVisualMomentReview>;
 }
 
 export async function createSourceVideo(

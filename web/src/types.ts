@@ -308,3 +308,58 @@ export interface PreparedLibraryMomentReview {
     workspaceRevision: string;
   };
 }
+
+export type VisualConfidence = "low" | "medium" | "high";
+
+export interface VisualMomentResult {
+  resultId: string;
+  query: string;
+  videoId: string;
+  sourceRevision: string;
+  proposedRange: { startSeconds: number; endSeconds: number };
+  evidence: Array<{
+    observationId: string;
+    timestampSeconds: number;
+    frameUrl: string;
+    confidence: VisualConfidence;
+    uncertainty: string;
+    rationale: string;
+  }>;
+}
+
+export interface VisualSearchResponse {
+  query: string;
+  videoId: string;
+  sourceRevision: string;
+  sampledFrameCount: number;
+  coverageMessage: string;
+  results: VisualMomentResult[];
+}
+
+export interface PrepareVisualMomentRequest {
+  resultId: string;
+  query: string;
+  videoId: string;
+  sourceRevision: string;
+  observationIds: string[];
+  startSeconds: number;
+  endSeconds: number;
+}
+
+export interface PreparedVisualMomentReview {
+  proposalId: string;
+  searchResultId: string;
+  videoId: string;
+  reviewUrl: string;
+  input: {
+    title: string;
+    startSeconds: number;
+    endSeconds: number;
+    quality: "1080p";
+  };
+  evidence: {
+    rationale: string;
+    sourceFrameIds: string[];
+    sourceRevision: string;
+  };
+}

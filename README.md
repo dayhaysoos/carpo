@@ -57,6 +57,21 @@ argument or explanation. Semantic results must reference real transcript block
 IDs; Carpo derives the proposed timestamps from those blocks before sending them
 through the same adjustable clip-review flow used for manual timestamps.
 
+## Sampled visual moment search
+
+For an uploaded video, Carpo can check up to eight evenly spaced private frames
+for a user-described logo, object, or layout. Results include representative
+frames, confidence and uncertainty, the exact source revision, and an editable
+proposed range. This is a narrow tracer rather than exhaustive full-video
+vision: appearances between sampled frames can be missed. Replacing the source
+invalidates its cached observations, and deleting the video removes the private
+frame evidence.
+
+The manual workspace, Think, and WebMCP all call the same owner-scoped visual
+discovery module. None of them can turn a model observation directly into a
+Clip; the existing Clip Proposal Review remains the only path to timestamp
+correction, rejection, or explicit creation.
+
 ## Optional intelligence and WebMCP
 
 Carpo's manual UI, built-in Think assistant, and external WebMCP agents are
@@ -67,11 +82,11 @@ validation, authorization, human review, and recoverable manual correction. See
 [ADR 0002](docs/adr/0002-keep-capabilities-independent-from-intelligence-provider.md)
 and the [WebMCP capability contract](docs/webmcp-capability-contract.md).
 
-The first WebMCP slice exposes top-level browser tools that explain Carpo's
-authority boundary, read a revision-bound active video and transcript, and add
-transcript-grounded drafts to the existing editable Clip Proposal Review. The
-tools cannot approve, create, encode, publish, or share clips; browsers without
-WebMCP continue to use the normal manual and Think interfaces.
+The WebMCP surface exposes typed browser tools that explain Carpo's authority
+boundary, read revision-bound evidence, and prepare transcript- or sampled-
+frame-grounded drafts in the existing editable Clip Proposal Review. The tools
+cannot approve, create, encode, publish, or share clips; browsers without WebMCP
+continue to use the normal manual and Think interfaces.
 
 ## Caption outputs
 
