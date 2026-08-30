@@ -305,6 +305,84 @@ describe("private Library discovery", () => {
     expect(result.results[0].evidence.blockIds).toHaveLength(1);
   });
 
+  it("keeps meaning-result reauthorization within D1's variable limit", async () => {
+    const owner = await installOwner("meaning-d1-variable-limit");
+    const videoId = await installTranscriptVideo({
+      owner,
+      title: "Semantic candidate budget",
+      cues: [
+        { startSeconds: 6, endSeconds: 10, text: "Elephants have long trunks" },
+      ],
+    });
+
+    const vectors = new Map<string, VectorizeVector>();
+    const vectorIndex = {
+      upsert: async (items: VectorizeVector[]) => {
+        items.forEach((item) => vectors.set(item.id, item));
+        return { ids: items.map((item) => item.id), count: items.length };
+      },
+      query: async (_vector: number[], options: { topK?: number }) => {
+        const candidateCount = options.topK ?? 10;
+        const [current] = [...vectors.values()];
+        return {
+          count: candidateCount,
+          matches: Array.from({ length: candidateCount }, (_, index) => ({
+            ...(index === 0
+              ? current
+              : {
+                  id: `untrusted-vector-${index}`,
+                  values: [0, 0, 0],
+                  namespace: owner.id,
+                }),
+            score: 1 - index / 100,
+          })),
+        };
+      },
+    } as unknown as VectorizeIndex;
+    const d1WithProductionVariableLimit = {
+      prepare(query: string) {
+        const statement = env.DB.prepare(query);
+        return new Proxy(statement, {
+          get(target, property, receiver) {
+            if (property === "bind") {
+              return (...values: unknown[]) => {
+                if (values.length > 100) {
+                  throw new Error("D1_ERROR: too many SQL variables");
+                }
+                return target.bind(...values);
+              };
+            }
+            const value = Reflect.get(target, property, receiver);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+      },
+      batch(statements: D1PreparedStatement[]) {
+        return env.DB.batch(statements);
+      },
+    } as unknown as D1Database;
+    const semanticEnv = {
+      DB: d1WithProductionVariableLimit,
+      CLIPS_BUCKET: env.CLIPS_BUCKET,
+      AI: {
+        run: async (_model: string, input: { text: string | string[] }) => {
+          const texts = Array.isArray(input.text) ? input.text : [input.text];
+          return { data: texts.map((text) => [text.length, 1, 0]) };
+        },
+      } as unknown as Ai,
+      LIBRARY_TRANSCRIPT_INDEX: vectorIndex,
+    } as Env;
+
+    const result = await searchPrivateLibrary(semanticEnv, owner.id, {
+      query: "animal with a long nose",
+      mode: "meaning",
+      limit: 1,
+    });
+
+    expect(result.meaningStatus).toBe("available");
+    expect(result.results.map((item) => item.video.id)).toEqual([videoId]);
+  });
+
   it("exposes owner-bound search and proposal handoffs through the authenticated API", async () => {
     const alice = await installOwner("alice-library-api");
     const bob = await installOwner("bob-library-api");

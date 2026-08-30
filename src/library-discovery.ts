@@ -13,7 +13,8 @@ export const LIBRARY_EMBEDDING_MODEL = "@cf/baai/bge-base-en-v1.5" as const;
 
 const EXACT_SEARCH_BEFORE_SECONDS = 1;
 const EXACT_SEARCH_AFTER_SECONDS = 2;
-const VECTOR_QUERY_CANDIDATE_LIMIT = 100;
+const D1_BOUND_VARIABLE_LIMIT = 100;
+const VECTOR_QUERY_CANDIDATE_LIMIT = D1_BOUND_VARIABLE_LIMIT - 1;
 
 export type LibrarySearchMode = "exact" | "meaning";
 
