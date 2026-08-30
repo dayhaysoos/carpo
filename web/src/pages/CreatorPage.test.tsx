@@ -532,6 +532,47 @@ describe("CreatorPage", () => {
     expect(api.createSourceVideo).toHaveBeenCalledTimes(1);
   });
 
+  it("accepts and preserves a Think draft while a valid YouTube URL activates", async () => {
+    const user = userEvent.setup();
+    const activation = deferred<SourceVideoResponse>();
+    const youtubeUrl = "https://www.youtube.com/watch?v=pendingThink1";
+    const video: SourceVideoResponse = {
+      ...uploadedVideo("pending-youtube-video", "Pending YouTube source"),
+      source: {
+        type: "youtube",
+        url: youtubeUrl,
+      },
+      retainedSourceReady: false,
+      transcriptStatus: "unknown",
+      transcriptCheckedAt: null,
+    };
+    api.createSourceVideo.mockReturnValue(activation.promise);
+    api.getSourceVideo.mockResolvedValue({ video, clips: [] });
+    renderPage();
+
+    await user.click(screen.getByRole("tab", { name: "YouTube URL" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "YouTube URL" }),
+      youtubeUrl,
+    );
+
+    await waitFor(() => expect(screen.getByText("Preparing")).toBeTruthy());
+    const composer = screen.getByRole("textbox", {
+      name: "Clip instruction",
+    }) as HTMLTextAreaElement;
+    expect(composer.disabled).toBe(false);
+    await user.type(composer, "Find the funniest reaction");
+
+    activation.resolve(video);
+
+    await waitFor(() => expect(screen.getByText("Ready")).toBeTruthy());
+    expect(
+      (screen.getByRole("textbox", {
+        name: "Clip instruction",
+      }) as HTMLTextAreaElement).value,
+    ).toBe("Find the funniest reaction");
+  });
+
   it("keeps clip creation locked while a remote source is importing", async () => {
     const video: SourceVideoResponse = {
       ...uploadedVideo("remote-importing", "Remote importing"),

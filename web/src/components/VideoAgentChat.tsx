@@ -25,6 +25,7 @@ import { ClipReviewModal } from "./ClipReviewModal";
 
 interface VideoAgentChatProps {
   videoId: string;
+  pendingYoutubeVideoId?: string | null;
   source?: ClipSource;
   retainedSourceReady?: boolean;
   videoDurationSeconds?: number | null;
@@ -50,12 +51,36 @@ function messageText(parts: Array<{ type: string; text?: string }>): string {
 export function VideoAgentChat(props: VideoAgentChatProps) {
   const [fallbackProposalReview] = useState(createClipProposalReview);
   const proposalReview = props.proposalReview ?? fallbackProposalReview;
+  const [input, setInput] = useState("");
+  const draftYoutubeVideoId = useRef<string | null>(null);
+  const activeVideoId = useRef(props.videoId);
+
+  useEffect(() => {
+    if (activeVideoId.current && activeVideoId.current !== props.videoId) {
+      setInput("");
+      draftYoutubeVideoId.current = null;
+    }
+    activeVideoId.current = props.videoId;
+  }, [props.videoId]);
+
+  useEffect(() => {
+    const pendingYoutubeVideoId = props.pendingYoutubeVideoId ?? null;
+    if (!pendingYoutubeVideoId) return;
+    if (
+      draftYoutubeVideoId.current &&
+      draftYoutubeVideoId.current !== pendingYoutubeVideoId
+    ) {
+      setInput("");
+    }
+    draftYoutubeVideoId.current = pendingYoutubeVideoId;
+  }, [props.pendingYoutubeVideoId]);
 
   useEffect(() => {
     if (!props.videoId) proposalReview.activate(null);
   }, [proposalReview, props.videoId]);
 
   if (!props.videoId) {
+    const canCompose = Boolean(props.pendingYoutubeVideoId);
     return (
       <section className="agent-chat card" aria-label="Clip with Think">
         <div className="card-header agent-chat-header">
@@ -66,29 +91,43 @@ export function VideoAgentChat(props: VideoAgentChatProps) {
             </p>
           </div>
           <span className="agent-connection" role="status" aria-live="polite">
-            Waiting
+            {canCompose ? "Preparing" : "Waiting"}
           </span>
         </div>
 
         <div className="agent-messages" aria-live="polite">
           <div className="agent-empty">
-            <strong>Think is ready when your video is</strong>
-            <p>Paste a YouTube URL or upload a video to continue.</p>
+            <strong>
+              {canCompose
+                ? "Start describing the clip while Carpo prepares the video"
+                : "Think is ready when your video is"}
+            </strong>
+            <p>
+              {canCompose
+                ? "Your draft will be ready when Think connects."
+                : "Paste a YouTube URL or upload a video to continue."}
+            </p>
           </div>
         </div>
 
         <form className="agent-composer">
           <div className="agent-composer-input">
             <textarea
-              placeholder="Choose a video to start clipping…"
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              placeholder={
+                canCompose
+                  ? "Clip by time, phrase, or idea…"
+                  : "Choose a video to start clipping…"
+              }
               rows={3}
-              disabled
+              disabled={!canCompose}
               aria-label="Clip instruction"
             />
           </div>
           <div className="agent-composer-footer">
             <button type="submit" className="btn-primary" disabled>
-              Send
+              {canCompose ? "Preparing video…" : "Send"}
             </button>
           </div>
         </form>
@@ -100,6 +139,8 @@ export function VideoAgentChat(props: VideoAgentChatProps) {
     <ConnectedVideoAgentChat
       key={props.videoId}
       {...props}
+      input={input}
+      setInput={setInput}
       proposalReview={proposalReview}
     />
   );
@@ -115,10 +156,13 @@ function ConnectedVideoAgentChat({
   existingClips = EMPTY_EXISTING_CLIPS,
   proposalReview,
   onCaptionProposal,
+  input,
+  setInput,
 }: Omit<VideoAgentChatProps, "proposalReview"> & {
   proposalReview: ClipProposalReview;
+  input: string;
+  setInput: React.Dispatch<React.SetStateAction<string>>;
 }) {
-  const [input, setInput] = useState("");
   const [connected, setConnected] = useState(false);
   const lastAutoAppliedTimestamp = useRef<string | null>(null);
   const handledCaptionToolCalls = useRef(new Set<string>());

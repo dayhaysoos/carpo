@@ -55,6 +55,9 @@ export function CreatorPage() {
   const [preparedProposalError, setPreparedProposalError] = useState<string | null>(null);
   const [clipWindowRequest, setClipWindowRequest] =
     useState<ClipWindowRequest | null>(null);
+  const [pendingYoutubeVideoId, setPendingYoutubeVideoId] = useState<
+    string | null
+  >(null);
   const [captionReview, setCaptionReview] = useState<{
     clip: ClipResponse;
     proposal: CaptionTrackProposal;
@@ -285,6 +288,7 @@ export function CreatorPage() {
       <CreatorForm
         onClipCreated={handleClipCreated}
         onVideoActivated={handleVideoActivated}
+        onPendingYoutubeVideoChange={setPendingYoutubeVideoId}
         clipWindowRequest={clipWindowRequest}
         ownedUploadJourney={ownedUploadJourney}
       />
@@ -296,6 +300,7 @@ export function CreatorPage() {
       )}
       <VideoAgentChat
         videoId={videoId}
+        pendingYoutubeVideoId={pendingYoutubeVideoId}
         source={activeVideo?.source}
         retainedSourceReady={activeVideo?.retainedSourceReady ?? false}
         videoDurationSeconds={activeVideo?.durationSeconds ?? null}

@@ -175,6 +175,57 @@ describe("VideoAgentChat", () => {
     ).toBe(true);
   });
 
+  it("preserves a YouTube draft while the source becomes ready", async () => {
+    const user = userEvent.setup();
+    chat.messages = [];
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
+
+    const { rerender } = render(
+      <VideoAgentChat
+        videoId=""
+        pendingYoutubeVideoId="draftVideo1"
+        onClipCreated={vi.fn()}
+        onTimestampSelect={vi.fn()}
+      />,
+    );
+
+    const pendingComposer = screen.getByRole("textbox", {
+      name: "Clip instruction",
+    }) as HTMLTextAreaElement;
+    expect(pendingComposer.disabled).toBe(false);
+    await user.type(pendingComposer, "Find the strongest opening line");
+    expect(
+      screen.getByRole("button", { name: "Preparing video…" }),
+    ).toHaveProperty("disabled", true);
+
+    rerender(
+      <VideoAgentChat
+        videoId="video-1"
+        pendingYoutubeVideoId={null}
+        source={{
+          type: "youtube",
+          url: "https://www.youtube.com/watch?v=draftVideo1",
+        }}
+        onClipCreated={vi.fn()}
+        onTimestampSelect={vi.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("textbox", { name: "Clip instruction" }),
+      ).toHaveProperty("disabled", false),
+    );
+    expect(
+      (screen.getByRole("textbox", {
+        name: "Clip instruction",
+      }) as HTMLTextAreaElement).value,
+    ).toBe("Find the strongest opening line");
+  });
+
   it("offers transcript clipping for YouTube and uploaded sources", () => {
     chat.messages = [];
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
@@ -363,6 +414,36 @@ describe("VideoAgentChat", () => {
       ]),
     ).toEqual([["video-1"], ["video-2"]]);
     expect(agentConnections.closed).toContain(1);
+  });
+
+  it("does not carry a Think draft into a different active video", async () => {
+    const user = userEvent.setup();
+    chat.messages = [];
+    const view = render(
+      <VideoAgentChat
+        videoId="video-1"
+        onClipCreated={vi.fn()}
+        onTimestampSelect={vi.fn()}
+      />,
+    );
+    const composer = screen.getByRole("textbox", {
+      name: "Clip instruction",
+    });
+    await user.type(composer, "Only for video one");
+
+    view.rerender(
+      <VideoAgentChat
+        videoId="video-2"
+        onClipCreated={vi.fn()}
+        onTimestampSelect={vi.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("textbox", { name: "Clip instruction" }),
+      ).toHaveProperty("value", ""),
+    );
   });
 
   it("keeps an uploaded preview mounted while advancing clips", async () => {

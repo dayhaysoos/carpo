@@ -52,6 +52,7 @@ type SourceMode = "youtube" | "upload";
 interface CreatorFormProps {
   onClipCreated: (clip: ClipResponse) => void;
   onVideoActivated: (videoId: string) => void;
+  onPendingYoutubeVideoChange?: (youtubeVideoId: string | null) => void;
   clipWindowRequest?: ClipWindowRequest | null;
   ownedUploadJourney: OwnedUploadClipJourneyView;
 }
@@ -165,6 +166,7 @@ function creatorFormReducer(
 export function CreatorForm({
   onClipCreated,
   onVideoActivated,
+  onPendingYoutubeVideoChange,
   clipWindowRequest,
   ownedUploadJourney,
 }: CreatorFormProps) {
@@ -231,6 +233,17 @@ export function CreatorForm({
   const urlValid = trimmedUrl.length > 0 && isValidYoutubeUrl(trimmedUrl);
   const urlInvalid = urlTouched && trimmedUrl.length > 0 && !urlValid;
   const videoId = sourceMode === "youtube" && urlValid ? extractYoutubeVideoId(trimmedUrl) : null;
+
+  useEffect(() => {
+    onPendingYoutubeVideoChange?.(
+      !reusableVideoId && sourceMode === "youtube" ? videoId : null,
+    );
+  }, [
+    onPendingYoutubeVideoChange,
+    reusableVideoId,
+    sourceMode,
+    videoId,
+  ]);
 
   const filePreviewUrl = useMemo(
     () => (selectedFile ? URL.createObjectURL(selectedFile) : null),
