@@ -13,6 +13,7 @@ import {
   createSourceVideo,
   getSourceVideo,
   requestUploadUrl,
+  retryRemoteSourceIngestion,
   sourceVideoUploadUrl,
   updateSourceVideoDuration,
   uploadFileWithProgress,
@@ -44,6 +45,7 @@ import { toExistingClipRanges } from "../timeline";
 import { TranscriptPanel } from "./TranscriptPanel";
 import { TrimSlider } from "./TrimSlider";
 import { OwnedUploadClipResult } from "./OwnedUploadClipResult";
+import { RemoteSourceFailureHint } from "./RemoteSourceFailureHint";
 
 type SourceMode = "youtube" | "upload";
 
@@ -209,10 +211,15 @@ export function CreatorForm({
     data: reusableVideoData,
     error: reusableVideoError,
     isLoading: reusableVideoLoading,
+    refetch: refetchReusableVideo,
   } = useQuery({
     queryKey: ["source-video", reusableVideoId],
     queryFn: () => getSourceVideo(reusableVideoId),
     enabled: Boolean(reusableVideoId),
+    refetchInterval: (query) => {
+      const status = query.state.data?.video.remoteIngestion?.status;
+      return status === "pending" || status === "importing" ? 1000 : false;
+    },
   });
   const reusableVideo = reusableVideoData?.video ?? null;
   const existingClips = useMemo(
@@ -229,11 +236,19 @@ export function CreatorForm({
     () => (selectedFile ? URL.createObjectURL(selectedFile) : null),
     [selectedFile],
   );
-  const reusableUploadPreviewUrl =
-    reusableVideo?.source.type === "upload"
+  const useRetainedRemotePlayer = Boolean(
+    sourceMode === "youtube" &&
+      reusableVideo?.source.type === "youtube" &&
+      reusableVideo.retainedSourceReady &&
+      (!reusableVideo.remoteIngestion ||
+        reusableVideo.remoteIngestion.status === "ready"),
+  );
+  const reusableNativePreviewUrl =
+    reusableVideo &&
+    (reusableVideo.source.type === "upload" || useRetainedRemotePlayer)
       ? sourceVideoUploadUrl(reusableVideo.id)
       : null;
-  const nativePreviewUrl = reusableUploadPreviewUrl ?? filePreviewUrl;
+  const nativePreviewUrl = reusableNativePreviewUrl ?? filePreviewUrl;
 
   useEffect(() => {
     return () => {
@@ -243,7 +258,9 @@ export function CreatorForm({
     };
   }, [filePreviewUrl]);
 
-  const youtube = useYoutubePlayer(sourceMode === "youtube" ? videoId : null);
+  const youtube = useYoutubePlayer(
+    sourceMode === "youtube" && !useRetainedRemotePlayer ? videoId : null,
+  );
   youtubeMetadata.current = {
     title: youtube.title,
     duration: youtube.duration,
@@ -255,7 +272,7 @@ export function CreatorForm({
       : null;
 
   const native = useNativeVideoPlayer(
-    sourceMode === "upload" &&
+    (sourceMode === "upload" || useRetainedRemotePlayer) &&
       nativePreviewUrl &&
       (!selectedFile || !fileValidationError)
       ? nativePreviewUrl
@@ -263,20 +280,28 @@ export function CreatorForm({
   );
 
   const ready =
-    sourceMode === "youtube"
+    sourceMode === "youtube" && !useRetainedRemotePlayer
       ? youtube.ready
       : Boolean(
-          (selectedFile || reusableUploadPreviewUrl) &&
+          (selectedFile || reusableNativePreviewUrl) &&
             !fileValidationError &&
             native.ready,
         );
-  const duration = sourceMode === "youtube" ? youtube.duration : native.duration;
+  const duration =
+    sourceMode === "youtube" && !useRetainedRemotePlayer
+      ? youtube.duration
+      : native.duration;
   const currentTime =
-    sourceMode === "youtube" ? youtube.currentTime : native.currentTime;
-  const seekTo = sourceMode === "youtube" ? youtube.seekTo : native.seekTo;
+    sourceMode === "youtube" && !useRetainedRemotePlayer
+      ? youtube.currentTime
+      : native.currentTime;
+  const seekTo =
+    sourceMode === "youtube" && !useRetainedRemotePlayer
+      ? youtube.seekTo
+      : native.seekTo;
   const trim = useTrimRange({ duration, onSeek: seekTo });
   const durationMatchesActiveSource =
-    sourceMode === "youtube" ||
+    (sourceMode === "youtube" && !useRetainedRemotePlayer) ||
     (nativePreviewUrl !== null &&
       native.mediaStateSourceUrl === nativePreviewUrl);
 
@@ -392,8 +417,16 @@ export function CreatorForm({
   }, [clipWindowRequest, ready, trim.setClipWindow]);
 
   const clipDuration = trim.range.end - trim.range.start;
+  const remoteSourceReadyForClip =
+    sourceMode !== "youtube" ||
+    Boolean(
+      reusableVideo?.retainedSourceReady &&
+        (!reusableVideo.remoteIngestion ||
+          reusableVideo.remoteIngestion.status === "ready"),
+    );
   const canCreate =
     ready &&
+    remoteSourceReadyForClip &&
     title.trim().length > 0 &&
     clipDuration > 0 &&
     clipDuration <= MAX_CLIP_LENGTH_SECONDS &&
@@ -401,6 +434,13 @@ export function CreatorForm({
       ? true
       : (sourceMode === "youtube" && urlValid && videoId) ||
         (sourceMode === "upload" && uploadKey && !fileValidationError));
+
+  const retryIngestion = useMutation({
+    mutationFn: () => retryRemoteSourceIngestion(reusableVideoId),
+    onSuccess: () => {
+      window.setTimeout(() => void refetchReusableVideo(), 250);
+    },
+  });
 
   const mutation = useMutation({
     mutationFn: (request: CreateClipRequest) => {
@@ -629,6 +669,46 @@ export function CreatorForm({
         </div>
       )}
 
+      {reusableVideo?.remoteIngestion &&
+        reusableVideo.remoteIngestion.status !== "ready" && (
+          <div
+            className={
+              reusableVideo.remoteIngestion.status === "failed"
+                ? "form-error"
+                : "reuse-source-banner"
+            }
+            role={
+              reusableVideo.remoteIngestion.status === "failed"
+                ? "alert"
+                : "status"
+            }
+          >
+            {reusableVideo.remoteIngestion.failure ? (
+              <>
+                <p>{reusableVideo.remoteIngestion.failure.message}</p>
+                <RemoteSourceFailureHint
+                  failure={reusableVideo.remoteIngestion.failure}
+                />
+                {reusableVideo.remoteIngestion.failure.retryable && (
+                  <button
+                    type="button"
+                    className="btn-ghost upload-retry"
+                    disabled={retryIngestion.isPending}
+                    onClick={() => retryIngestion.mutate()}
+                  >
+                    {retryIngestion.isPending ? "Retrying…" : "Retry import"}
+                  </button>
+                )}
+              </>
+            ) : (
+              <p>
+                Importing this YouTube video into your private library. You can
+                mark the moment now; clip creation unlocks when import finishes.
+              </p>
+            )}
+          </div>
+        )}
+
       {!reusableVideoId && (
         <div className="source-picker" role="tablist" aria-label="Source type">
         <button
@@ -714,7 +794,7 @@ export function CreatorForm({
         </>
       ))}
 
-      {sourceMode === "youtube" && videoId && (
+      {sourceMode === "youtube" && videoId && !useRetainedRemotePlayer && (
         <div className="player-section">
           <div className="player-frame">
             <div id={youtube.containerId} className="player-embed" />
@@ -754,8 +834,8 @@ export function CreatorForm({
         </div>
       )}
 
-      {sourceMode === "upload" &&
-        (selectedFile || reusableUploadPreviewUrl) &&
+      {(sourceMode === "upload" || useRetainedRemotePlayer) &&
+        (selectedFile || reusableNativePreviewUrl) &&
         !fileValidationError && (
         <div className="player-section">
           <div className="player-frame">

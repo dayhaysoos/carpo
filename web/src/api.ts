@@ -351,6 +351,20 @@ export async function createSourceVideo(
   return response.json() as Promise<SourceVideoResponse>;
 }
 
+export async function retryRemoteSourceIngestion(
+  videoId: string,
+): Promise<SourceVideoResponse> {
+  const response = await fetch(
+    `/api/videos/${encodeURIComponent(videoId)}/ingest`,
+    { method: "POST" },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiError;
+    throw new Error(body.error || `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<SourceVideoResponse>;
+}
+
 export async function createClipFromSourceVideo(
   videoId: string,
   request: CreateClipFromVideoRequest,

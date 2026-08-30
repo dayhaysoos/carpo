@@ -15,25 +15,19 @@ import {
   getSourceVideoById,
   markClipDownloadingIfQueued,
   markGifComplete,
-  markSourceVideoRetainedSourceFailed,
-  markSourceVideoRetainedSourceImporting,
-  markSourceVideoRetainedSourceReady,
 } from "./db";
 import type {
   CaptionRenderEncoderJobSpec,
   EncoderJobSpec,
   GifEncoderJobSpec,
-  SourceVideoRecord,
 } from "./types";
 import {
   completeCaptionRender,
   failCaptionRender,
 } from "./caption-tracks";
 import { UPLOAD_KEY_PREFIX } from "./uploads";
-import {
-  isYoutubeRetainedSourceKey,
-  youtubeRetainedSourceKey,
-} from "./source-videos";
+import { isYoutubeRetainedSourceKey } from "./source-videos";
+import { createRetainedVideoSourceAcquisition } from "./retained-video-source";
 
 type RunJobSpec = Omit<EncoderJobSpec, "source"> & {
   deferArtifactUpload?: boolean;
@@ -259,6 +253,27 @@ export class EncoderContainer extends Container<Env> {
       }
     }
 
+    if (
+      url.pathname === "/__carpo/ingest-source" &&
+      request.method === "POST"
+    ) {
+      try {
+        const body = (await request.json()) as { videoId?: unknown };
+        if (typeof body.videoId !== "string") {
+          return Response.json(
+            { status: "failed", errorMessage: "Video ID is required" },
+            { status: 400 },
+          );
+        }
+        return this.handleSourceIngestion(body.videoId);
+      } catch {
+        return Response.json(
+          { status: "failed", errorMessage: "Invalid source ingestion payload" },
+          { status: 400 },
+        );
+      }
+    }
+
     if (url.pathname === "/__carpo/gif-run" && request.method === "POST") {
       try {
         const job = (await request.json()) as RunJobSpec;
@@ -374,6 +389,43 @@ export class EncoderContainer extends Container<Env> {
     return new Response(null, { status: 202 });
   }
 
+  private handleSourceIngestion(videoId: string): Response {
+    const work = this.incrementQueueDepth().then(async () => {
+      try {
+        await this.enqueueJob(async () => {
+          const stopKeepalive = this.startJobKeepalive();
+          const jobId = `source-${sanitizeJobId(videoId)}`;
+          try {
+            await this.ctx.storage.put("jobStartedAt", Date.now());
+            const video = await getSourceVideoById(this.env.DB, videoId);
+            if (!video || video.source_type !== "youtube") return;
+            if (
+              video.retained_source_status === "ready" &&
+              video.retained_source_key
+            ) {
+              return;
+            }
+            await this.retainedVideoSourceAcquisition().retain(video, jobId);
+          } catch (error) {
+            console.error(
+              `source ${videoId} ingestion failed`,
+              error instanceof Error ? error.message : error,
+            );
+          } finally {
+            stopKeepalive();
+            await this.ctx.storage.delete("jobStartedAt");
+            await this.cleanupJobFiles(jobId);
+          }
+        });
+      } finally {
+        await this.decrementQueueDepth();
+      }
+    });
+
+    this.ctx.waitUntil(work);
+    return new Response(null, { status: 202 });
+  }
+
   private async handleRun(request: Request): Promise<Response> {
     let job: RunJobSpec;
     try {
@@ -427,11 +479,6 @@ export class EncoderContainer extends Container<Env> {
       lastPhase = now;
     };
 
-    let retainedSourceAttempt:
-      | { videoId: string; key: string }
-      | null = null;
-    let retainedSourceReady = false;
-
     try {
       if (job.source?.type === "youtube" && job.sourceVideoId) {
         const sourceVideo = await getSourceVideoById(
@@ -446,31 +493,22 @@ export class EncoderContainer extends Container<Env> {
           );
         }
 
-        if (
-          await this.stageReadyYoutubeSource(sourceVideo, jobId)
-        ) {
-          logPhase("stage-retained-source");
-          job = {
-            ...job,
-            source: { type: "file", path: stagedSourcePath(jobId) },
-          } as RunJobSpec;
+        const staged = await this.retainedVideoSourceAcquisition().stage(
+          sourceVideo,
+          jobId,
+        );
+        if (!staged.ok) {
+          await failClip(this.env, clipId, staged.error);
+          return Response.json(
+            { status: "failed", errorMessage: staged.error },
+            { status: 500 },
+          );
         }
-
-        if (job.source?.type === "youtube") {
-          const key = await this.beginYoutubeSourceRetention(sourceVideo.id);
-          if (!key) {
-            await failClip(this.env, clipId, "Unable to retain video source");
-            return Response.json(
-              {
-                status: "failed",
-                errorMessage: "Unable to retain video source",
-              },
-              { status: 500 },
-            );
-          }
-          retainedSourceAttempt = { videoId: sourceVideo.id, key };
-          job = { ...job, retainSourceArtifact: true };
-        }
+        logPhase(staged.acquired ? "retain-source" : "stage-retained-source");
+        job = {
+          ...job,
+          source: { type: "file", path: staged.path },
+        } as RunJobSpec;
       }
 
       if (job.source?.type === "upload") {
@@ -512,15 +550,6 @@ export class EncoderContainer extends Container<Env> {
         const result = classified.result;
         if (result.status === "staged" || result.status === "complete") {
           try {
-            if (retainedSourceAttempt) {
-              await this.persistDownloadedYoutubeSource(
-                retainedSourceAttempt.videoId,
-                retainedSourceAttempt.key,
-                jobId,
-              );
-              retainedSourceReady = true;
-              logPhase("retain-source");
-            }
             await this.uploadDeferredArtifacts(job.outputs, jobId);
             logPhase("upload-artifacts");
           } catch (error) {
@@ -529,13 +558,6 @@ export class EncoderContainer extends Container<Env> {
               error instanceof Error
                 ? error.message
                 : "Failed to upload encoded artifacts";
-            if (retainedSourceAttempt && !retainedSourceReady) {
-              await markSourceVideoRetainedSourceFailed(
-                this.env.DB,
-                retainedSourceAttempt.videoId,
-                message,
-              );
-            }
             await failClip(this.env, clipId, message);
             return Response.json(
               { status: "failed", errorMessage: message },
@@ -566,41 +588,62 @@ export class EncoderContainer extends Container<Env> {
       this.ctx.waitUntil(recordEncoderRunOutcome(this.env, clipId, classified));
       await recordEncoderRunOutcome(this.env, clipId, classified);
 
-      if (retainedSourceAttempt && !retainedSourceReady) {
-        const message =
-          classified.kind === "ok"
-            ? classified.result.errorMessage ?? "Source import failed"
-            : "Source import failed";
-        await markSourceVideoRetainedSourceFailed(
-          this.env.DB,
-          retainedSourceAttempt.videoId,
-          message,
-        );
-      }
-
       if (classified.kind === "ok") {
         return Response.json(classified.result, { status: response.status });
       }
 
       return new Response(rawBody || null, { status: response.status });
-    } catch (error) {
-      if (retainedSourceAttempt && !retainedSourceReady) {
-        await markSourceVideoRetainedSourceFailed(
-          this.env.DB,
-          retainedSourceAttempt.videoId,
-          error instanceof Error ? error.message : "Source import failed",
-        );
-      }
-      throw error;
     } finally {
       await this.cleanupJobFiles(jobId);
     }
   }
 
+  private retainedVideoSourceAcquisition() {
+    return createRetainedVideoSourceAcquisition({
+      db: this.env.DB,
+      bucket: this.env.CLIPS_BUCKET,
+      adapter: {
+        downloadYoutubeSource: ({ url, jobId }) =>
+          this.downloadYoutubeSource(url, jobId),
+        persistDownloadedSource: ({ key, jobId }) =>
+          this.uploadDeferredSource(key, jobId),
+        stageBucketSource: ({ key, jobId }) =>
+          this.stageBucketSource(key, jobId),
+      },
+    });
+  }
+
+  private async downloadYoutubeSource(
+    url: string,
+    jobId: string,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    const response = await super.fetch(
+      new Request(
+        `http://encoder/retain-youtube-source?job=${encodeURIComponent(jobId)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            url,
+            quality: "1080p",
+          }),
+        },
+      ),
+    );
+    if (response.ok) return { ok: true };
+    return {
+      ok: false,
+      error: await this.readEncoderError(
+        response,
+        "YouTube source download failed",
+      ),
+    };
+  }
+
   private async stageBucketSource(
     sourceKey: string,
     jobId: string,
-  ): Promise<{ ok: true } | { ok: false; error: string }> {
+  ): Promise<{ ok: true; path: string } | { ok: false; error: string }> {
     if (
       !sourceKey.startsWith(UPLOAD_KEY_PREFIX) &&
       !isYoutubeRetainedSourceKey(sourceKey)
@@ -645,7 +688,7 @@ export class EncoderContainer extends Container<Env> {
       };
     }
 
-    return { ok: true };
+    return { ok: true, path: stagedSourcePath(jobId) };
   }
 
   private async handleStoredVideoMetadata(sourceKey: string): Promise<Response> {
@@ -684,7 +727,10 @@ export class EncoderContainer extends Container<Env> {
             );
           }
 
-          const staged = await this.stageVideoForTranscription(video, jobId);
+          const staged = await this.retainedVideoSourceAcquisition().stage(
+            video,
+            jobId,
+          );
           if (!staged.ok) {
             return Response.json(
               { errorMessage: staged.error },
@@ -825,123 +871,6 @@ export class EncoderContainer extends Container<Env> {
       });
     } finally {
       await this.decrementQueueDepth();
-    }
-  }
-
-  private async stageVideoForTranscription(
-    video: SourceVideoRecord,
-    jobId: string,
-  ): Promise<{ ok: true } | { ok: false; error: string }> {
-    if (video.source_type === "upload") {
-      return this.stageBucketSource(video.source_ref, jobId);
-    }
-
-    if (await this.stageReadyYoutubeSource(video, jobId)) {
-      return { ok: true };
-    }
-
-    const retainedKey = await this.beginYoutubeSourceRetention(video.id);
-    if (!retainedKey) {
-      return { ok: false, error: "Unable to prepare video source" };
-    }
-
-    try {
-      const downloadResponse = await super.fetch(
-        new Request(
-          `http://encoder/retain-youtube-source?job=${encodeURIComponent(jobId)}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              url: video.source_ref,
-              quality: "1080p",
-            }),
-          },
-        ),
-      );
-      if (!downloadResponse.ok) {
-        throw new Error(
-          await this.readEncoderError(
-            downloadResponse,
-            "YouTube source download failed",
-          ),
-        );
-      }
-
-      await this.persistDownloadedYoutubeSource(
-        video.id,
-        retainedKey,
-        jobId,
-      );
-
-      const staged = await this.stageBucketSource(retainedKey, jobId);
-      if (!staged.ok) {
-        throw new Error(staged.error);
-      }
-      return staged;
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "YouTube source preparation failed";
-      await markSourceVideoRetainedSourceFailed(
-        this.env.DB,
-        video.id,
-        message,
-      );
-      return { ok: false, error: message };
-    }
-  }
-
-  private async stageReadyYoutubeSource(
-    video: SourceVideoRecord,
-    jobId: string,
-  ): Promise<boolean> {
-    if (
-      video.retained_source_status !== "ready" ||
-      !video.retained_source_key
-    ) {
-      return false;
-    }
-    const staged = await this.stageBucketSource(
-      video.retained_source_key,
-      jobId,
-    );
-    if (staged.ok) return true;
-    await markSourceVideoRetainedSourceFailed(
-      this.env.DB,
-      video.id,
-      staged.error,
-    );
-    return false;
-  }
-
-  private async beginYoutubeSourceRetention(
-    videoId: string,
-  ): Promise<string | null> {
-    const key = youtubeRetainedSourceKey(videoId);
-    const marked = await markSourceVideoRetainedSourceImporting(
-      this.env.DB,
-      videoId,
-      key,
-    );
-    return marked ? key : null;
-  }
-
-  private async persistDownloadedYoutubeSource(
-    videoId: string,
-    key: string,
-    jobId: string,
-  ): Promise<void> {
-    await this.uploadDeferredSource(key, jobId);
-    const retained = await markSourceVideoRetainedSourceReady(
-      this.env.DB,
-      videoId,
-      key,
-    );
-    if (!retained) {
-      await this.env.CLIPS_BUCKET.delete(key);
-      throw new Error("Video was deleted during source import");
     }
   }
 

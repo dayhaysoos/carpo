@@ -8,6 +8,7 @@ function clip(input: {
   videoId: string;
   status: ClipResponse["status"];
   errorMessage?: string;
+  sourceFailure?: ClipResponse["sourceFailure"];
 }): ClipResponse {
   return {
     id: input.id,
@@ -21,6 +22,7 @@ function clip(input: {
     filters: [],
     status: input.status,
     errorMessage: input.errorMessage ?? null,
+    sourceFailure: input.sourceFailure,
     gifStatus: "none",
     gifErrorMessage: null,
     outputs: { mp4: null, thumbnail: null, gif: null },
@@ -68,5 +70,31 @@ describe("StatusPanel scope", () => {
         includeBlockedFailureVideoId: "current-video",
       }).visibleClips.map(({ id }) => id),
     ).toEqual(["current-failure"]);
+  });
+
+  it("keeps a typed provider failure visible without matching legacy copy", () => {
+    const providerFailure = clip({
+      id: "provider-failure",
+      videoId: "current-video",
+      status: "failed",
+      errorMessage: "raw provider detail",
+      sourceFailure: {
+        provider: "youtube",
+        code: "provider_changed",
+        message: "YouTube changed how this video is delivered.",
+        retryable: true,
+        recovery: {
+          type: "upload",
+          href: "/?source=upload",
+          label: "Upload the video instead",
+        },
+      },
+    });
+
+    expect(
+      visibleStatusPanelClips([providerFailure], {
+        includeBlockedFailureVideoId: "current-video",
+      }).visibleClips.map(({ id }) => id),
+    ).toEqual(["provider-failure"]);
   });
 });

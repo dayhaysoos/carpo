@@ -50,12 +50,14 @@ each share URL as a bearer secret, stores only its SHA-256 hash, sends
 `Cache-Control: private, no-store`, and exposes owner-visible revocation. Apply
 the D1 migrations before enabling the public path.
 
-## Reusable YouTube sources
+## Reusable remote Video sources
 
-The first server-side clip from a YouTube video imports a complete 1080p source
-into R2. Later clips stage that retained source directly into the encoder and do
-not contact YouTube again. The retained object is removed only when its video is
-explicitly deleted.
+Adding a YouTube Video starts a best-effort import of one complete 1080p source
+into the owner's private R2 library before Clip creation. Once ready, preview,
+transcript work, and every later Clip use that Retained Video Source without
+contacting YouTube again. Provider failures remain distinguishable and always
+offer owned upload as the reliable recovery path. The retained object is removed
+only when its Video is explicitly deleted.
 
 ## Transcript-aware clipping
 

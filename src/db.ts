@@ -279,9 +279,12 @@ export async function sweepStaleClips(db: D1Database): Promise<number> {
          AND updated_at < datetime('now', ?)
          AND NOT (
            status = 'queued'
-           AND helper_state IN ('pending', 'expired', 'recovering')
+           AND COALESCE(helper_state, '') IN ('pending', 'expired', 'recovering')
          )
-         AND NOT (status = 'downloading' AND helper_state = 'claimed')`,
+         AND NOT (
+           status = 'downloading'
+           AND COALESCE(helper_state, '') = 'claimed'
+         )`,
     )
     .bind(
       STALE_JOB_ERROR_MESSAGE,
@@ -525,6 +528,33 @@ export async function markSourceVideoRetainedSourceImporting(
            retained_source_error = NULL,
            retained_source_updated_at = datetime('now')
        WHERE id = ? AND source_type = 'youtube'`,
+    )
+    .bind(key, id)
+    .run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function claimSourceVideoRetainedSourceImport(
+  db: D1Database,
+  id: string,
+  key: string,
+): Promise<boolean> {
+  const result = await db
+    .prepare(
+      `UPDATE source_videos
+       SET retained_source_key = ?,
+           retained_source_status = 'importing',
+           retained_source_error = NULL,
+           retained_source_updated_at = datetime('now')
+       WHERE id = ?
+         AND source_type = 'youtube'
+         AND (
+           retained_source_status IN ('empty', 'failed')
+           OR (
+             retained_source_status = 'importing'
+             AND retained_source_updated_at < datetime('now', '-75 minutes')
+           )
+         )`,
     )
     .bind(key, id)
     .run();

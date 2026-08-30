@@ -8,7 +8,7 @@ import {
 
 describe("encoder pool compatibility", () => {
   it("changes the pool identity when the Worker-container protocol changes", () => {
-    expect(ENCODER_PROTOCOL_VERSION).toBe(4);
+    expect(ENCODER_PROTOCOL_VERSION).toBe(5);
     expect(ENCODER_POOL_INSTANCE).toBe(
       `encoder-v${ENCODER_PROTOCOL_VERSION}`,
     );
