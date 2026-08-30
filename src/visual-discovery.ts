@@ -295,7 +295,7 @@ export async function analyzeVisualFrame(
       },
     ],
     response_format: { type: "json_object" },
-    max_completion_tokens: 160,
+    max_completion_tokens: 512,
     temperature: 0,
   });
   const content = response.choices[0]?.message.content;

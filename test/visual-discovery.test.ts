@@ -5,6 +5,7 @@ import type { Env } from "../src/env";
 import type { AuthenticatedUser } from "../src/identity";
 import { handleRequest } from "../src/routes";
 import {
+  analyzeVisualFrame,
   createVisualDiscovery,
   type SampledVisualFrame,
   type VisualFrameAnalysis,
@@ -104,6 +105,40 @@ const notMatched: VisualFrameAnalysis = {
 };
 
 describe("visual discovery", () => {
+  it("keeps enough completion budget for a complete visual JSON result", async () => {
+    const run = vi.fn(async (_model: string, request: { max_completion_tokens?: number }) => ({
+      choices: [
+        {
+          message: {
+            content:
+              (request.max_completion_tokens ?? 0) >= 512
+                ? '{"matched":true,"confidence":"high","uncertainty":"None.","rationale":"A red square is centered on blue."}'
+                : '{"matched": true, "confidence": "high", "uncertainty": "none", "rationale": "The image contains a large, bright',
+          },
+        },
+      ],
+    }));
+    const testEnv = {
+      AI: { run },
+      CLIPS_BUCKET: {
+        get: vi.fn(async () => ({
+          arrayBuffer: async () => new Uint8Array([0xff, 0xd8, 0xff, 0xd9]).buffer,
+        })),
+      },
+    } as unknown as Env;
+
+    await expect(
+      analyzeVisualFrame(testEnv, {
+        query: "large bright red square centered on blue",
+        frame: { id: "frame-1", timestampSeconds: 1, key: "frame-1.jpg" },
+      }),
+    ).resolves.toMatchObject({ matched: true, confidence: "high" });
+    expect(run).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ max_completion_tokens: 512 }),
+    );
+  });
+
   it("finds a repository-owned logo fixture with bounded sampled evidence", async () => {
     const owner = await installOwner("visual-logo");
     const { videoId } = await installUpload(owner, "Logo fixture");
