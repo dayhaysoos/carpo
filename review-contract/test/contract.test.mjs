@@ -83,6 +83,9 @@ describe("bounded review policy contract", () => {
       "getCarpoLibraryInstructions",
       "searchPrivateLibrary",
       "prepareLibraryMomentReview",
+      "getCarpoVisualInstructions",
+      "searchVisualMoments",
+      "prepareVisualMomentReview",
     ]);
   });
 
