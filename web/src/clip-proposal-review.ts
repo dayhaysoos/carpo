@@ -114,6 +114,28 @@ export interface ClipProposalAdmissionResult {
   snapshot: ClipProposalReviewSnapshot;
 }
 
+export interface PreparedClipProposalHandoff {
+  adapter: Extract<ClipProposalAdapter, "library" | "visual">;
+  requestId: string;
+  videoId: string;
+  proposalId: string;
+  input: ClipProposalInput;
+  evidence?: ClipProposalEvidence;
+}
+
+export type PreparedClipProposalIntakeStatus =
+  | "accepted"
+  | "queued"
+  | "replayed"
+  | "rejected";
+
+export interface PreparedClipProposalIntakeResult {
+  status: PreparedClipProposalIntakeStatus;
+  consumable: boolean;
+  issues: ClipProposalAdmissionIssue[];
+  snapshot: ClipProposalReviewSnapshot;
+}
+
 interface AdmittedClipProposalIdentity {
   id: string;
   videoId: string;
@@ -394,6 +416,17 @@ function rejectedAdmission(
   };
 }
 
+function admissionIssues(
+  admission: ClipProposalAdmissionResult,
+): ClipProposalAdmissionIssue[] {
+  return [
+    ...admission.issues,
+    ...admission.items.flatMap((item) => item.issues),
+  ];
+}
+
+const settlePreparedHandoff = () => undefined;
+
 export class ClipProposalReview {
   private readonly sessions = new Map<string, VideoReviewSession>();
   private readonly listeners = new Set<() => void>();
@@ -673,6 +706,43 @@ export class ClipProposalReview {
         (result): result is ClipProposalAdmissionItem => Boolean(result),
       ),
       snapshot: baseSnapshot(),
+    };
+  }
+
+  intakePrepared(
+    activeVideo: ClipProposalVideoContext,
+    handoff: PreparedClipProposalHandoff,
+  ): PreparedClipProposalIntakeResult {
+    this.activate(activeVideo);
+    const admission = this.admit({
+      adapter: handoff.adapter,
+      requestId: handoff.requestId,
+      videoId: handoff.videoId,
+      atomic: true,
+      proposals: [
+        {
+          proposalId: handoff.proposalId,
+          input: handoff.input,
+          evidence: handoff.evidence,
+          settle: settlePreparedHandoff,
+        },
+      ],
+    });
+    const issues = admissionIssues(admission);
+    const item = admission.items[0];
+    const status: PreparedClipProposalIntakeStatus =
+      !item || item.state === "rejected" || issues.length > 0
+        ? "rejected"
+        : item.replayed
+          ? "replayed"
+          : item.state === "queued"
+            ? "queued"
+            : "accepted";
+    return {
+      status,
+      consumable: status !== "rejected",
+      issues,
+      snapshot: admission.snapshot,
     };
   }
 
