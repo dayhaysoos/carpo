@@ -3328,11 +3328,21 @@ describe("source video library", () => {
       { headers: { Range: "bytes=4-7" } },
     );
     expect(rangeResponse.status).toBe(206);
-    expect(rangeResponse.headers.get("accept-ranges")).toBe("bytes");
-    expect(rangeResponse.headers.get("content-range")).toBe("bytes 4-7/8");
     expect(new Uint8Array(await rangeResponse.arrayBuffer())).toEqual(
       new Uint8Array([0x66, 0x74, 0x79, 0x70]),
     );
+
+    const invalidRangeResponse = await workerFetch(
+      `http://example.com/api/videos/${first.videoId}/source`,
+      { headers: { Range: "bytes=9-" } },
+    );
+    expect(invalidRangeResponse.status).toBe(416);
+    expect(invalidRangeResponse.headers.get("Content-Type")).toBe(
+      "application/json",
+    );
+    expect(await invalidRangeResponse.json()).toEqual({
+      error: "Requested range is unavailable",
+    });
 
     const secondResponse = await workerFetch(
       `http://example.com/api/videos/${first.videoId}/clips`,

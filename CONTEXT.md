@@ -55,6 +55,10 @@ _Avoid_: TikTok captions, closed captions
 A toggleable timed-text output associated with a clip rather than permanently rendered into its picture.
 _Avoid_: Open captions, overlay text
 
+**Media Delivery**:
+The authorization-independent transfer of a retained Video source or rendered Clip output to a viewer, including complete and byte-range responses.
+_Avoid_: Sharing, access control, R2 delivery
+
 **Archived Video**:
 A video hidden from the default library view while its original and clips remain retained and reusable.
 _Avoid_: Closed project, inactive video

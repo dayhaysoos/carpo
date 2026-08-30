@@ -36,6 +36,20 @@ to require Carpo's own `HELPER_TOKEN`. Encoder callbacks use only the narrow
 `/api/internal/jobs/*` path and remain protected by their per-job secret. Do not
 configure a broad Access bypass for either client.
 
+### Public share path
+
+Revocable Clip links use `/share/*` as their only anonymous entry point. In
+production, configure a separate, more-specific Cloudflare Access application
+for `carpo.ndejesus1227.workers.dev/share/*` with a Bypass policy for Everyone;
+keep the existing hostname-level Access application on every other path. Never
+bypass `/artifacts/*`: the share handler validates the opaque link, expiry, and
+revocation before streaming the single allowed object from R2.
+
+Access does not log requests covered by a Bypass policy. Carpo therefore treats
+each share URL as a bearer secret, stores only its SHA-256 hash, sends
+`Cache-Control: private, no-store`, and exposes owner-visible revocation. Apply
+the D1 migrations before enabling the public path.
+
 ## Reusable YouTube sources
 
 The first server-side clip from a YouTube video imports a complete 1080p source

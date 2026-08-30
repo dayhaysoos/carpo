@@ -16,7 +16,6 @@ import {
   setSourceVideoArchived,
   updateSourceVideoDuration,
   sweepStaleClips,
-  markGifEncoding,
   outputKeysForClip,
   queueArtifactDeletion,
 } from "./db";
@@ -97,6 +96,12 @@ import {
   VisualDiscoveryError,
   type PrepareVisualMomentInput,
 } from "./visual-discovery";
+import { handleClipDistributionApi } from "./clip-distribution-http";
+import {
+  ClipDistribution,
+  ClipDistributionError,
+} from "./clip-distribution";
+import { R2MediaDelivery } from "./r2-media-delivery";
 
 const MAX_CAPTION_TRACK_BODY_BYTES = 128 * 1024;
 
@@ -133,6 +138,14 @@ export async function handleRequest(
   if (request.method === "GET" && url.pathname === "/api/clips") {
     return handleListClips(url, env, ctx, user!);
   }
+
+  const distributionResponse = await handleClipDistributionApi(
+    request,
+    env,
+    ctx,
+    user!,
+  );
+  if (distributionResponse) return distributionResponse;
 
   if (request.method === "GET" && url.pathname === "/api/videos") {
     return handleListSourceVideos(url, env, ctx, user!);
@@ -967,53 +980,20 @@ async function handleSourceVideoSource(
     return json({ error: "Retained video source is not ready" }, 409);
   }
 
-  const rangeHeader = request.headers.get("range");
-  const object = await env.CLIPS_BUCKET.get(
-    sourceKey,
-    rangeHeader ? { range: request.headers } : undefined,
-  );
-  if (!object) {
+  const outcome = await new R2MediaDelivery(env.CLIPS_BUCKET).deliver({
+    key: sourceKey,
+    method: "GET",
+    range: request.headers.get("Range"),
+  });
+  if (outcome.type === "missing") {
     return json({ error: "Video source unavailable" }, 404);
   }
-  const headers = new Headers();
-  object.writeHttpMetadata(headers);
-  headers.set("etag", object.httpEtag);
-  headers.set("cache-control", "private, no-store");
-  headers.set("accept-ranges", "bytes");
-
-  const range = rangeHeader
-    ? resolveR2Range(object.range, object.size)
-    : null;
-  if (range) {
-    headers.set(
-      "content-range",
-      `bytes ${range.offset}-${range.offset + range.length - 1}/${object.size}`,
-    );
-    headers.set("content-length", String(range.length));
+  if (outcome.type === "range-not-satisfiable") {
+    const response = json({ error: "Requested range is unavailable" }, 416);
+    outcome.headers.forEach((value, name) => response.headers.set(name, value));
+    return response;
   }
-
-  return new Response(object.body, { status: range ? 206 : 200, headers });
-}
-
-function resolveR2Range(
-  range: R2Range | undefined,
-  objectSize: number,
-): { offset: number; length: number } | null {
-  if (!range) {
-    return null;
-  }
-  if ("suffix" in range && typeof range.suffix === "number") {
-    const length = Math.min(range.suffix, objectSize);
-    return { offset: objectSize - length, length };
-  }
-
-  const offset =
-    "offset" in range && typeof range.offset === "number" ? range.offset : 0;
-  const length =
-    "length" in range && typeof range.length === "number"
-      ? range.length
-      : objectSize - offset;
-  return { offset, length };
+  return outcome.response;
 }
 
 async function handleListSourceVideos(
@@ -1554,48 +1534,48 @@ async function handleRequestGifExport(
   if (!clipId) {
     return json({ error: "Clip id is required" }, 400);
   }
-
-  const record = await getClipByIdForOwner(env.DB, clipId, user.id);
-  if (!record) {
-    return json({ error: "Clip not found" }, 404);
-  }
-
-  if (record.status !== "complete") {
+  const distribution = new ClipDistribution({
+    db: env.DB,
+    artifactPrefix: env.R2_PUBLIC_PREFIX,
+    scheduleGifExport: (scheduledClipId) => {
+      ctx.waitUntil(dispatchGifExportJob(env, scheduledClipId));
+    },
+  });
+  try {
+    const result = await distribution.perform({
+      type: "create-export",
+      ownerId: user.id,
+      clipId,
+      preset: "looping-gif",
+    });
+    const updated = await getClipByIdForOwner(env.DB, clipId, user.id);
+    if (!updated) return json({ error: "Clip not found" }, 404);
     return json(
-      {
-        error: "Clip is not complete",
-        details: [
-          {
-            field: "status",
-            message: "GIF export is only available for completed clips",
-          },
-        ],
-      },
-      409,
+      recordToResponse(updated, env.R2_PUBLIC_PREFIX),
+      result.type === "export" && result.started ? 202 : 200,
     );
-  }
-
-  if (record.gif_status === "complete" && record.output_gif_key) {
-    return json(recordToResponse(record, env.R2_PUBLIC_PREFIX));
-  }
-
-  if (record.gif_status === "encoding") {
-    return json(recordToResponse(record, env.R2_PUBLIC_PREFIX));
-  }
-
-  const started = await markGifEncoding(env.DB, clipId);
-  if (!started) {
-    const latest = await getClipByIdForOwner(env.DB, clipId, user.id);
-    if (!latest) {
-      return json({ error: "Clip not found" }, 404);
+  } catch (error) {
+    if (error instanceof ClipDistributionError) {
+      if (error.kind === "not_found") {
+        return json({ error: "Clip not found" }, 404);
+      }
+      if (error.kind === "not_complete") {
+        return json(
+          {
+            error: "Clip is not complete",
+            details: [
+              {
+                field: "status",
+                message: "GIF export is only available for completed clips",
+              },
+            ],
+          },
+          409,
+        );
+      }
     }
-    return json(recordToResponse(latest, env.R2_PUBLIC_PREFIX));
+    throw error;
   }
-
-  ctx.waitUntil(dispatchGifExportJob(env, clipId));
-
-  const updated = await getClipByIdForOwner(env.DB, clipId, user.id);
-  return json(recordToResponse(updated!, env.R2_PUBLIC_PREFIX), 202);
 }
 
 async function handleRequestUploadUrl(

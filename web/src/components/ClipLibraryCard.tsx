@@ -125,6 +125,7 @@ interface ClipLibraryCardProps {
   deleting: boolean;
   onRequestGif: (clip: ClipResponse) => void;
   onEditCaptions: (clip: ClipResponse) => void;
+  onManageDistribution: (clip: ClipResponse) => void;
   gifExporting: boolean;
   selecting?: boolean;
   selected?: boolean;
@@ -138,6 +139,7 @@ export function ClipLibraryCard({
   deleting,
   onRequestGif,
   onEditCaptions,
+  onManageDistribution,
   gifExporting,
   selecting = false,
   selected = false,
@@ -233,6 +235,13 @@ export function ClipLibraryCard({
                   onClick={() => onEditCaptions(clip)}
                 >
                   Captions
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => onManageDistribution(clip)}
+                >
+                  Share &amp; export
                 </button>
                 <a href={clip.outputs.mp4} download className="btn-secondary">
                   Download
