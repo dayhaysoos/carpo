@@ -10,12 +10,9 @@ describe("PR browser review UI contract", () => {
     ]);
     const captionValueIndex = creatorForm.indexOf("value={caption}");
     assert.notEqual(captionValueIndex, -1, "Creator form caption input is missing");
-    const fieldStart = creatorForm.lastIndexOf(
-      '<label className="field">',
-      captionValueIndex,
-    );
+    const fieldStart = creatorForm.lastIndexOf("<label", captionValueIndex);
     const fieldMarkup = creatorForm.slice(fieldStart, captionValueIndex);
-    const label = fieldMarkup.match(/<span>([^<]+)<\/span>/)?.[1];
+    const label = fieldMarkup.match(/<span[^>]*>([^<]+)<\/span>/)?.[1];
 
     assert.equal(label, "Overlay text (optional)");
     assert.ok(

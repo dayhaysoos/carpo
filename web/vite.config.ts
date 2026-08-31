@@ -1,8 +1,9 @@
 import react from "@vitejs/plugin-react";
+import stylex from "@stylexjs/unplugin";
 import { defineConfig } from "vite";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [stylex.vite(), react()],
   build: {
     outDir: "../public",
     emptyOutDir: true,

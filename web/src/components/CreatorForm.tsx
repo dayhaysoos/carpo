@@ -1,23 +1,11 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useReducer,
-  useRef,
-} from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { useMutation } from "@tanstack/react-query";
+import * as stylex from "@stylexjs/stylex";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   createClip,
   createClipFromSourceVideo,
-  createSourceVideo,
-  getSourceVideo,
-  requestUploadUrl,
-  retryRemoteSourceIngestion,
-  sourceVideoUploadUrl,
-  updateSourceVideoDuration,
-  uploadFileWithProgress,
 } from "../api";
+import type { ActiveVideoLifecycle } from "../active-video-lifecycle";
 import { useNativeVideoPlayer } from "../hooks/useNativeVideoPlayer";
 import { useTrimRange } from "../hooks/useTrimRange";
 import { useYoutubePlayer } from "../hooks/useYoutubePlayer";
@@ -27,81 +15,53 @@ import {
   type ClipResponse,
   type ClipQuality,
   type CreateClipRequest,
-  type CreateSourceVideoRequest,
   DEFAULT_CLIP_QUALITY,
 } from "../types";
 import {
   deriveUploadClipTitle,
   type OwnedUploadClipJourneyView,
 } from "../owned-upload-clip-journey";
-import {
-  contentTypeForFile,
-  formatUploadProgress,
-  validateUploadFile,
-} from "../upload";
-import { extractYoutubeVideoId, isValidYoutubeUrl } from "../youtube";
 import type { ClipWindowRequest } from "../timestamp-windows";
 import { toExistingClipRanges } from "../timeline";
+import { formatTimestamp } from "../youtube";
+import { creatorWorkspaceTokens } from "../styles/creatorWorkspaceTokens.stylex";
+import {
+  CreatorWorkspaceClipPreview,
+  CreatorWorkspaceClipReel,
+  getCreatorWorkspaceClipItems,
+} from "./CreatorWorkspaceClipReel";
 import { TranscriptPanel } from "./TranscriptPanel";
 import { TrimSlider } from "./TrimSlider";
-import { OwnedUploadClipResult } from "./OwnedUploadClipResult";
 import { RemoteSourceFailureHint } from "./RemoteSourceFailureHint";
 
-type SourceMode = "youtube" | "upload";
-
 interface CreatorFormProps {
+  activeVideoLifecycle: ActiveVideoLifecycle;
   onClipCreated: (clip: ClipResponse) => void;
-  onVideoActivated: (videoId: string) => void;
-  onPendingYoutubeVideoChange?: (youtubeVideoId: string | null) => void;
   clipWindowRequest?: ClipWindowRequest | null;
   ownedUploadJourney: OwnedUploadClipJourneyView;
 }
 
-const DEFAULT_MAX_UPLOAD_BYTES = 95 * 1024 * 1024;
-
 interface CreatorFormState {
-  sourceMode: SourceMode;
   clipCreatedNotice: boolean;
-  url: string;
   title: string;
   caption: string;
   quality: ClipQuality;
   urlTouched: boolean;
-  selectedFile: File | null;
-  uploadKey: string | null;
-  uploadError: string | null;
-  uploadProgress: string | null;
-  maxUploadBytes: number;
-  sourceActivationError: string | null;
 }
 
 type CreatorFormAction =
   | { type: "update"; patch: Partial<CreatorFormState> }
-  | { type: "select-source-mode"; mode: SourceMode }
-  | {
-      type: "load-reusable-video";
-      source: CreateSourceVideoRequest["source"];
-      title: string;
-    }
-  | { type: "choose-another" }
-  | { type: "select-file"; file: File | null; title: string }
+  | { type: "source-ui-reset" }
+  | { type: "seed-upload-title"; title: string }
   | { type: "clip-created" }
   | { type: "hide-clip-created-notice" };
 
 const INITIAL_CREATOR_FORM_STATE: CreatorFormState = {
-  sourceMode: "upload",
   clipCreatedNotice: false,
-  url: "",
   title: "",
   caption: "",
   quality: DEFAULT_CLIP_QUALITY,
   urlTouched: false,
-  selectedFile: null,
-  uploadKey: null,
-  uploadError: null,
-  uploadProgress: null,
-  maxUploadBytes: DEFAULT_MAX_UPLOAD_BYTES,
-  sourceActivationError: null,
 };
 
 function creatorFormReducer(
@@ -111,48 +71,12 @@ function creatorFormReducer(
   switch (action.type) {
     case "update":
       return { ...state, ...action.patch };
-    case "select-source-mode":
-      return {
-        ...state,
-        sourceMode: action.mode,
-        urlTouched: false,
-        uploadError: null,
-        uploadProgress: null,
-        sourceActivationError: null,
-        ...(action.mode === "youtube"
-          ? { selectedFile: null, uploadKey: null }
-          : { url: "" }),
-      };
-    case "load-reusable-video":
-      return {
-        ...state,
-        sourceMode: action.source.type,
-        selectedFile: null,
-        uploadKey: null,
-        url: action.source.type === "youtube" ? action.source.url : "",
-        ...(action.source.type === "upload" && state.title.trim().length === 0
-          ? { title: deriveUploadClipTitle(action.title) }
-          : {}),
-      };
-    case "choose-another":
-      return {
-        ...state,
-        url: "",
-        selectedFile: null,
-        uploadKey: null,
-      };
-    case "select-file":
-      return {
-        ...state,
-        selectedFile: action.file,
-        title:
-          action.file && action.file === state.selectedFile
-            ? state.title
-            : action.title,
-        uploadKey: null,
-        uploadError: null,
-        uploadProgress: null,
-      };
+    case "source-ui-reset":
+      return { ...state, urlTouched: false };
+    case "seed-upload-title":
+      return state.title.trim().length === 0
+        ? { ...state, title: deriveUploadClipTitle(action.title) }
+        : state;
     case "clip-created":
       return {
         ...state,
@@ -164,159 +88,84 @@ function creatorFormReducer(
 }
 
 export function CreatorForm({
+  activeVideoLifecycle,
   onClipCreated,
-  onVideoActivated,
-  onPendingYoutubeVideoChange,
   clipWindowRequest,
   ownedUploadJourney,
 }: CreatorFormProps) {
-  const [searchParams] = useSearchParams();
-  const reusableVideoId = searchParams.get("video") ?? "";
+  const { perform } = activeVideoLifecycle;
+  const { active, manualSource, preview, readyForClip, refreshIssue } =
+    activeVideoLifecycle.view;
+  const reusableVideoId = active.id ?? "";
+  const reusableVideo = active.status === "ready" ? active.video : null;
+  const reusableVideoClips = active.status === "ready" ? active.clips : [];
   const [form, dispatch] = useReducer(
     creatorFormReducer,
     INITIAL_CREATOR_FORM_STATE,
   );
-  const {
-    sourceMode,
-    clipCreatedNotice,
-    url,
-    title,
-    caption,
-    quality,
-    urlTouched,
-    selectedFile,
-    uploadKey,
-    uploadError,
-    uploadProgress,
-    maxUploadBytes,
-    sourceActivationError,
-  } = form;
+  const { clipCreatedNotice, title, caption, quality, urlTouched } = form;
+  const sourceMode = manualSource.mode;
+  const url = manualSource.youtubeUrl;
+  const selectedUpload = manualSource.upload;
+  const uploadError =
+    manualSource.issue?.area === "upload" ? manualSource.issue.message : null;
+  const sourceActivationError =
+    manualSource.issue?.area === "activation" ||
+    manualSource.issue?.area === "ingestion-retry"
+      ? manualSource.issue.message
+      : null;
+  const uploadProgress = manualSource.progress;
   const appliedClipWindowRequest = useRef<number | null>(null);
-  const durationUpdateKey = useRef<string | null>(null);
-  const sourceActivationKey = useRef<string | null>(null);
-  const uploadGeneration = useRef(0);
-  const youtubeMetadata = useRef({ title: "", duration: 0 });
-  const activateVideo = useCallback(
-    async (
-      request: CreateSourceVideoRequest,
-      shouldActivate: () => boolean = () => true,
-    ) => {
-      const video = await createSourceVideo(request);
-      if (shouldActivate()) {
-        onVideoActivated(video.id);
-      }
-    },
-    [onVideoActivated],
-  );
-
-  const {
-    data: reusableVideoData,
-    error: reusableVideoError,
-    isLoading: reusableVideoLoading,
-    refetch: refetchReusableVideo,
-  } = useQuery({
-    queryKey: ["source-video", reusableVideoId],
-    queryFn: () => getSourceVideo(reusableVideoId),
-    enabled: Boolean(reusableVideoId),
-    refetchInterval: (query) => {
-      const status = query.state.data?.video.remoteIngestion?.status;
-      return status === "pending" || status === "importing" ? 1000 : false;
-    },
-  });
-  const reusableVideo = reusableVideoData?.video ?? null;
+  const previousActiveVideoId = useRef(reusableVideoId);
+  const selectedClipTrigger = useRef<HTMLButtonElement | null>(null);
+  const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const existingClips = useMemo(
-    () => toExistingClipRanges(reusableVideoData?.clips),
-    [reusableVideoData?.clips],
+    () => toExistingClipRanges(reusableVideoClips),
+    [reusableVideoClips],
   );
 
   const trimmedUrl = url.trim();
-  const urlValid = trimmedUrl.length > 0 && isValidYoutubeUrl(trimmedUrl);
+  const urlValid = manualSource.youtubeValidity === "valid";
   const urlInvalid = urlTouched && trimmedUrl.length > 0 && !urlValid;
-  const videoId = sourceMode === "youtube" && urlValid ? extractYoutubeVideoId(trimmedUrl) : null;
-
-  useEffect(() => {
-    onPendingYoutubeVideoChange?.(
-      !reusableVideoId && sourceMode === "youtube" ? videoId : null,
-    );
-  }, [
-    onPendingYoutubeVideoChange,
-    reusableVideoId,
-    sourceMode,
-    videoId,
-  ]);
-
-  const filePreviewUrl = useMemo(
-    () => (selectedFile ? URL.createObjectURL(selectedFile) : null),
-    [selectedFile],
-  );
-  const useRetainedRemotePlayer = Boolean(
-    sourceMode === "youtube" &&
-      reusableVideo?.source.type === "youtube" &&
-      reusableVideo.retainedSourceReady &&
-      (!reusableVideo.remoteIngestion ||
-        reusableVideo.remoteIngestion.status === "ready"),
-  );
-  const reusableNativePreviewUrl =
-    reusableVideo &&
-    (reusableVideo.source.type === "upload" || useRetainedRemotePlayer)
-      ? sourceVideoUploadUrl(reusableVideo.id)
-      : null;
-  const nativePreviewUrl = reusableNativePreviewUrl ?? filePreviewUrl;
-
-  useEffect(() => {
-    return () => {
-      if (filePreviewUrl) {
-        URL.revokeObjectURL(filePreviewUrl);
-      }
-    };
-  }, [filePreviewUrl]);
-
   const youtube = useYoutubePlayer(
-    sourceMode === "youtube" && !useRetainedRemotePlayer ? videoId : null,
+    preview.type === "youtube" ? preview.videoId : null,
   );
-  youtubeMetadata.current = {
-    title: youtube.title,
-    duration: youtube.duration,
-  };
 
-  const fileValidationError =
-    sourceMode === "upload" && selectedFile
-      ? validateUploadFile(selectedFile, maxUploadBytes)
-      : null;
+  useEffect(() => {
+    void perform({
+      type: "youtube-metadata-observed",
+      title: youtube.title,
+      durationSeconds: youtube.duration,
+    });
+  }, [perform, youtube.duration, youtube.title]);
 
   const native = useNativeVideoPlayer(
-    (sourceMode === "upload" || useRetainedRemotePlayer) &&
-      nativePreviewUrl &&
-      (!selectedFile || !fileValidationError)
-      ? nativePreviewUrl
-      : null,
+    preview.type === "native" ? preview.url : null,
   );
 
   const ready =
-    sourceMode === "youtube" && !useRetainedRemotePlayer
+    preview.type === "youtube"
       ? youtube.ready
-      : Boolean(
-          (selectedFile || reusableNativePreviewUrl) &&
-            !fileValidationError &&
-            native.ready,
-        );
+      : preview.type === "native"
+        ? native.ready
+        : false;
   const duration =
-    sourceMode === "youtube" && !useRetainedRemotePlayer
+    preview.type === "youtube"
       ? youtube.duration
       : native.duration;
   const currentTime =
-    sourceMode === "youtube" && !useRetainedRemotePlayer
+    preview.type === "youtube"
       ? youtube.currentTime
       : native.currentTime;
   const seekTo =
-    sourceMode === "youtube" && !useRetainedRemotePlayer
+    preview.type === "youtube"
       ? youtube.seekTo
       : native.seekTo;
   const trim = useTrimRange({ duration, onSeek: seekTo });
   const durationMatchesActiveSource =
-    (sourceMode === "youtube" && !useRetainedRemotePlayer) ||
-    (nativePreviewUrl !== null &&
-      native.mediaStateSourceUrl === nativePreviewUrl);
+    preview.type === "youtube" ||
+    (preview.type === "native" &&
+      native.mediaStateSourceUrl === preview.url);
 
   useEffect(() => {
     if (
@@ -327,92 +176,31 @@ export function CreatorForm({
     ) {
       return;
     }
-    if (
-      reusableVideo?.durationSeconds &&
-      Math.abs(reusableVideo.durationSeconds - duration) < 0.01
-    ) {
-      return;
-    }
-    const normalizedDuration = Math.round(duration * 1000) / 1000;
-    const updateKey = `${reusableVideoId}:${normalizedDuration}`;
-    if (durationUpdateKey.current === updateKey) return;
-    durationUpdateKey.current = updateKey;
-    void updateSourceVideoDuration(
-      reusableVideoId,
-      normalizedDuration,
-    ).catch(() => {
-      durationUpdateKey.current = null;
+    void perform({
+      type: "active-duration-observed",
+      videoId: reusableVideoId,
+      durationSeconds: duration,
     });
   }, [
     duration,
     durationMatchesActiveSource,
+    perform,
     ready,
-    reusableVideo?.durationSeconds,
     reusableVideoId,
   ]);
 
   useEffect(() => {
-    if (
-      reusableVideoId ||
-      sourceMode !== "youtube" ||
-      !urlValid ||
-      !videoId
-    ) {
-      return;
+    if (reusableVideo?.source.type !== "upload") return;
+    dispatch({ type: "seed-upload-title", title: reusableVideo.title });
+  }, [reusableVideo]);
+
+  useEffect(() => {
+    const previousVideoId = previousActiveVideoId.current;
+    previousActiveVideoId.current = reusableVideoId;
+    if (previousVideoId && !reusableVideoId) {
+      dispatch({ type: "source-ui-reset" });
     }
-    const activationKey = `youtube:${videoId}`;
-    if (sourceActivationKey.current === activationKey) return;
-    let cancelled = false;
-    const timeout = window.setTimeout(() => {
-      sourceActivationKey.current = activationKey;
-      dispatch({
-        type: "update",
-        patch: { sourceActivationError: null },
-      });
-      const metadata = youtubeMetadata.current;
-      void activateVideo(
-        {
-          source: { type: "youtube", url: trimmedUrl },
-          title: metadata.title || `YouTube video ${videoId}`,
-          ...(metadata.duration > 0
-            ? {
-                durationSeconds:
-                  Math.round(metadata.duration * 1000) / 1000,
-              }
-            : {}),
-        },
-        () =>
-          !cancelled && sourceActivationKey.current === activationKey,
-      )
-        .catch((error) => {
-          if (cancelled) return;
-          sourceActivationKey.current = null;
-          dispatch({
-            type: "update",
-            patch: {
-              sourceActivationError:
-                error instanceof Error
-                  ? error.message
-                  : "Failed to prepare video",
-            },
-          });
-        });
-    }, 300);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeout);
-      if (sourceActivationKey.current === activationKey) {
-        sourceActivationKey.current = null;
-      }
-    };
-  }, [
-    activateVideo,
-    reusableVideoId,
-    sourceMode,
-    trimmedUrl,
-    urlValid,
-    videoId,
-  ]);
+  }, [reusableVideoId]);
 
   useEffect(() => {
     if (
@@ -430,30 +218,43 @@ export function CreatorForm({
   }, [clipWindowRequest, ready, trim.setClipWindow]);
 
   const clipDuration = trim.range.end - trim.range.start;
-  const remoteSourceReadyForClip =
-    sourceMode !== "youtube" ||
-    Boolean(
-      reusableVideo?.retainedSourceReady &&
-        (!reusableVideo.remoteIngestion ||
-          reusableVideo.remoteIngestion.status === "ready"),
-    );
+  const remoteSourceReadyForClip = readyForClip;
   const canCreate =
     ready &&
     remoteSourceReadyForClip &&
     title.trim().length > 0 &&
     clipDuration > 0 &&
     clipDuration <= MAX_CLIP_LENGTH_SECONDS &&
-    (reusableVideo
-      ? true
-      : (sourceMode === "youtube" && urlValid && videoId) ||
-        (sourceMode === "upload" && uploadKey && !fileValidationError));
+    Boolean(reusableVideo || manualSource.preparedSource);
+  const clipItems = useMemo(
+    () =>
+      getCreatorWorkspaceClipItems(
+        reusableVideoClips,
+        ownedUploadJourney,
+        reusableVideo?.thumbnail ?? null,
+      ),
+    [ownedUploadJourney, reusableVideo?.thumbnail, reusableVideoClips],
+  );
+  const selectedClip =
+    clipItems.find((item) => item.id === selectedClipId) ?? null;
 
-  const retryIngestion = useMutation({
-    mutationFn: () => retryRemoteSourceIngestion(reusableVideoId),
-    onSuccess: () => {
-      window.setTimeout(() => void refetchReusableVideo(), 250);
-    },
-  });
+  useEffect(() => {
+    if (selectedClipId && !selectedClip) {
+      setSelectedClipId(null);
+    }
+  }, [selectedClip, selectedClipId]);
+
+  useEffect(() => {
+    if (!selectedClipId) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setSelectedClipId(null);
+      requestAnimationFrame(() => selectedClipTrigger.current?.focus());
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [selectedClipId]);
 
   const mutation = useMutation({
     mutationFn: (request: CreateClipRequest) => {
@@ -481,129 +282,36 @@ export function CreatorForm({
     return () => clearTimeout(timeout);
   }, [clipCreatedNotice]);
 
-  const handleSourceModeChange = (mode: SourceMode) => {
-    uploadGeneration.current += 1;
-    dispatch({ type: "select-source-mode", mode });
-    sourceActivationKey.current = null;
+  const handleSourceModeChange = (mode: "youtube" | "upload") => {
+    dispatch({ type: "source-ui-reset" });
+    void perform({ type: "source-mode-changed", mode });
   };
 
-  useEffect(() => {
-    if (!reusableVideo) return;
-    dispatch({
-      type: "load-reusable-video",
-      source: reusableVideo.source,
-      title: reusableVideo.title,
-    });
-  }, [reusableVideo]);
-
-  useEffect(() => {
-    if (!reusableVideoId && searchParams.get("source") === "upload") {
-      handleSourceModeChange("upload");
-    }
-  }, [searchParams]);
-
-  const handleFileChange = async (file: File | null) => {
-    const generation = uploadGeneration.current + 1;
-    uploadGeneration.current = generation;
-    const isCurrentUpload = () => uploadGeneration.current === generation;
-    dispatch({
-      type: "select-file",
-      file,
-      title: file ? deriveUploadClipTitle(file.name) : "",
-    });
-
-    if (!file) {
-      return;
-    }
-
-    const validationError = validateUploadFile(file, maxUploadBytes);
-    if (validationError) {
-      dispatch({ type: "update", patch: { uploadError: validationError } });
-      return;
-    }
-
-    const contentType = contentTypeForFile(file);
-    if (!contentType) {
+  const handleFileChange = (file: File | null) => {
+    if (file) {
       dispatch({
         type: "update",
-        patch: { uploadError: "Unsupported video file type" },
-      });
-      return;
-    }
-
-    try {
-      dispatch({
-        type: "update",
-        patch: { uploadProgress: "Preparing upload…" },
-      });
-      const slot = await requestUploadUrl({
-        contentType,
-        sizeBytes: file.size,
-        filename: file.name,
-      });
-      if (!isCurrentUpload()) return;
-      dispatch({
-        type: "update",
-        patch: { maxUploadBytes: slot.maxSizeBytes },
-      });
-
-      const slotValidation = validateUploadFile(file, slot.maxSizeBytes);
-      if (slotValidation) {
-        dispatch({
-          type: "update",
-          patch: { uploadError: slotValidation, uploadProgress: null },
-        });
-        return;
-      }
-
-      await uploadFileWithProgress(
-        slot.uploadUrl,
-        file,
-        slot.contentType,
-        (loaded, total) => {
-          if (isCurrentUpload()) {
-            dispatch({
-              type: "update",
-              patch: { uploadProgress: formatUploadProgress(loaded, total) },
-            });
-          }
-        },
-      );
-      if (!isCurrentUpload()) return;
-
-      dispatch({
-        type: "update",
-        patch: { uploadKey: slot.key, uploadProgress: "Upload complete" },
-      });
-      await activateVideo(
-        {
-          source: { type: "upload", key: slot.key },
-          title: deriveUploadClipTitle(file.name),
-        },
-        isCurrentUpload,
-      );
-    } catch (error) {
-      if (!isCurrentUpload()) return;
-      dispatch({
-        type: "update",
-        patch: {
-          uploadError:
-            error instanceof Error ? error.message : "Upload failed",
-          uploadProgress: null,
-        },
+        patch: { title: deriveUploadClipTitle(file.name) },
       });
     }
+    void perform({ type: "upload-selected", file });
+  };
+
+  const handleUseOwnFile = async () => {
+    await perform({ type: "clear" });
+    await perform({ type: "source-mode-changed", mode: "upload" });
   };
 
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
     if (!canCreate) return;
 
-    if (sourceMode === "youtube" && videoId) {
+    const preparedSource = reusableVideo?.source ?? manualSource.preparedSource;
+    if (sourceMode === "youtube" && preparedSource?.type === "youtube") {
       mutation.mutate({
         title: title.trim(),
         sourceTitle: reusableVideo?.title || youtube.title || undefined,
-        source: { type: "youtube", url: trimmedUrl },
+        source: preparedSource,
         trimStart: trim.range.start,
         trimEnd: trim.range.end,
         filters:
@@ -615,17 +323,15 @@ export function CreatorForm({
       return;
     }
 
-    const reusableUploadKey =
-      reusableVideo?.source.type === "upload"
-        ? reusableVideo.source.key
-        : null;
-    if (sourceMode === "upload" && (uploadKey || reusableUploadKey)) {
+    if (sourceMode === "upload" && preparedSource?.type === "upload") {
       mutation.mutate({
         title: title.trim(),
         sourceTitle:
           reusableVideo?.title ||
-          (selectedFile ? deriveUploadClipTitle(selectedFile.name) : undefined),
-        source: { type: "upload", key: uploadKey || reusableUploadKey! },
+          (selectedUpload
+            ? deriveUploadClipTitle(selectedUpload.fileName)
+            : undefined),
+        source: preparedSource,
         trimStart: trim.range.start,
         trimEnd: trim.range.end,
         filters:
@@ -637,337 +343,618 @@ export function CreatorForm({
     }
   };
 
-  return (
-    <form className="creator-form card" onSubmit={handleSubmit}>
-      <div className="card-header">
-        <h2>New clip</h2>
-        <p>
-          {reusableVideo
-            ? `Create another clip from ${reusableVideo.title}.`
-            : "Paste a YouTube URL or upload a video, mark the moment, and create."}
-        </p>
-      </div>
+  const builderPanel = (
+    <aside aria-label="Clip builder" {...stylex.props(styles.builder)}>
+        <h1 {...stylex.props(styles.builderTitle)}>New clip</h1>
 
-      {reusableVideoLoading && (
-        <div className="reuse-source-banner">Loading video…</div>
-      )}
-
-      {reusableVideoError && (
-        <div className="form-error" role="alert">
-          {reusableVideoError.message}
-        </div>
-      )}
-
-      {reusableVideo && (
-        <div className="reuse-source-banner">
-          <div>
-            <strong>{reusableVideo.title}</strong>
-            <span>
-              {reusableVideo.source.type === "youtube"
-                ? "YouTube video"
-                : "Uploaded video"}
-            </span>
+        {!reusableVideoId ? (
+          <div role="tablist" aria-label="Source type" {...stylex.props(styles.sourceTabs)}>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={sourceMode === "youtube"}
+              onClick={() => handleSourceModeChange("youtube")}
+              {...stylex.props(styles.sourceTab, sourceMode === "youtube" && styles.sourceTabActive)}
+            >
+              YouTube URL
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={sourceMode === "upload"}
+              onClick={() => handleSourceModeChange("upload")}
+              {...stylex.props(styles.sourceTab, sourceMode === "upload" && styles.sourceTabActive)}
+            >
+              Upload file
+            </button>
           </div>
-          <Link
-            to="/"
-            className="btn-ghost"
-            onClick={() => {
-              dispatch({ type: "choose-another" });
-              sourceActivationKey.current = null;
-              uploadGeneration.current += 1;
-            }}
-          >
-            Choose another
-          </Link>
-        </div>
-      )}
+        ) : null}
 
-      {reusableVideo?.remoteIngestion &&
-        reusableVideo.remoteIngestion.status !== "ready" && (
+        {!reusableVideoId && sourceMode === "youtube" ? (
+          <label {...stylex.props(styles.field)}>
+            <span {...stylex.props(styles.fieldLabel)}>YouTube URL</span>
+            <input
+              type="url"
+              placeholder="https://youtube.com/watch?v=…"
+              value={url}
+              onChange={(event) =>
+                void perform({
+                  type: "youtube-url-changed",
+                  value: event.target.value,
+                })
+              }
+              onBlur={() => dispatch({ type: "update", patch: { urlTouched: true } })}
+              autoComplete="off"
+              spellCheck={false}
+              {...stylex.props(styles.input)}
+            />
+            {urlInvalid ? (
+              <span {...stylex.props(styles.fieldError)}>
+                Enter a valid YouTube URL.
+              </span>
+            ) : null}
+            {urlValid ? <span {...stylex.props(styles.fieldOk)}>Valid YouTube URL</span> : null}
+          </label>
+        ) : null}
+
+        {!reusableVideoId && sourceMode === "upload" ? (
+          <>
+            <label {...stylex.props(styles.field)}>
+              <span {...stylex.props(styles.fieldLabel)}>Video file</span>
+              <input
+                type="file"
+                accept="video/mp4,video/webm,video/quicktime,video/x-matroska,.mp4,.webm,.mov,.mkv"
+                onChange={(event) => handleFileChange(event.target.files?.[0] ?? null)}
+                {...stylex.props(styles.fileInput)}
+              />
+              {selectedUpload && !uploadError ? (
+                <span {...stylex.props(styles.fieldOk)}>
+                  {selectedUpload.fileName} ({Math.round(selectedUpload.sizeBytes / 1024)} KB)
+                </span>
+              ) : null}
+              {uploadError ? <span {...stylex.props(styles.fieldError)}>{uploadError}</span> : null}
+              {uploadProgress ? <span {...stylex.props(styles.fieldHint)}>{uploadProgress}</span> : null}
+            </label>
+            {uploadError && selectedUpload && manualSource.issue?.retryable ? (
+              <button
+                type="button"
+                onClick={() => void perform({ type: "retry-upload" })}
+                {...stylex.props(styles.secondaryButton)}
+              >
+                Retry upload
+              </button>
+            ) : null}
+          </>
+        ) : null}
+
+        <label {...stylex.props(styles.field)}>
+          <span {...stylex.props(styles.fieldLabel)}>Title</span>
+          <input
+            type="text"
+            placeholder="Name this clip"
+            value={title}
+            onChange={(event) =>
+              dispatch({ type: "update", patch: { title: event.target.value } })
+            }
+            maxLength={200}
+            {...stylex.props(styles.input)}
+          />
+        </label>
+
+        <label {...stylex.props(styles.field)}>
+          <span {...stylex.props(styles.fieldLabel)}>Overlay text (optional)</span>
+          <input
+            type="text"
+            placeholder="Show static text throughout"
+            value={caption}
+            onChange={(event) =>
+              dispatch({ type: "update", patch: { caption: event.target.value } })
+            }
+            maxLength={MAX_CAPTION_LENGTH}
+            {...stylex.props(styles.input)}
+          />
+        </label>
+
+        <div role="group" aria-label="Output quality" {...stylex.props(styles.field)}>
+          <span {...stylex.props(styles.fieldLabel)}>Quality</span>
+          <div {...stylex.props(styles.qualityOptions)}>
+            {(["1080p", "720p"] as const).map((option) => (
+              <button
+                key={option}
+                type="button"
+                aria-pressed={quality === option}
+                onClick={() => dispatch({ type: "update", patch: { quality: option } })}
+                {...stylex.props(styles.qualityButton, quality === option && styles.qualityButtonActive)}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {mutation.error ? (
+          <div role="alert" {...stylex.props(styles.inlineError)}>{mutation.error.message}</div>
+        ) : null}
+        {sourceActivationError ? (
+          <div role="alert" {...stylex.props(styles.inlineError)}>{sourceActivationError}</div>
+        ) : null}
+
+        <button
+          type="submit"
+          disabled={!canCreate || mutation.isPending}
+          {...stylex.props(styles.createButton)}
+        >
+          {mutation.isPending ? "Creating…" : "Create clip"}
+        </button>
+        {clipCreatedNotice ? <span className="sr-only" role="status">Clip queued.</span> : null}
+    </aside>
+  );
+
+  const stagePanel = (
+    <section aria-label="Moment workspace" {...stylex.props(styles.stage)}>
+        <div {...stylex.props(styles.stageHeading)}>
+          <div>
+            <h2 {...stylex.props(styles.stageTitle)}>Mark a moment</h2>
+            <p {...stylex.props(styles.stageInstructions)}>
+              Drag the handles or select words below.
+            </p>
+          </div>
+          {ready ? (
+            <span {...stylex.props(styles.stageTime)}>
+              {formatTimestamp(Math.max(0, clipDuration))} selected
+            </span>
+          ) : null}
+        </div>
+
+        {active.status === "loading" ? (
+          <div role="status" {...stylex.props(styles.sourceStatus)}>Loading video…</div>
+        ) : null}
+        {active.status === "failed" ? (
+          <div role="alert" {...stylex.props(styles.sourceStatus, styles.sourceStatusFailed)}>
+            {active.issue.message}
+          </div>
+        ) : null}
+        {active.status === "ready" && refreshIssue ? (
+          <div role="alert" {...stylex.props(styles.sourceStatus, styles.sourceStatusFailed)}>
+            {refreshIssue.message}
+          </div>
+        ) : null}
+
+        {reusableVideo?.remoteIngestion && reusableVideo.remoteIngestion.status !== "ready" ? (
           <div
-            className={
-              reusableVideo.remoteIngestion.status === "failed"
-                ? "form-error"
-                : "reuse-source-banner"
-            }
-            role={
-              reusableVideo.remoteIngestion.status === "failed"
-                ? "alert"
-                : "status"
-            }
+            role={reusableVideo.remoteIngestion.status === "failed" ? "alert" : "status"}
+            {...stylex.props(
+              styles.sourceStatus,
+              reusableVideo.remoteIngestion.status === "failed" && styles.sourceStatusFailed,
+            )}
           >
             {reusableVideo.remoteIngestion.failure ? (
               <>
+                <strong>Import blocked</strong>
                 <p>{reusableVideo.remoteIngestion.failure.message}</p>
-                <RemoteSourceFailureHint
-                  failure={reusableVideo.remoteIngestion.failure}
-                />
-                {reusableVideo.remoteIngestion.failure.retryable && (
+                <RemoteSourceFailureHint failure={reusableVideo.remoteIngestion.failure} />
+                <div {...stylex.props(styles.recoveryActions)}>
+                  {reusableVideo.remoteIngestion.failure.retryable ? (
+                    <button
+                      type="button"
+                      disabled={manualSource.phase === "activating"}
+                      onClick={() => void perform({ type: "retry-ingestion" })}
+                      {...stylex.props(styles.dangerButton)}
+                    >
+                      {manualSource.phase === "activating" ? "Retrying…" : "Retry import"}
+                    </button>
+                  ) : null}
                   <button
                     type="button"
-                    className="btn-ghost upload-retry"
-                    disabled={retryIngestion.isPending}
-                    onClick={() => retryIngestion.mutate()}
+                    onClick={() => void handleUseOwnFile()}
+                    {...stylex.props(styles.secondaryButton)}
                   >
-                    {retryIngestion.isPending ? "Retrying…" : "Retry import"}
+                    Upload your file
                   </button>
-                )}
+                </div>
               </>
             ) : (
-              <p>
-                Importing this YouTube video into your private library. You can
-                mark the moment now; clip creation unlocks when import finishes.
-              </p>
+              <strong>Importing source</strong>
             )}
+          </div>
+        ) : null}
+
+        {preview.type === "youtube" ? (
+          <div {...stylex.props(styles.playerSection)}>
+            <div {...stylex.props(styles.playerFrame)}>
+              <div id={youtube.containerId} className="player-embed" />
+              {!youtube.ready ? <div className="player-loading">Loading player…</div> : null}
+            </div>
+            <div {...stylex.props(styles.timelineSurface)}>
+              <TrimSlider duration={duration} ready={ready} trim={trim} existingClips={existingClips} />
+            </div>
+          </div>
+        ) : preview.type === "native" ? (
+          <div {...stylex.props(styles.playerSection)}>
+            <div {...stylex.props(styles.playerFrame)}>
+              <video ref={native.videoRef} className="native-player" controls playsInline preload="metadata" />
+              {!ready ? (
+                <div className="player-loading">
+                  {native.error ? "Original uploaded video is unavailable" : "Loading preview…"}
+                </div>
+              ) : null}
+            </div>
+            <div {...stylex.props(styles.timelineSurface)}>
+              <TrimSlider duration={duration} ready={ready} trim={trim} existingClips={existingClips} />
+            </div>
+          </div>
+        ) : (
+          <div {...stylex.props(styles.emptyStage)}>
+            <svg viewBox="0 0 24 24" aria-hidden="true" {...stylex.props(styles.emptyStageIcon)}>
+              <rect x="3.5" y="5" width="17" height="14" rx="1.5" />
+              <path d="M7 5v14M17 5v14M3.5 9h3.5M17 9h3.5M3.5 15h3.5M17 15h3.5" />
+            </svg>
+            <span>Choose a source to begin.</span>
           </div>
         )}
 
-      {!reusableVideoId && (
-        <div className="source-picker" role="tablist" aria-label="Source type">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={sourceMode === "youtube"}
-          className={`source-tab ${sourceMode === "youtube" ? "active" : ""}`}
-          onClick={() => handleSourceModeChange("youtube")}
-        >
-          YouTube URL
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={sourceMode === "upload"}
-          className={`source-tab ${sourceMode === "upload" ? "active" : ""}`}
-          onClick={() => handleSourceModeChange("upload")}
-        >
-          Upload file
-        </button>
-        </div>
-      )}
-
-      {!reusableVideoId && (sourceMode === "youtube" ? (
-        <label className="field">
-          <span>YouTube URL</span>
-          <input
-            type="url"
-            placeholder="https://www.youtube.com/watch?v=…"
-            value={url}
-            onChange={(event) =>
-              dispatch({
-                type: "update",
-                patch: { url: event.target.value },
-              })
-            }
-            onBlur={() =>
-              dispatch({ type: "update", patch: { urlTouched: true } })
-            }
-            autoComplete="off"
-            spellCheck={false}
-          />
-          {urlInvalid && (
-            <span className="field-error">
-              Enter a valid YouTube URL (youtube.com or youtu.be)
-            </span>
-          )}
-          {urlValid && <span className="field-ok">Valid YouTube URL</span>}
-        </label>
-      ) : (
-        <>
-          <label className="field">
-            <span>Video file</span>
-            <input
-              type="file"
-              accept="video/mp4,video/webm,video/quicktime,video/x-matroska,.mp4,.webm,.mov,.mkv"
-              onChange={(e) =>
-                void handleFileChange(e.target.files?.[0] ?? null)
+        {reusableVideoId ? (
+          <div {...stylex.props(styles.transcriptSurface)}>
+            <TranscriptPanel
+              videoId={reusableVideoId}
+              currentTime={currentTime}
+              editorReady={ready && duration > 0}
+              onSeek={seekTo}
+              onRangeSelect={({ startSeconds, endSeconds }) =>
+                trim.setClipWindow(startSeconds, endSeconds)
               }
             />
-            {selectedFile && !fileValidationError && !uploadError && (
-              <span className="field-ok">
-                {selectedFile.name} ({Math.round(selectedFile.size / 1024)} KB)
-              </span>
-            )}
-            {fileValidationError && (
-              <span className="field-error">{fileValidationError}</span>
-            )}
-            {uploadError && <span className="field-error">{uploadError}</span>}
-            {uploadProgress && (
-              <span className="field-hint">{uploadProgress}</span>
-            )}
-          </label>
-          {uploadError && selectedFile && !fileValidationError && (
-            <button
-              type="button"
-              className="btn-ghost upload-retry"
-              onClick={() => void handleFileChange(selectedFile)}
-            >
-              Retry upload
-            </button>
-          )}
-        </>
-      ))}
-
-      {sourceMode === "youtube" && videoId && !useRetainedRemotePlayer && (
-        <div className="player-section">
-          <div className="player-frame">
-            <div id={youtube.containerId} className="player-embed" />
-            {!youtube.ready && <div className="player-loading">Loading player…</div>}
           </div>
-          <TrimSlider
-            duration={duration}
-            ready={ready}
-            trim={trim}
-            existingClips={existingClips}
+        ) : null}
+
+        {selectedClip ? (
+          <CreatorWorkspaceClipPreview
+            item={selectedClip}
+            onClose={() => {
+              setSelectedClipId(null);
+              requestAnimationFrame(() => selectedClipTrigger.current?.focus());
+            }}
           />
-          <div className="quality-picker" role="group" aria-label="Output quality">
-            <span className="quality-label">Quality</span>
-            <div className="quality-options">
-              <button
-                type="button"
-                className={`quality-option ${quality === "1080p" ? "active" : ""}`}
-                aria-pressed={quality === "1080p"}
-                onClick={() =>
-                  dispatch({ type: "update", patch: { quality: "1080p" } })
-                }
-              >
-                1080p
-              </button>
-              <button
-                type="button"
-                className={`quality-option ${quality === "720p" ? "active" : ""}`}
-                aria-pressed={quality === "720p"}
-                onClick={() =>
-                  dispatch({ type: "update", patch: { quality: "720p" } })
-                }
-              >
-                720p
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+        ) : null}
+    </section>
+  );
 
-      {(sourceMode === "upload" || useRetainedRemotePlayer) &&
-        (selectedFile || reusableNativePreviewUrl) &&
-        !fileValidationError && (
-        <div className="player-section">
-          <div className="player-frame">
-            <video
-              ref={native.videoRef}
-              className="native-player"
-              controls
-              playsInline
-              preload="metadata"
-            />
-            {!ready && (
-              <div className="player-loading">
-                {native.error
-                  ? "Original uploaded video is unavailable"
-                  : "Loading preview…"}
-              </div>
-            )}
-          </div>
-          <TrimSlider
-            duration={duration}
-            ready={ready}
-            trim={trim}
-            existingClips={existingClips}
-          />
-          <div className="quality-picker" role="group" aria-label="Output quality">
-            <span className="quality-label">Quality</span>
-            <div className="quality-options">
-              <button
-                type="button"
-                className={`quality-option ${quality === "1080p" ? "active" : ""}`}
-                aria-pressed={quality === "1080p"}
-                onClick={() =>
-                  dispatch({ type: "update", patch: { quality: "1080p" } })
-                }
-              >
-                1080p
-              </button>
-              <button
-                type="button"
-                className={`quality-option ${quality === "720p" ? "active" : ""}`}
-                aria-pressed={quality === "720p"}
-                onClick={() =>
-                  dispatch({ type: "update", patch: { quality: "720p" } })
-                }
-              >
-                720p
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {reusableVideoId && (
-        <TranscriptPanel
-          videoId={reusableVideoId}
-          currentTime={currentTime}
-          editorReady={ready && duration > 0}
-          onSeek={seekTo}
-          onRangeSelect={({ startSeconds, endSeconds }) =>
-            trim.setClipWindow(startSeconds, endSeconds)
-          }
-        />
-      )}
-
-      <label className="field">
-        <span>Title</span>
-        <input
-          type="text"
-          placeholder="Name this clip"
-          value={title}
-          onChange={(event) =>
-            dispatch({
-              type: "update",
-              patch: { title: event.target.value },
-            })
-          }
-          maxLength={200}
-        />
-      </label>
-
-      <label className="field">
-        <span>Overlay text (optional)</span>
-        <input
-          type="text"
-          placeholder="Show static text throughout the clip"
-          value={caption}
-          onChange={(event) =>
-            dispatch({
-              type: "update",
-              patch: { caption: event.target.value },
-            })
-          }
-          maxLength={MAX_CAPTION_LENGTH}
-        />
-      </label>
-
-      {mutation.error && (
-        <div className="form-error" role="alert">
-          {mutation.error.message}
-        </div>
-      )}
-
-      {sourceActivationError && (
-        <div className="form-error" role="alert">
-          {sourceActivationError}
-        </div>
-      )}
-
-      <button type="submit" className="btn-primary" disabled={!canCreate || mutation.isPending}>
-        {mutation.isPending ? "Creating…" : "Create clip"}
-      </button>
-
-      {clipCreatedNotice && (
-        <p className="form-success" role="status">
-          Clip queued below.
-        </p>
-      )}
-
-      <OwnedUploadClipResult journey={ownedUploadJourney} />
+  return (
+    <form
+      role="region"
+      aria-label="Creator workspace"
+      onSubmit={handleSubmit}
+      {...stylex.props(styles.workspace)}
+    >
+      {stagePanel}
+      {builderPanel}
+      <CreatorWorkspaceClipReel
+        items={clipItems}
+        selectedClipId={selectedClipId}
+        onSelect={(clipId, trigger) => {
+          selectedClipTrigger.current = trigger;
+          setSelectedClipId((current) => (current === clipId ? null : clipId));
+        }}
+      />
     </form>
   );
 }
+
+const controlFocus = {
+  outlineWidth: "2px",
+  outlineStyle: "solid",
+  outlineColor: creatorWorkspaceTokens.focus,
+  outlineOffset: "2px",
+} as const;
+
+const styles = stylex.create({
+  workspace: {
+    gridColumn: "1 / -1",
+    width: "100%",
+    height: "calc(100vh - 146px)",
+    minHeight: "620px",
+    display: "grid",
+    gridTemplateColumns: "minmax(286px, 310px) minmax(440px, 1fr) minmax(238px, 276px)",
+    gridTemplateAreas: '"builder stage reel"',
+    margin: 0,
+    borderWidth: 0,
+    backgroundColor: creatorWorkspaceTokens.bench,
+    color: creatorWorkspaceTokens.ink,
+    fontFamily: creatorWorkspaceTokens.fontUi,
+    "@media (max-width: 1080px)": {
+      gridTemplateColumns: "260px minmax(360px, 1fr) 260px",
+    },
+    "@media (max-width: 900px)": {
+      height: "auto",
+      minHeight: 0,
+      gridTemplateColumns: "minmax(0, 1fr)",
+      gridTemplateAreas: '"stage" "builder" "reel"',
+    },
+  },
+  builder: {
+    gridArea: "builder",
+    minWidth: 0,
+    minHeight: 0,
+    overflowY: "auto",
+    display: "flex",
+    flexDirection: "column",
+    gap: "18px",
+    paddingBlock: "22px 36px",
+    paddingInline: "18px",
+    borderRightWidth: "1px",
+    borderRightStyle: "solid",
+    borderRightColor: creatorWorkspaceTokens.line,
+    backgroundColor: "#25261f",
+    scrollbarColor: "#55564c transparent",
+    "@media (max-width: 900px)": {
+      overflowY: "visible",
+      borderRightWidth: 0,
+      borderBottomWidth: "1px",
+      borderBottomStyle: "solid",
+      borderBottomColor: creatorWorkspaceTokens.line,
+    },
+    "@media (max-width: 560px)": { paddingInline: "14px" },
+  },
+  builderTitle: {
+    margin: 0,
+    fontSize: "24px",
+    fontWeight: 700,
+    lineHeight: 1.2,
+    letterSpacing: "0.008em",
+  },
+  sourceTabs: {
+    display: "grid",
+    gridTemplateColumns: "1fr 1fr",
+    borderBottomWidth: "1px",
+    borderBottomStyle: "solid",
+    borderBottomColor: creatorWorkspaceTokens.sourceLine,
+  },
+  sourceTab: {
+    minHeight: "44px",
+    padding: "8px 4px",
+    borderWidth: 0,
+    borderBottomWidth: "2px",
+    borderBottomStyle: "solid",
+    borderBottomColor: "transparent",
+    backgroundColor: "transparent",
+    color: creatorWorkspaceTokens.inkFaint,
+    cursor: "pointer",
+    fontWeight: 600,
+    ":hover": { color: creatorWorkspaceTokens.ink },
+    ":focus-visible": controlFocus,
+  },
+  sourceTabActive: {
+    borderBottomColor: creatorWorkspaceTokens.amber,
+    color: creatorWorkspaceTokens.ink,
+  },
+  field: { display: "grid", gap: "7px" },
+  fieldLabel: {
+    color: creatorWorkspaceTokens.inkDim,
+    fontSize: "14px",
+    fontWeight: 600,
+    lineHeight: 1.4,
+  },
+  input: {
+    width: "100%",
+    minWidth: 0,
+    minHeight: "46px",
+    paddingBlock: "9px",
+    paddingInline: "11px",
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: "#56574e",
+    borderRadius: 0,
+    backgroundColor: "#181914",
+    color: creatorWorkspaceTokens.ink,
+    caretColor: creatorWorkspaceTokens.amber,
+    "::placeholder": { color: creatorWorkspaceTokens.inkFaint },
+    ":focus-visible": controlFocus,
+  },
+  fileInput: {
+    width: "100%",
+    minWidth: 0,
+    minHeight: "46px",
+    padding: "8px",
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: "#56574e",
+    backgroundColor: "#181914",
+    color: creatorWorkspaceTokens.inkDim,
+    fontSize: "13px",
+    ":focus-visible": controlFocus,
+  },
+  fieldError: { color: creatorWorkspaceTokens.red, fontSize: "12px", lineHeight: 1.4 },
+  fieldOk: { color: creatorWorkspaceTokens.green, fontSize: "12px", lineHeight: 1.4 },
+  fieldHint: { color: creatorWorkspaceTokens.inkFaint, fontSize: "12px", lineHeight: 1.4 },
+  qualityOptions: { display: "flex", gap: "8px" },
+  qualityButton: {
+    minWidth: "82px",
+    minHeight: "42px",
+    paddingInline: "14px",
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: "#585950",
+    borderRadius: "8px",
+    backgroundColor: "transparent",
+    color: creatorWorkspaceTokens.inkDim,
+    cursor: "pointer",
+    fontWeight: 700,
+    ":hover": { backgroundColor: creatorWorkspaceTokens.benchHigh },
+    ":focus-visible": controlFocus,
+  },
+  qualityButtonActive: {
+    borderColor: creatorWorkspaceTokens.paper,
+    backgroundColor: creatorWorkspaceTokens.paper,
+    color: creatorWorkspaceTokens.paperInk,
+  },
+  createButton: {
+    width: "100%",
+    minHeight: "56px",
+    marginTop: "4px",
+    paddingInline: "18px",
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: creatorWorkspaceTokens.amber,
+    borderRadius: "8px",
+    backgroundColor: creatorWorkspaceTokens.amber,
+    color: "#1f1c13",
+    cursor: "pointer",
+    fontSize: "17px",
+    fontWeight: 700,
+    ":hover:not(:disabled)": { backgroundColor: creatorWorkspaceTokens.amberHover },
+    ":disabled": {
+      borderColor: "#585950",
+      backgroundColor: creatorWorkspaceTokens.benchHigh,
+      color: creatorWorkspaceTokens.inkFaint,
+      cursor: "not-allowed",
+      opacity: 0.58,
+    },
+    ":focus-visible": controlFocus,
+  },
+  secondaryButton: {
+    minHeight: "42px",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingInline: "13px",
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: "#585950",
+    borderRadius: "8px",
+    backgroundColor: "#2a2b25",
+    color: creatorWorkspaceTokens.ink,
+    cursor: "pointer",
+    fontWeight: 600,
+    ":hover": { backgroundColor: "#34352e" },
+    ":focus-visible": controlFocus,
+  },
+  dangerButton: {
+    minHeight: "42px",
+    paddingInline: "13px",
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: "#ad534b",
+    borderRadius: "8px",
+    backgroundColor: "#6a302b",
+    color: "#fff4f0",
+    cursor: "pointer",
+    fontWeight: 700,
+    ":focus-visible": controlFocus,
+  },
+  inlineError: {
+    padding: "10px 11px",
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: "#7e3e39",
+    backgroundColor: creatorWorkspaceTokens.redDeep,
+    color: "#ffe2df",
+    fontSize: "13px",
+    lineHeight: 1.45,
+  },
+  stage: {
+    gridArea: "stage",
+    minWidth: 0,
+    minHeight: 0,
+    position: "relative",
+    overflowY: "auto",
+    paddingBlock: "22px 36px",
+    paddingInline: "22px",
+    backgroundColor: "#151612",
+    scrollbarColor: "#55564c transparent",
+    "@media (max-width: 900px)": { overflowY: "visible" },
+    "@media (max-width: 560px)": { paddingInline: "14px" },
+  },
+  stageHeading: {
+    display: "flex",
+    alignItems: "flex-end",
+    justifyContent: "space-between",
+    gap: "18px",
+    marginBottom: "14px",
+    "@media (max-width: 560px)": { alignItems: "flex-start" },
+  },
+  stageTitle: {
+    margin: 0,
+    fontSize: "clamp(24px, 2.2vw, 32px)",
+    fontWeight: 700,
+    lineHeight: 1.18,
+    letterSpacing: "0.006em",
+  },
+  stageInstructions: {
+    marginBlock: "5px 0",
+    color: creatorWorkspaceTokens.inkDim,
+    lineHeight: 1.45,
+  },
+  stageTime: {
+    color: creatorWorkspaceTokens.amber,
+    fontFamily: creatorWorkspaceTokens.fontTime,
+    fontSize: "13px",
+    whiteSpace: "nowrap",
+    "@media (max-width: 560px)": { display: "none" },
+  },
+  sourceStatus: {
+    marginBottom: "14px",
+    padding: "12px 14px",
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: "#5f6056",
+    backgroundColor: creatorWorkspaceTokens.benchRaised,
+    color: creatorWorkspaceTokens.inkDim,
+    fontSize: "13px",
+    lineHeight: 1.5,
+  },
+  sourceStatusFailed: {
+    borderColor: "#7e3e39",
+    backgroundColor: creatorWorkspaceTokens.redDeep,
+    color: "#ffe2df",
+  },
+  recoveryActions: { display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "10px" },
+  playerSection: { width: "100%" },
+  playerFrame: {
+    width: "min(100%, calc(56vh * 16 / 9))",
+    aspectRatio: "16 / 9",
+    position: "relative",
+    marginInline: "auto",
+    overflow: "hidden",
+    backgroundColor: "#080907",
+    boxShadow: creatorWorkspaceTokens.shadow,
+  },
+  timelineSurface: {
+    marginTop: "14px",
+    paddingBlock: "16px 12px",
+    paddingInline: "18px",
+    borderTopWidth: "1px",
+    borderTopStyle: "solid",
+    borderTopColor: creatorWorkspaceTokens.line,
+    borderBottomWidth: "1px",
+    borderBottomStyle: "solid",
+    borderBottomColor: creatorWorkspaceTokens.line,
+    backgroundColor: "#11120f",
+  },
+  transcriptSurface: {
+    marginTop: "16px",
+    borderTopWidth: "1px",
+    borderTopStyle: "solid",
+    borderTopColor: creatorWorkspaceTokens.line,
+  },
+  emptyStage: {
+    minHeight: "min(52vh, 520px)",
+    display: "grid",
+    placeContent: "center",
+    justifyItems: "center",
+    gap: "12px",
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: creatorWorkspaceTokens.line,
+    backgroundColor: "#11120f",
+    color: creatorWorkspaceTokens.inkFaint,
+  },
+  emptyStageIcon: {
+    width: "44px",
+    height: "44px",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.2,
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+  },
+});

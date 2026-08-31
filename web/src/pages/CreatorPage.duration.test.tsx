@@ -222,8 +222,13 @@ describe("CreatorPage upload metadata", () => {
       }),
     );
     expect(
-      await screen.findByText("Your clip is being prepared."),
+      await screen.findByRole("button", {
+        name: "Preview Launch day final, Queued",
+      }),
     ).toBeTruthy();
+    expect(
+      screen.getAllByRole("button", { name: /Preview Launch day final/ }),
+    ).toHaveLength(1);
 
     queryClient.setQueryData(["source-video", video.id], {
       video: { ...video, activeClipCount: 0 },
@@ -240,9 +245,20 @@ describe("CreatorPage upload metadata", () => {
       ],
     });
 
-    expect(await screen.findByText("Your clip is ready.")).toBeTruthy();
+    const completedRow = await screen.findByRole("button", {
+      name: "Preview Launch day final, Complete",
+    });
     expect(
-      screen.getByRole("link", { name: "Download MP4" }).getAttribute("href"),
+      screen.getAllByRole("button", { name: /Preview Launch day final/ }),
+    ).toHaveLength(1);
+    await user.click(completedRow);
+    expect(
+      await screen.findByRole("region", {
+        name: "Preview Launch day final",
+      }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: "Download" }).getAttribute("href"),
     ).toBe("/api/clips/first-clip.mp4");
   });
 });

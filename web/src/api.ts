@@ -277,9 +277,11 @@ export async function prepareLibraryMomentReview(
 
 export async function getPreparedLibraryMomentReview(
   proposalId: string,
+  signal?: AbortSignal,
 ): Promise<PreparedLibraryMomentReview> {
   const response = await fetch(
     `/api/library/moments/${encodeURIComponent(proposalId)}`,
+    { signal },
   );
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as ApiError;
@@ -324,9 +326,11 @@ export async function prepareVisualMomentReview(
 
 export async function getPreparedVisualMomentReview(
   proposalId: string,
+  signal?: AbortSignal,
 ): Promise<PreparedVisualMomentReview> {
   const response = await fetch(
     `/api/visual-moments/${encodeURIComponent(proposalId)}`,
+    { signal },
   );
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as ApiError;
