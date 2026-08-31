@@ -12,7 +12,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { CreatorPage } from "./CreatorPage";
 import type {
-  PreparedLibraryMomentReview,
   SourceVideoResponse,
 } from "../types";
 
@@ -137,14 +136,49 @@ describe("CreatorPage", () => {
     return <output data-testid="location-search">{location.search}</output>;
   }
 
-  it("always shows Think before a video is selected", () => {
+  it("keeps Ask Carpo secondary before a video is selected", () => {
     renderPage();
 
     expect(screen.getByRole("heading", { name: "New clip" })).toBeTruthy();
     expect(
-      screen.getByRole("heading", { name: "Clip with Think" }),
+      screen.getByRole("button", { name: "Ask Carpo" }).getAttribute(
+        "aria-expanded",
+      ),
+    ).toBe("false");
+    expect(screen.queryByRole("heading", { name: "Ask Carpo" })).toBeNull();
+  });
+
+  it("renders the accepted three-zone production line around one active source", async () => {
+    const video = uploadedVideo("workspace-video", "One active source");
+    api.getSourceVideo.mockResolvedValue({ video, clips: [] });
+    api.getVideoTranscript.mockResolvedValue({
+      transcriptStatus: "available",
+      language: "en",
+      automatic: false,
+      cached: true,
+      blocks: [],
+    });
+
+    renderPage(`/?video=${video.id}`);
+
+    expect(
+      await screen.findByRole("region", { name: "Active source" }),
     ).toBeTruthy();
-    expect(screen.getByText("Waiting")).toBeTruthy();
+    const workspace = screen.getByRole("region", {
+      name: "Creator workspace",
+    });
+    const builder = screen.getByRole("complementary", {
+      name: "Clip builder",
+    });
+    const stage = screen.getByRole("region", { name: "Moment workspace" });
+    const reel = screen.getByRole("complementary", {
+      name: "Clips from this video",
+    });
+
+    expect(Array.from(workspace.children)).toEqual([stage, builder, reel]);
+    expect(screen.getAllByText(video.title)).toHaveLength(1);
+    expect(screen.queryByText("Private copy ready")).toBeNull();
+    expect(screen.queryByText("Ready to create")).toBeNull();
   });
 
   it("registers through the Browser Run legacy navigator surface when needed", async () => {
@@ -336,154 +370,6 @@ describe("CreatorPage", () => {
     );
   });
 
-  it("opens a revision-checked Visual result through the same prepared intake", async () => {
-    const video = uploadedVideo("visual-result-video", "Visual source");
-    api.getSourceVideo.mockResolvedValue({ video, clips: [] });
-    api.getVideoTranscript.mockResolvedValue({
-      transcriptStatus: "available",
-      language: "en",
-      automatic: true,
-      cached: true,
-      blocks: [],
-    });
-    api.getPreparedVisualMomentReview.mockResolvedValue({
-      proposalId: "prepared-visual-proposal",
-      searchResultId: "visual-result-id",
-      videoId: video.id,
-      reviewUrl: `/?video=${video.id}&visualProposal=prepared-visual-proposal`,
-      input: {
-        title: "Blue logo — Visual source",
-        startSeconds: 12,
-        endSeconds: 18,
-        quality: "1080p",
-      },
-      evidence: {
-        rationale: "A blue logo appears in the sampled frames.",
-        sourceFrameIds: ["frame-1"],
-        sourceRevision: "source-1",
-      },
-    });
-
-    renderPage(`/?video=${video.id}&visualProposal=prepared-visual-proposal`);
-
-    expect(await screen.findByRole("heading", { name: "Review clips" })).toBeTruthy();
-    expect(screen.getByText("Blue logo — Visual source")).toBeTruthy();
-    expect(screen.getByText(/Suggested via Visual search/)).toBeTruthy();
-    expect(screen.getByText("A blue logo appears in the sampled frames.")).toBeTruthy();
-    expect(api.createClipFromSourceVideo).not.toHaveBeenCalled();
-    await waitFor(() =>
-      expect(screen.getByTestId("location-search").textContent).not.toContain(
-        "visualProposal",
-      ),
-    );
-  });
-
-  it("keeps a mismatched prepared handoff recoverable in the URL", async () => {
-    const video = uploadedVideo("active-video", "Active source");
-    api.getSourceVideo.mockResolvedValue({ video, clips: [] });
-    api.getVideoTranscript.mockResolvedValue({
-      transcriptStatus: "available",
-      language: "en",
-      automatic: true,
-      cached: true,
-      blocks: [],
-    });
-    api.getPreparedVisualMomentReview.mockResolvedValue({
-      proposalId: "wrong-video-proposal",
-      searchResultId: "visual-result-id",
-      videoId: "another-video",
-      reviewUrl: "/?video=another-video&visualProposal=wrong-video-proposal",
-      input: {
-        title: "Wrong video",
-        startSeconds: 12,
-        endSeconds: 18,
-        quality: "1080p",
-      },
-      evidence: {
-        rationale: "Mismatched evidence.",
-        sourceFrameIds: ["frame-1"],
-        sourceRevision: "source-1",
-      },
-    });
-
-    renderPage(`/?video=${video.id}&visualProposal=wrong-video-proposal`);
-
-    expect((await screen.findByRole("alert")).textContent).toContain(
-      "The proposal Video does not match the active Video.",
-    );
-    expect(screen.getByTestId("location-search").textContent).toContain(
-      "visualProposal=wrong-video-proposal",
-    );
-    expect(screen.queryByRole("heading", { name: "Review clips" })).toBeNull();
-  });
-
-  it("keeps Library ahead of Visual when both prepared handoffs load out of order", async () => {
-    const video = uploadedVideo("ordered-handoff-video", "Ordered source");
-    const library = deferred<PreparedLibraryMomentReview>();
-    api.getSourceVideo.mockResolvedValue({ video, clips: [] });
-    api.getVideoTranscript.mockResolvedValue({
-      transcriptStatus: "available",
-      language: "en",
-      automatic: true,
-      cached: true,
-      blocks: [],
-    });
-    api.getPreparedLibraryMomentReview.mockReturnValue(library.promise);
-    api.getPreparedVisualMomentReview.mockResolvedValue({
-      proposalId: "ordered-visual-proposal",
-      searchResultId: "ordered-visual-result",
-      videoId: video.id,
-      reviewUrl: `/?video=${video.id}&visualProposal=ordered-visual-proposal`,
-      input: {
-        title: "Visual second",
-        startSeconds: 12,
-        endSeconds: 18,
-        quality: "1080p",
-      },
-      evidence: {
-        rationale: "Sampled visual evidence.",
-        sourceFrameIds: ["frame-1"],
-        sourceRevision: "source-1",
-      },
-    });
-
-    renderPage(
-      `/?video=${video.id}&libraryProposal=ordered-library-proposal&visualProposal=ordered-visual-proposal`,
-    );
-
-    await screen.findByText(video.title);
-    await waitFor(() =>
-      expect(api.getPreparedVisualMomentReview).toHaveBeenCalled(),
-    );
-    expect(screen.queryByRole("heading", { name: "Review clips" })).toBeNull();
-
-    library.resolve({
-      proposalId: "ordered-library-proposal",
-      searchResultId: "ordered-library-result",
-      videoId: video.id,
-      reviewUrl: `/?video=${video.id}&libraryProposal=ordered-library-proposal`,
-      input: {
-        title: "Library first",
-        startSeconds: 2,
-        endSeconds: 8,
-        quality: "1080p",
-      },
-      evidence: {
-        rationale: "Grounded Library evidence.",
-        sourceBlockIds: ["block-1"],
-        workspaceRevision: "workspace-1",
-      },
-    });
-
-    expect(await screen.findByText("Library first")).toBeTruthy();
-    expect(screen.queryByText("Visual second")).toBeNull();
-    await waitFor(() => {
-      const search = screen.getByTestId("location-search").textContent;
-      expect(search).not.toContain("libraryProposal");
-      expect(search).not.toContain("visualProposal");
-    });
-  });
-
   it("activates Think for a valid URL before the player is ready", async () => {
     const user = userEvent.setup();
     youtubePlayer.ready = false;
@@ -556,6 +442,7 @@ describe("CreatorPage", () => {
       youtubeUrl,
     );
 
+    await user.click(screen.getByRole("button", { name: "Ask Carpo" }));
     await waitFor(() => expect(screen.getByText("Preparing")).toBeTruthy());
     const composer = screen.getByRole("textbox", {
       name: "Clip instruction",
@@ -592,9 +479,7 @@ describe("CreatorPage", () => {
 
     renderPage(`/?video=${video.id}`);
 
-    expect(
-      await screen.findByText(/Importing this YouTube video/),
-    ).toBeTruthy();
+    expect(await screen.findByText("Importing source")).toBeTruthy();
     expect(
       (screen.getByRole("button", { name: "Create clip" }) as HTMLButtonElement)
         .disabled,
@@ -789,6 +674,10 @@ describe("CreatorPage", () => {
 
   it("does not reopen a library video after choosing another", async () => {
     const user = userEvent.setup();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: vi.fn(),
+    });
     const video = {
       id: "library-video-id",
       title: "Library video",
@@ -810,11 +699,46 @@ describe("CreatorPage", () => {
       createdAt: "2026-07-23T00:00:00.000Z",
       updatedAt: "2026-07-23T00:00:00.000Z",
     };
+    api.getVideoTranscript.mockResolvedValue({
+      transcriptStatus: "available",
+      language: "en",
+      automatic: false,
+      cached: true,
+      blocks: [],
+    });
     api.getSourceVideo.mockResolvedValue({ video, clips: [] });
-    renderPage(`/?video=${video.id}`);
+    renderPage(`/?video=${video.id}&keep=yes`);
 
-    await user.click(await screen.findByRole("link", { name: "Choose another" }));
+    const chooseAnother = await screen.findByRole("button", {
+      name: "Choose another video",
+    });
+    const title = screen.getByRole("textbox", { name: "Title" });
+    const overlay = screen.getByRole("textbox", { name: "Overlay text (optional)" });
+    await user.type(title, "Keep this Clip draft");
+    await user.type(overlay, "Manual correction stays available");
+    await user.click(await screen.findByRole("button", { name: "720p" }));
 
+    await user.click(chooseAnother);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("location-search").textContent).toBe("?keep=yes"),
+    );
+    expect(screen.queryByRole("region", { name: "Active source" })).toBeNull();
+    expect(screen.getByRole("tab", { name: "YouTube URL" })).toBeTruthy();
+    expect((title as HTMLInputElement).value).toBe("Keep this Clip draft");
+    expect((overlay as HTMLInputElement).value).toBe(
+      "Manual correction stays available",
+    );
+    await user.click(screen.getByRole("tab", { name: "YouTube URL" }));
+    const nextUrl = screen.getByRole("textbox", { name: "YouTube URL" });
+    await user.type(
+      nextUrl,
+      "https://www.youtube.com/watch?v=nextDraftVideo",
+    );
+    expect(
+      screen.getByRole("button", { name: "720p" }).getAttribute("aria-pressed"),
+    ).toBe("true");
+    await user.clear(nextUrl);
     await waitFor(() => expect(screen.getByText("Waiting")).toBeTruthy());
     await new Promise((resolve) => window.setTimeout(resolve, 350));
     expect(api.createSourceVideo).not.toHaveBeenCalled();

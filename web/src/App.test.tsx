@@ -9,6 +9,21 @@ vi.mock("./api", async (importOriginal) => ({
   getCurrentUser: vi.fn(),
 }));
 
+vi.mock("./pages/CreatorPage", async () => {
+  await new Promise((resolve) => window.setTimeout(resolve, 0));
+  return {
+    CreatorPage: () => <main><h2>Create workspace ready</h2></main>,
+  };
+});
+
+vi.mock("./pages/LibraryPage", () => ({
+  LibraryPage: () => <main><h2>Library ready</h2></main>,
+}));
+
+vi.mock("./pages/VideoPage", () => ({
+  VideoPage: () => <main><h2>Video ready</h2></main>,
+}));
+
 describe("App routing", () => {
   beforeEach(() => {
     vi.mocked(getCurrentUser).mockResolvedValue({ email: null });
@@ -36,5 +51,18 @@ describe("App routing", () => {
       screen.getByRole("link", { name: "Create a clip" }).getAttribute("href"),
     ).toBe("/");
     await waitFor(() => expect(getCurrentUser).toHaveBeenCalledOnce());
+  });
+
+  it("shows an accessible fallback while a route module loads", async () => {
+    render(
+      <MemoryRouter initialEntries={["/"]}>
+        <App />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("status").textContent).toBe("Loading Carpo…");
+    expect(
+      await screen.findByRole("heading", { name: "Create workspace ready" }),
+    ).toBeTruthy();
   });
 });

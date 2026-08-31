@@ -82,10 +82,10 @@ export function VideoAgentChat(props: VideoAgentChatProps) {
   if (!props.videoId) {
     const canCompose = Boolean(props.pendingYoutubeVideoId);
     return (
-      <section className="agent-chat card" aria-label="Clip with Think">
+      <section className="agent-chat card" aria-label="Ask Carpo">
         <div className="card-header agent-chat-header">
           <div>
-            <h2>Clip with Think</h2>
+            <h2>Ask Carpo</h2>
             <p>
               Choose a YouTube video or upload a file to start clipping.
             </p>
@@ -100,11 +100,11 @@ export function VideoAgentChat(props: VideoAgentChatProps) {
             <strong>
               {canCompose
                 ? "Start describing the clip while Carpo prepares the video"
-                : "Think is ready when your video is"}
+                : "Carpo is ready when your video is"}
             </strong>
             <p>
               {canCompose
-                ? "Your draft will be ready when Think connects."
+                ? "Your draft will be ready when Carpo connects."
                 : "Paste a YouTube URL or upload a video to continue."}
             </p>
           </div>
@@ -285,7 +285,9 @@ function ConnectedVideoAgentChat({
   }, [onTimestampSelect, timestampEntities]);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    if (typeof endRef.current?.scrollIntoView === "function") {
+      endRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
   }, [chatMessages]);
 
   const submit = (event: React.FormEvent) => {
@@ -297,10 +299,10 @@ function ConnectedVideoAgentChat({
   };
 
   return (
-    <section className="agent-chat card" aria-label="Clip with Think">
+    <section className="agent-chat card" aria-label="Ask Carpo">
       <div className="card-header agent-chat-header">
         <div>
-          <h2>Clip with Think</h2>
+          <h2>Ask Carpo</h2>
           <p>
             Describe clips by timestamp, spoken phrase, or idea. You approve
             them before creation.
@@ -414,7 +416,7 @@ function ConnectedVideoAgentChat({
             </button>
           </div>
         ) : null}
-        {working ? <div className="agent-thinking">Think is working…</div> : null}
+        {working ? <div className="agent-thinking">Carpo is working…</div> : null}
         <div ref={endRef} />
       </div>
 

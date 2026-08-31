@@ -1,9 +1,30 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Link, NavLink, Route, Routes } from "react-router-dom";
 import { getCurrentUser } from "./api";
-import { CreatorPage } from "./pages/CreatorPage";
-import { LibraryPage } from "./pages/LibraryPage";
-import { VideoPage } from "./pages/VideoPage";
+
+const CreatorPage = lazy(() =>
+  import("./pages/CreatorPage").then(({ CreatorPage }) => ({
+    default: CreatorPage,
+  })),
+);
+const LibraryPage = lazy(() =>
+  import("./pages/LibraryPage").then(({ LibraryPage }) => ({
+    default: LibraryPage,
+  })),
+);
+const VideoPage = lazy(() =>
+  import("./pages/VideoPage").then(({ VideoPage }) => ({
+    default: VideoPage,
+  })),
+);
+
+function PageLoadingFallback() {
+  return (
+    <main className="app-main" aria-busy="true">
+      <p role="status">Loading Carpo…</p>
+    </main>
+  );
+}
 
 function NotFoundPage() {
   return (
@@ -75,12 +96,14 @@ export function App() {
         </div>
       </header>
 
-      <Routes>
-        <Route path="/" element={<CreatorPage />} />
-        <Route path="/library" element={<LibraryPage />} />
-        <Route path="/library/videos/:videoId" element={<VideoPage />} />
-        <Route path="*" element={<NotFoundPage />} />
-      </Routes>
+      <Suspense fallback={<PageLoadingFallback />}>
+        <Routes>
+          <Route path="/" element={<CreatorPage />} />
+          <Route path="/library" element={<LibraryPage />} />
+          <Route path="/library/videos/:videoId" element={<VideoPage />} />
+          <Route path="*" element={<NotFoundPage />} />
+        </Routes>
+      </Suspense>
     </div>
   );
 }

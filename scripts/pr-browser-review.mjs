@@ -209,22 +209,35 @@ async function assertLibrarySettled(page, heading, label, assertions) {
 }
 
 async function assertCreateSettled(page, assertions) {
-  const jobsPanel = page.locator(".status-panel");
-  await jobsPanel
-    .getByRole("heading", { name: "Jobs", level: 2 })
-    .waitFor({ state: "visible", timeout: 15_000 });
-  await jobsPanel
-    .getByText("Loading jobs…", { exact: true })
-    .waitFor({ state: "hidden", timeout: 15_000 });
-  await jobsPanel
-    .locator(":scope > .empty-state, :scope > .job-list, :scope > .job-error")
-    .first()
-    .waitFor({ state: "visible", timeout: 15_000 });
-  const error = jobsPanel.locator(":scope > .job-error");
-  if (await error.isVisible().catch(() => false)) {
-    throw new Error(`Create jobs request reported an error: ${await error.innerText()}`);
+  const jobsDisclosure = page.locator("details.creator-other-jobs");
+  const restoreCollapsed =
+    (await jobsDisclosure.count()) > 0 &&
+    (await jobsDisclosure.getAttribute("open")) === null;
+  if (restoreCollapsed) {
+    await jobsDisclosure.locator(":scope > summary").click();
   }
-  assertions.push({ label: "Create jobs request settles without an error", status: "passed" });
+  const jobsPanel = page.locator(".status-panel");
+  try {
+    await jobsPanel
+      .getByRole("heading", { name: "Jobs", level: 2 })
+      .waitFor({ state: "visible", timeout: 15_000 });
+    await jobsPanel
+      .getByText("Loading jobs…", { exact: true })
+      .waitFor({ state: "hidden", timeout: 15_000 });
+    await jobsPanel
+      .locator(":scope > .empty-state, :scope > .job-list, :scope > .job-error")
+      .first()
+      .waitFor({ state: "visible", timeout: 15_000 });
+    const error = jobsPanel.locator(":scope > .job-error");
+    if (await error.isVisible().catch(() => false)) {
+      throw new Error(`Create jobs request reported an error: ${await error.innerText()}`);
+    }
+    assertions.push({ label: "Create jobs request settles without an error", status: "passed" });
+  } finally {
+    if (restoreCollapsed) {
+      await jobsDisclosure.locator(":scope > summary").click();
+    }
+  }
 }
 
 async function reviewProductSurfaces(page, plan, run) {
@@ -233,7 +246,7 @@ async function reviewProductSurfaces(page, plan, run) {
     timeout: 30_000,
   });
   await visible(page.getByRole("heading", { name: "Carpo", level: 1 }), "Carpo shell renders", run.assertions);
-  await visible(page.getByRole("heading", { name: "New clip", level: 2 }), "Create surface renders", run.assertions);
+  await visible(page.getByRole("heading", { name: "New clip" }), "Create surface renders", run.assertions);
   await assertCreateSettled(page, run.assertions);
   const uploadTab = page.getByRole("tab", { name: "Upload file" });
   await uploadTab.waitFor({ state: "visible", timeout: 15_000 });

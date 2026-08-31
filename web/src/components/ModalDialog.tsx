@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 interface ModalDialogProps {
   children: ReactNode;
@@ -73,7 +74,7 @@ export function ModalDialog({
     };
   }, []);
 
-  return (
+  return createPortal(
     <div
       className="modal-backdrop"
       role="presentation"
@@ -91,6 +92,7 @@ export function ModalDialog({
       >
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
