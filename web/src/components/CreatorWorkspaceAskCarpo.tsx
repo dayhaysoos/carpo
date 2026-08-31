@@ -191,7 +191,7 @@ const styles = stylex.create({
   drawerClosed: {
     visibility: "hidden",
     opacity: 0,
-    transform: "translateX(18px)",
+    transform: "scale(0.98)",
     pointerEvents: "none",
   },
   close: {
