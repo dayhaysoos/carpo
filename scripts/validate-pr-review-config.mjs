@@ -141,9 +141,10 @@ async function main() {
   );
   exactKeys(
     review.vars,
-    ["MAX_CLIP_LENGTH_SECONDS", "R2_PUBLIC_PREFIX", "PR_REVIEW_MODE"],
+    ["AUTH_MODE", "MAX_CLIP_LENGTH_SECONDS", "R2_PUBLIC_PREFIX", "PR_REVIEW_MODE"],
     "Review vars",
   );
+  invariant(review.vars.AUTH_MODE === "legacy", "Review auth mode is not allowlisted");
   invariant(review.vars.MAX_CLIP_LENGTH_SECONDS === "60", "Review clip limit is not allowlisted");
   invariant(review.vars.R2_PUBLIC_PREFIX === "/artifacts", "Review artifact prefix is not allowlisted");
   invariant(review.vars.PR_REVIEW_MODE === "enabled", "Review mode marker is not allowlisted");

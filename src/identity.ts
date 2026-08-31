@@ -3,6 +3,8 @@ import { HELPER_TOKEN_HEADER } from "./auth";
 import type { Env } from "./env";
 
 export const LEGACY_USER_ID = "legacy";
+export const LEGACY_AUTH_MODE = "legacy";
+export const CLOUDFLARE_ACCESS_AUTH_MODE = "cloudflare-access";
 
 const accessJwksByIssuer = new Map<
   string,
@@ -155,10 +157,17 @@ export async function authenticateUser(
   env: Env,
   ctx: ExecutionContext,
 ): Promise<AuthenticationResult> {
-  if (env.AUTH_MODE !== "cloudflare-access") {
+  if (env.AUTH_MODE === LEGACY_AUTH_MODE) {
     return {
       ok: true,
       user: { id: LEGACY_USER_ID, email: "legacy@carpo.invalid" },
+    };
+  }
+
+  if (env.AUTH_MODE !== CLOUDFLARE_ACCESS_AUTH_MODE) {
+    return {
+      ok: false,
+      response: jsonError("Authentication is not configured", 503),
     };
   }
 

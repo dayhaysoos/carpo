@@ -3,7 +3,9 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import {
   authenticateUser,
+  CLOUDFLARE_ACCESS_AUTH_MODE,
   ensureAppUser,
+  LEGACY_AUTH_MODE,
   LEGACY_USER_ID,
 } from "../src/identity";
 
@@ -11,7 +13,7 @@ describe("Carpo identity", () => {
   it("keeps local and review environments on the legacy account", async () => {
     const result = await authenticateUser(
       new Request("http://example.com/api/me"),
-      env,
+      { ...env, AUTH_MODE: LEGACY_AUTH_MODE },
       createExecutionContext(),
     );
 
@@ -19,6 +21,23 @@ describe("Carpo identity", () => {
       ok: true,
       user: { id: LEGACY_USER_ID, email: "legacy@carpo.invalid" },
     });
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["unrecognized", "cloudflare-acess"],
+  ])("fails closed when the auth mode is %s", async (_label, authMode) => {
+    const result = await authenticateUser(
+      new Request("http://example.com/api/me"),
+      { ...env, AUTH_MODE: authMode },
+      createExecutionContext(),
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.response.status).toBe(503);
+      expect(result.response.headers.get("Cache-Control")).toBe("no-store");
+    }
   });
 
   it("keeps a stable internal user id when Access reissues its subject", async () => {
@@ -52,7 +71,7 @@ describe("Carpo identity", () => {
       new Request("http://example.com/api/me"),
       {
         ...env,
-        AUTH_MODE: "cloudflare-access",
+        AUTH_MODE: CLOUDFLARE_ACCESS_AUTH_MODE,
         ACCESS_TEAM_DOMAIN: "https://example.cloudflareaccess.com",
         ACCESS_AUD: "test-audience",
       },
@@ -93,7 +112,7 @@ describe("Carpo identity", () => {
   it("fails closed when Access mode is incomplete", async () => {
     const result = await authenticateUser(
       new Request("http://example.com/api/me"),
-      { ...env, AUTH_MODE: "cloudflare-access" },
+      { ...env, AUTH_MODE: CLOUDFLARE_ACCESS_AUTH_MODE },
       createExecutionContext(),
     );
 

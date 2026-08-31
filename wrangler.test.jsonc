@@ -9,6 +9,7 @@
     "run_worker_first": ["/api/*", "/artifacts/*", "/agents/*", "/share/*"]
   },
   "vars": {
+    "AUTH_MODE": "legacy",
     "MAX_CLIP_LENGTH_SECONDS": "60",
     "R2_PUBLIC_PREFIX": "/artifacts",
     "WORKER_BASE_URL": "http://example.com",

@@ -26,10 +26,12 @@ unknown or unauthenticated production request fails closed; knowing another
 record's UUID is not sufficient to read it.
 
 Production requires `AUTH_MODE=cloudflare-access`, the HTTPS
-`ACCESS_TEAM_DOMAIN`, and the Access application's `ACCESS_AUD`. Local
-development and the isolated PR-review environment deliberately omit those
-variables and use the migration's `legacy` user so their existing deterministic
-flows remain independent of an external identity provider.
+`ACCESS_TEAM_DOMAIN`, and the Access application's `ACCESS_AUD`. The isolated
+PR-review and test environments explicitly use `AUTH_MODE=legacy` so their
+deterministic flows remain independent of an external identity provider. Local
+development may opt into that same mode through an ignored `.dev.vars` file.
+Missing or unrecognized auth modes fail closed; never deploy a public or
+production environment with `AUTH_MODE=legacy`.
 
 The helper daemon crosses Access with a dedicated service token and continues
 to require Carpo's own `HELPER_TOKEN`. Encoder callbacks use only the narrow
