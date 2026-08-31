@@ -3,6 +3,24 @@ import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 
 describe("PR browser review UI contract", () => {
+  it("uses the Creator form's current accessible heading level", async () => {
+    const [creatorForm, browserReview] = await Promise.all([
+      readFile(new URL("../web/src/components/CreatorForm.tsx", import.meta.url), "utf8"),
+      readFile(new URL("./pr-browser-review.mjs", import.meta.url), "utf8"),
+    ]);
+    const headingLevel = creatorForm.match(
+      /<h([1-6])[^>]*>New clip<\/h\1>/,
+    )?.[1];
+
+    assert.ok(headingLevel, "Creator form New clip heading is missing");
+    assert.ok(
+      browserReview.includes(
+        `getByRole("heading", { name: "New clip", level: ${headingLevel} })`,
+      ),
+      `Browser review must locate New clip at heading level ${headingLevel}`,
+    );
+  });
+
   it("uses the Creator form's current accessible overlay-text label", async () => {
     const [creatorForm, browserReview] = await Promise.all([
       readFile(new URL("../web/src/components/CreatorForm.tsx", import.meta.url), "utf8"),

@@ -233,7 +233,7 @@ async function reviewProductSurfaces(page, plan, run) {
     timeout: 30_000,
   });
   await visible(page.getByRole("heading", { name: "Carpo", level: 1 }), "Carpo shell renders", run.assertions);
-  await visible(page.getByRole("heading", { name: "New clip", level: 2 }), "Create surface renders", run.assertions);
+  await visible(page.getByRole("heading", { name: "New clip", level: 1 }), "Create surface renders", run.assertions);
   await assertCreateSettled(page, run.assertions);
   const uploadTab = page.getByRole("tab", { name: "Upload file" });
   await uploadTab.waitFor({ state: "visible", timeout: 15_000 });
