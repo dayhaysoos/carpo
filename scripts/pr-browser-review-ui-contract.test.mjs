@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
 
 describe("PR browser review UI contract", () => {
-  it("uses the Creator form's current accessible heading level", async () => {
+  it("uses the Creator form's stable accessible heading name across layouts", async () => {
     const [creatorForm, browserReview] = await Promise.all([
       readFile(new URL("../web/src/components/CreatorForm.tsx", import.meta.url), "utf8"),
       readFile(new URL("./pr-browser-review.mjs", import.meta.url), "utf8"),
@@ -15,9 +15,25 @@ describe("PR browser review UI contract", () => {
     assert.ok(headingLevel, "Creator form New clip heading is missing");
     assert.ok(
       browserReview.includes(
-        `getByRole("heading", { name: "New clip", level: ${headingLevel} })`,
+        'getByRole("heading", { name: "New clip" })',
       ),
-      `Browser review must locate New clip at heading level ${headingLevel}`,
+      "Browser review must locate New clip without coupling base/head capture to its heading level",
+    );
+  });
+
+  it("reveals the redesigned jobs disclosure before checking API settlement", async () => {
+    const [creatorPage, browserReview] = await Promise.all([
+      readFile(new URL("../web/src/pages/CreatorPage.tsx", import.meta.url), "utf8"),
+      readFile(new URL("./pr-browser-review.mjs", import.meta.url), "utf8"),
+    ]);
+
+    assert.ok(
+      creatorPage.includes('<details className="creator-other-jobs">'),
+      "Creator page jobs disclosure is missing",
+    );
+    assert.ok(
+      browserReview.includes('page.locator("details.creator-other-jobs")'),
+      "Browser review must account for the collapsed jobs disclosure",
     );
   });
 
