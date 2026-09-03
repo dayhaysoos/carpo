@@ -61,15 +61,18 @@ export function LandingPage() {
             <picture>
               <source
                 media="(max-width: 600px)"
-                srcSet="/screenshots/workspace-mobile.webp"
-                width="414"
-                height="776"
+                srcSet="/screenshots/workspace-mobile.webp 430w, /screenshots/workspace-mobile@2x.webp 860w, /screenshots/workspace-mobile@3x.webp 1290w"
+                sizes="calc(100vw - 48px)"
+                width="430"
+                height="948"
               />
               <img
                 src="/screenshots/workspace.webp"
+                srcSet="/screenshots/workspace.webp 1440w, /screenshots/workspace@2x.webp 2880w, /screenshots/workspace@3x.webp 4320w"
+                sizes="(max-width: 900px) calc(100vw - 48px), (max-width: 1376px) calc(100vw - 96px), 1280px"
                 alt="The Carpo editor with Charge footage, a selected timeline range, clip settings, and three completed clips."
-                width="1424"
-                height="860"
+                width="1440"
+                height="900"
                 loading="lazy"
                 decoding="async"
               />
@@ -92,15 +95,18 @@ export function LandingPage() {
               <picture>
                 <source
                   media="(max-width: 600px)"
-                  srcSet="/screenshots/moment-mobile.webp"
-                  width="374"
-                  height="582"
+                  srcSet="/screenshots/moment-mobile.webp 366w, /screenshots/moment-mobile@2x.webp 732w, /screenshots/moment-mobile@3x.webp 1098w"
+                  sizes="calc(100vw - 48px)"
+                  width="366"
+                  height="572"
                 />
                 <img
                   src="/screenshots/moment.webp"
+                  srcSet="/screenshots/moment.webp 774w, /screenshots/moment@2x.webp 1548w, /screenshots/moment@3x.webp 2322w"
+                  sizes="(max-width: 900px) calc(100vw - 48px), (max-width: 1376px) calc(62.27vw - 100px), 758px"
                   alt="Carpo’s trim controls selecting a six-second moment, with timeline zoom and precise start and end times."
                   width="774"
-                  height="492"
+                  height="466"
                   loading="lazy"
                   decoding="async"
                 />
@@ -120,15 +126,18 @@ export function LandingPage() {
               <picture>
                 <source
                   media="(max-width: 600px)"
-                  srcSet="/screenshots/clips-mobile.webp"
-                  width="418"
-                  height="414"
+                  srcSet="/screenshots/clips-mobile.webp 402w, /screenshots/clips-mobile@2x.webp 804w, /screenshots/clips-mobile@3x.webp 1206w"
+                  sizes="calc(100vw - 48px)"
+                  width="402"
+                  height="172"
                 />
                 <img
                   src="/screenshots/clips.webp"
+                  srcSet="/screenshots/clips.webp 848w, /screenshots/clips@2x.webp 1696w, /screenshots/clips@3x.webp 2544w"
+                  sizes="(max-width: 900px) calc(100vw - 48px), (max-width: 1376px) calc(62.27vw - 100px), 758px"
                   alt="Completed Charge clips in Carpo, with preview, share and export, and download controls."
-                  width="850"
-                  height="470"
+                  width="848"
+                  height="412"
                   loading="lazy"
                   decoding="async"
                 />
