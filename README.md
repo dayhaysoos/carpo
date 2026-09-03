@@ -2,6 +2,8 @@
 
 Seize the moment. Carpo turns YouTube videos and uploaded files into looping MP4/WebM clips (with optional GIF export) — fast.
 
+Production: [carpo.video](https://carpo.video)
+
 Successor to [gfycat-machine](https://github.com/ndejesus1227/gfycat-machine), rebuilt on Cloudflare now that Gfycat no longer exists.
 
 ## Architecture
@@ -10,7 +12,7 @@ Successor to [gfycat-machine](https://github.com/ndejesus1227/gfycat-machine), r
 - **API:** Cloudflare Worker (create jobs, poll status, library, downloads)
 - **Encoder:** Cloudflare Container running `yt-dlp` + `ffmpeg`, one instance per job
 - **Storage:** R2 (retained source videos, transcripts, clips, and thumbnails), D1 (video and clip records)
-- **Auth:** Cloudflare Access in front of the whole app
+- **Auth:** Cloudflare Access on private UI, API, artifact, and agent paths
 
 ## Helper daemon
 
@@ -20,7 +22,7 @@ For reliable YouTube downloads from a residential IP, see [helper/README.md](hel
 
 The public homepage lives at `/`, sign-in at `/sign-in`, and the private editor at `/create`. Cloudflare Access provides Google sign-in for private routes, while the Worker maps verified identities to stable Carpo users and scopes videos, clips, uploads, transcripts, artifacts, and agents to their owners. First sign-in creates a private workspace automatically.
 
-The launch candidate requires the Access destination change in [the rollout plan](docs/launch-entry-rollout.md). Code deployment alone does not remove the current Worker-wide login gate.
+The production Access destinations and rollout constraints are recorded in [the rollout plan](docs/launch-entry-rollout.md).
 
 Production requires `AUTH_MODE=cloudflare-access`, the HTTPS
 `ACCESS_TEAM_DOMAIN`, and the Access application's `ACCESS_AUD`. The isolated

@@ -2,14 +2,14 @@
   "accountId": "c69349b17b216e01346e94a2511004d1",
   "applicationId": "22c933d3-c74a-4e27-b5a6-9d903f057911",
   "expectedAudience": "056bf6db9311a93188cf3caf8ca9b4ebec0e3c909037fcdeb1cb136dace07796",
-  "hostname": "carpo.ndejesus1227.workers.dev",
+  "hostname": "carpo.video",
   "applicationChanges": {
     "destinations": [
-      { "type": "public", "uri": "carpo.ndejesus1227.workers.dev/create" },
-      { "type": "public", "uri": "carpo.ndejesus1227.workers.dev/library" },
-      { "type": "public", "uri": "carpo.ndejesus1227.workers.dev/api" },
-      { "type": "public", "uri": "carpo.ndejesus1227.workers.dev/artifacts" },
-      { "type": "public", "uri": "carpo.ndejesus1227.workers.dev/agents" }
+      { "type": "public", "uri": "carpo.video/create" },
+      { "type": "public", "uri": "carpo.video/library" },
+      { "type": "public", "uri": "carpo.video/api" },
+      { "type": "public", "uri": "carpo.video/artifacts" },
+      { "type": "public", "uri": "carpo.video/agents" }
     ],
     "path_cookie_attribute": false,
     "http_only_cookie_attribute": true,
@@ -20,6 +20,15 @@
     "24d1f693-01fc-4e49-b3e4-4c7376f313b6"
   ],
   "preserveCallbackApplicationId": "b8118ddd-3c81-4058-a6cd-dce7161031ad",
+  "callbackApplicationChanges": {
+    "destinations": [
+      {
+        "type": "public",
+        "uri": "carpo.ndejesus1227.workers.dev/api/internal/jobs/*"
+      },
+      { "type": "public", "uri": "carpo.video/api/internal/jobs/*" }
+    ]
+  },
   "publicPaths": [
     "/",
     "/sign-in",

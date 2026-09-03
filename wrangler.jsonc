@@ -1,6 +1,8 @@
 {
   "name": "carpo",
   "preview_urls": false,
+  "workers_dev": false,
+  "routes": [{ "pattern": "carpo.video", "custom_domain": true }],
   "main": "src/index.ts",
   "compatibility_date": "2026-06-11",
   "compatibility_flags": ["nodejs_compat"],
