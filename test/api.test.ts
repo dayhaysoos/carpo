@@ -978,37 +978,6 @@ describe("POST /api/clips", () => {
     );
   });
 
-  it("rejects trim windows longer than the max clip length", async () => {
-    const response = await workerFetch("http://example.com/api/clips", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        title: "too long",
-        source: {
-          type: "youtube",
-          url: "https://youtu.be/dQw4w9WgXcQ",
-        },
-        trimStart: 0,
-        trimEnd: 61,
-      }),
-    });
-
-    expect(response.status).toBe(400);
-    const body = (await response.json()) as {
-      error: string;
-      details: Array<{ field: string; message: string }>;
-    };
-    expect(body.error).toBe("Validation failed");
-    expect(body.details).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          field: "trim",
-          message: expect.stringContaining("60 seconds"),
-        }),
-      ]),
-    );
-  });
-
   it("accepts upload sources when the object exists in R2", async () => {
     const uploadKey = "uploads/test-source.mp4";
     await env.CLIPS_BUCKET.put(uploadKey, new Uint8Array([0, 1, 2, 3]), {
@@ -2375,6 +2344,86 @@ describe("source video library", () => {
     expect(secondResponse.status).toBe(200);
     const second = (await secondResponse.json()) as { id: string };
     expect(second.id).toBe(first.id);
+  });
+
+  it("accepts a 20-minute clip when the known source duration permits it", async () => {
+    const uploadKey = await uploadTestVideo();
+    const videoResponse = await workerFetch("http://example.com/api/videos", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source: { type: "upload", key: uploadKey },
+        title: "One-hour source",
+        durationSeconds: 60 * 60,
+      }),
+    });
+    expect(videoResponse.status).toBe(200);
+    const video = (await videoResponse.json()) as { id: string };
+
+    const response = await workerFetch(
+      `http://example.com/api/videos/${video.id}/clips`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: "Twenty-minute clip",
+          trimStart: 10 * 60,
+          trimEnd: 30 * 60,
+          filters: [],
+        }),
+      },
+    );
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({
+      videoId: video.id,
+      trimStart: 10 * 60,
+      trimEnd: 30 * 60,
+    });
+  });
+
+  it("rejects a clip range past the known source duration", async () => {
+    const uploadKey = await uploadTestVideo();
+    const videoResponse = await workerFetch("http://example.com/api/videos", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        source: { type: "upload", key: uploadKey },
+        title: "Bounded one-hour source",
+        durationSeconds: 60 * 60,
+      }),
+    });
+    expect(videoResponse.status).toBe(200);
+    const video = (await videoResponse.json()) as { id: string };
+
+    const response = await workerFetch(
+      `http://example.com/api/videos/${video.id}/clips`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: "Past the source",
+          trimStart: 50 * 60,
+          trimEnd: 60 * 60 + 1,
+          filters: [],
+        }),
+      },
+    );
+
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as {
+      error: string;
+      details: Array<{ field: string; message: string }>;
+    };
+    expect(body.error).toBe("Validation failed");
+    expect(body.details).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          field: "trimEnd",
+          message: expect.stringContaining("3600-second source duration"),
+        }),
+      ]),
+    );
   });
 
   it("ingests a YouTube source before clipping and exposes the retained source", async () => {
@@ -4682,7 +4731,6 @@ describe("helper fetch API", () => {
         trimStart: number;
         trimEnd: number;
         quality: string;
-        maxClipLengthSeconds: number;
       };
       expect(body).toEqual({
         clipId,
@@ -4690,7 +4738,6 @@ describe("helper fetch API", () => {
         trimStart: 3,
         trimEnd: 8,
         quality: "1080p",
-        maxClipLengthSeconds: 60,
       });
 
       const record = await getClipById(env.DB, clipId);

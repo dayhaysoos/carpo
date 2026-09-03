@@ -1,7 +1,6 @@
 import {
   CLIP_QUALITIES,
   MAX_CAPTION_LENGTH,
-  MAX_CLIP_LENGTH_SECONDS,
   MIN_TRIM_GAP_SECONDS,
   type ClipQuality,
   type ClipStatus,
@@ -338,14 +337,13 @@ function validateInput(
     startSeconds < 0 ||
     typeof endSeconds !== "number" ||
     !Number.isFinite(endSeconds) ||
-    endSeconds - startSeconds < MIN_TRIM_GAP_SECONDS ||
-    endSeconds - startSeconds > MAX_CLIP_LENGTH_SECONDS
+    endSeconds - startSeconds < MIN_TRIM_GAP_SECONDS
   ) {
     issues.push(
       issue(
         "INVALID_RANGE",
         `${pathPrefix}.range`,
-        `Clip range must be finite, non-negative, increasing, and no longer than ${MAX_CLIP_LENGTH_SECONDS} seconds.`,
+        "Clip range must be finite, non-negative, and increasing.",
       ),
     );
   } else if (

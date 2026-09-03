@@ -4,10 +4,7 @@ import type {
   TrimTimelineWindow,
   useTrimRange,
 } from "../hooks/useTrimRange";
-import {
-  MAX_CLIP_LENGTH_SECONDS,
-  MIN_TRIM_GAP_SECONDS,
-} from "../types";
+import { MIN_TRIM_GAP_SECONDS } from "../types";
 import { rangesOverlap, type ExistingClipRange } from "../timeline";
 import { formatTimestamp } from "../youtube";
 
@@ -137,11 +134,11 @@ function TrimHandleControl({
       aria-valuemax={
         handle === "start"
           ? Math.max(0, trim.range.end - minimumGap)
-          : Math.min(duration, trim.range.start + MAX_CLIP_LENGTH_SECONDS)
+          : duration
       }
       aria-valuemin={
         handle === "start"
-          ? Math.max(0, trim.range.end - MAX_CLIP_LENGTH_SECONDS)
+          ? 0
           : Math.min(duration, trim.range.start + minimumGap)
       }
       aria-valuenow={value}
@@ -259,10 +256,7 @@ export function TrimSlider({
     <div className="trim-section">
       <div className="trim-header">
         <span className="trim-label">Trim window</span>
-        <span className={`trim-duration ${trim.overMax ? "error" : ""}`}>
-          {trim.clipDuration.toFixed(2)}s
-          {trim.overMax ? ` (max ${MAX_CLIP_LENGTH_SECONDS}s)` : ""}
-        </span>
+        <span className="trim-duration">{trim.clipDuration.toFixed(2)}s</span>
       </div>
       {overlappingClips.length > 0 ? (
         <p className="trim-overlap-status" role="status">

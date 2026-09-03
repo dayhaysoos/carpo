@@ -15,7 +15,6 @@ import { inspectStoredVideo } from "./encoder-pool";
 import type { Env } from "./env";
 import {
   MAX_CAPTION_LENGTH,
-  MAX_CLIP_LENGTH_SECONDS,
   type TranscriptStatus,
 } from "./types";
 import {
@@ -58,7 +57,7 @@ interface AgentVideoContext {
   transcriptRetryAt: string | null;
   metadataCheckError: string | null;
   constraints: {
-    maximumClipLengthSeconds: number;
+    maximumClipLengthSeconds: number | null;
     qualities: string[];
   };
   existingClips: Array<{ startSeconds: number; endSeconds: number }>;
@@ -133,13 +132,6 @@ const manualClipInput = z
         message: "The end time must be after the start time",
       });
       return;
-    }
-    if (input.endSeconds - input.startSeconds > MAX_CLIP_LENGTH_SECONDS) {
-      context.addIssue({
-        code: "custom",
-        path: ["endSeconds"],
-        message: `Clips cannot be longer than ${MAX_CLIP_LENGTH_SECONDS} seconds`,
-      });
     }
   });
 
@@ -310,7 +302,7 @@ export async function loadAgentVideoContext(
     transcriptRetryAt: video.transcript_retry_at,
     metadataCheckError,
     constraints: {
-      maximumClipLengthSeconds: MAX_CLIP_LENGTH_SECONDS,
+      maximumClipLengthSeconds: video.duration_seconds,
       qualities: ["720p", "1080p"],
     },
     ...occupiedRangeContext(clips),

@@ -308,38 +308,100 @@ function waitForHealth(port: number, attempts = 30) {
   throw new Error("Encoder container did not become healthy");
 }
 
-function testNullMaxClipLengthValidation() {
+function testClipRangeValidation() {
   const script = `
 import sys
 
 sys.path.insert(0, ${JSON.stringify(path.join(root, "container"))})
-from encoder import MAX_CLIP_LENGTH_SECONDS, resolve_max_clip_length, validate_job, process_job
-
-assert resolve_max_clip_length(None) == float(MAX_CLIP_LENGTH_SECONDS)
-assert resolve_max_clip_length("not-a-number") == float(MAX_CLIP_LENGTH_SECONDS)
+from encoder import validate_job, process_job
 
 valid_job = {
     "trimStart": 0,
-    "trimEnd": 5,
-    "maxClipLengthSeconds": None,
+    "trimEnd": 1200,
     "source": {"type": "youtube", "url": "https://example.com/watch?v=test"},
 }
 assert validate_job(valid_job) is None
 
+negative_start_job = {
+    "trimStart": -1,
+    "trimEnd": 5,
+    "source": {"type": "youtube", "url": "https://example.com/watch?v=test"},
+}
+assert validate_job(negative_start_job) == "trimStart must be non-negative"
+
 failed_job = {
     "trimStart": 0,
     "trimEnd": 5,
-    "maxClipLengthSeconds": None,
     "source": {"type": "youtube", "url": ""},
 }
 result = process_job(failed_job)
 assert result["status"] == "failed"
 assert isinstance(result.get("errorMessage"), str)
 
-print("Null maxClipLengthSeconds validation test passed")
+print("Clip range validation test passed")
 `;
 
   run("python3", ["-c", script]);
+}
+
+function testLongClipEncoding() {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "carpo-long-clip-"));
+  const sourcePath = path.join(tempDir, "source.mp4");
+  const outputPath = path.join(tempDir, "clip.mp4");
+  const thumbnailPath = path.join(tempDir, "thumbnail.jpg");
+
+  try {
+    run("ffmpeg", [
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "color=c=blue:s=64x36:r=1:d=62",
+      "-c:v",
+      "libx264",
+      "-pix_fmt",
+      "yuv420p",
+      "-an",
+      sourcePath,
+    ]);
+    const script = `
+import sys
+from pathlib import Path
+
+sys.path.insert(0, ${JSON.stringify(path.join(root, "container"))})
+from encoder import encode_clip
+
+encode_clip(
+    Path(${JSON.stringify(sourcePath)}),
+    1,
+    62,
+    Path(${JSON.stringify(outputPath)}),
+    Path(${JSON.stringify(thumbnailPath)}),
+    max_output_height=720,
+)
+`;
+    run("python3", ["-c", script]);
+    const duration = Number(
+      run("ffprobe", [
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        outputPath,
+      ]).trim(),
+    );
+    if (duration < 60.5 || duration > 61.5) {
+      throw new Error(`Expected a 61-second encoded clip, got ${duration}`);
+    }
+    if (!fs.existsSync(thumbnailPath)) {
+      throw new Error("Long clip thumbnail was not created");
+    }
+    console.log("Long clip encode contract test passed");
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
 }
 
 function testEncodeErrorClassification() {
@@ -1104,7 +1166,6 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
     },
     trimStart: 0,
     trimEnd: 5,
-    maxClipLengthSeconds: 60,
     outputs: {
       mp4Key: "blocked.mp4",
       thumbnailKey: "blocked.jpg",
@@ -1469,7 +1530,6 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
       },
       trimStart,
       trimEnd,
-      maxClipLengthSeconds: 60,
       outputs: {
         mp4Key: "sections.mp4",
         thumbnailKey: "sections.jpg",
@@ -1560,7 +1620,6 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
       },
       trimStart: rejectedTrimStart,
       trimEnd: rejectedTrimEnd,
-      maxClipLengthSeconds: 60,
       outputs: {
         mp4Key: "rejected.mp4",
         thumbnailKey: "rejected.jpg",
@@ -1664,7 +1723,6 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
       },
       trimStart: lateKeyframeTrimStart,
       trimEnd: lateKeyframeTrimEnd,
-      maxClipLengthSeconds: 60,
       outputs: {
         mp4Key: "late-keyframe.mp4",
         thumbnailKey: "late-keyframe.jpg",
@@ -1770,7 +1828,6 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
       },
       trimStart: zeroTrimStart,
       trimEnd: zeroTrimEnd,
-      maxClipLengthSeconds: 60,
       outputs: {
         mp4Key: "zero-start.mp4",
         thumbnailKey: "zero-start.jpg",
@@ -1886,7 +1943,6 @@ function runEncoderYoutubeFailFastContract(frameCounterPath: string) {
       },
       trimStart: fallback403TrimStart,
       trimEnd: fallback403TrimEnd,
-      maxClipLengthSeconds: 60,
       outputs: {
         mp4Key: "fallback-403.mp4",
         thumbnailKey: "fallback-403.jpg",
@@ -1993,7 +2049,6 @@ function runEncoderQualityContract(
       trimStart: 0,
       trimEnd: 2,
       quality: "720p",
-      maxClipLengthSeconds: 60,
       outputs: {
         mp4Key: "hd-720.mp4",
         thumbnailKey: "hd-720.jpg",
@@ -2071,7 +2126,6 @@ function runEncoderQualityContract(
       trimStart: 7.5,
       trimEnd: 10,
       quality: "1080p",
-      maxClipLengthSeconds: 60,
       outputs: {
         mp4Key: "ytdlp-1080.mp4",
         thumbnailKey: "ytdlp-1080.jpg",
@@ -2092,7 +2146,6 @@ function runEncoderQualityContract(
       trimStart: 7.5,
       trimEnd: 10,
       quality: "720p",
-      maxClipLengthSeconds: 60,
       outputs: {
         mp4Key: "ytdlp-720.mp4",
         thumbnailKey: "ytdlp-720.jpg",
@@ -2170,7 +2223,6 @@ function runEncoderEncodeFailureContract() {
     },
     trimStart: 0,
     trimEnd: 2,
-    maxClipLengthSeconds: 60,
     outputs: {
       mp4Key: "failed.mp4",
       thumbnailKey: "failed.jpg",
@@ -2451,7 +2503,6 @@ function runEncoderCaptionContract(fixturePath: string, frameCounterPath: string
     trimEnd,
     caption: null,
     filters: [],
-    maxClipLengthSeconds: 60,
     outputs: {
       mp4Key: "baseline.mp4",
       thumbnailKey: "baseline.jpg",
@@ -2813,7 +2864,6 @@ function runEncoderContract(fixturePath: string, frameCounterPath: string) {
     trimEnd,
     caption: null,
     filters: [],
-    maxClipLengthSeconds: 60,
     outputs: {
       mp4Key: "clip.mp4",
       thumbnailKey: "thumbnail.jpg",
@@ -3000,7 +3050,6 @@ HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
     trimEnd,
     caption: null,
     filters: [],
-    maxClipLengthSeconds: 60,
     callbackSecret,
     outputs: {
       mp4Key: "upload-clip.mp4",
@@ -3116,7 +3165,6 @@ function runRetainedYoutubeSourceContract(frameCounterPath: string) {
       caption: null,
       filters: [],
       quality: "1080p",
-      maxClipLengthSeconds: 60,
       outputs: {
         mp4Key: "clips/retained/clip.mp4",
         thumbnailKey: "clips/retained/thumbnail.jpg",
@@ -3385,7 +3433,6 @@ function runEncoderGifContract(fixturePath: string) {
     trimEnd: 4,
     caption: null,
     filters: [],
-    maxClipLengthSeconds: 60,
     outputs: {
       mp4Key: "gif-source.mp4",
       thumbnailKey: "gif-source.jpg",
@@ -3577,7 +3624,6 @@ function runSequentialTwoJobContract(frameCounterPath: string) {
     trimStart,
     trimEnd,
     deferArtifactUpload: true,
-    maxClipLengthSeconds: 60,
     outputs: {
       mp4Key: `${prefix}.mp4`,
       thumbnailKey: `${prefix}.jpg`,
@@ -3749,7 +3795,8 @@ function main() {
   assertDockerAvailable();
   assertFfmpegAvailable();
   const { barsPath, frameCounterPath, frameCounterHdPath } = ensureFixtureVideo();
-  testNullMaxClipLengthValidation();
+  testClipRangeValidation();
+  testLongClipEncoding();
   testSourceFileSelection();
   testEncodeErrorClassification();
   testYoutubeErrorClassification();

@@ -134,7 +134,7 @@ export async function createClipForVideo({
       source,
       sourceTitle: video.title,
     },
-    Number(env.MAX_CLIP_LENGTH_SECONDS) || 60,
+    { sourceDurationSeconds: video.duration_seconds },
   );
   if (!validation.ok) {
     return {

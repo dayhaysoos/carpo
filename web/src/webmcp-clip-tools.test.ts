@@ -215,6 +215,9 @@ describe("Carpo WebMCP clip tools", () => {
         id: video.id,
         sourceType: "upload",
       },
+      limits: {
+        maxClipLengthSeconds: video.durationSeconds,
+      },
       transcript: {
         status: "available",
         offset: 1,
@@ -310,7 +313,6 @@ describe("Carpo WebMCP clip tools", () => {
       { rationale: undefined },
       { startSeconds: -1 },
       { endSeconds: 91 },
-      { startSeconds: 0, endSeconds: 61 },
       { endSeconds: 3 },
     ]) {
       expect(await tool.execute({ ...input, proposals: [{ ...proposal, ...override }] })).toMatchObject({ ok: false, error: { code: "INVALID_PROPOSALS" } });
@@ -321,6 +323,37 @@ describe("Carpo WebMCP clip tools", () => {
     state.video = { ...video, durationSeconds: null };
     expect(await tool.execute({ ...input, proposals: [proposal] })).toMatchObject({ ok: false, error: { code: "INVALID_PROPOSALS" } });
     expect(review.getSnapshot().items).toEqual([]);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("accepts a WebMCP timestamp proposal longer than 60 seconds within the Video duration", async () => {
+    const { create, review, state, tools } = workspace();
+    state.transcript = null;
+    const input = validProposal(state);
+    const proposal = {
+      ...input.proposals[0],
+      basis: "timestamps",
+      sourceBlockIds: [],
+      startSeconds: 0,
+      endSeconds: 75,
+    };
+
+    expect(
+      await requiredTool(tools, "proposeClips").execute({
+        ...input,
+        proposals: [proposal],
+      }),
+    ).toMatchObject({
+      ok: true,
+      requiresHumanReview: true,
+      createdClipIds: [],
+    });
+    expect(review.getSnapshot().items).toMatchObject([
+      {
+        input: { startSeconds: 0, endSeconds: 75 },
+        decision: null,
+      },
+    ]);
     expect(create).not.toHaveBeenCalled();
   });
 
@@ -499,7 +532,7 @@ describe("Carpo WebMCP clip tools", () => {
     expect(review.getSnapshot().items).toEqual([]);
   });
 
-  it("maps shared Clip Proposal validation back to WebMCP field paths", async () => {
+  it("maps source-duration validation back to the WebMCP endSeconds field", async () => {
     const { review, state, tools } = workspace();
     const input = validProposal(state);
 
@@ -508,7 +541,7 @@ describe("Carpo WebMCP clip tools", () => {
       proposals: [
         {
           ...input.proposals[0],
-          endSeconds: 70,
+          endSeconds: 91,
         },
       ],
     });
@@ -519,7 +552,7 @@ describe("Carpo WebMCP clip tools", () => {
       issues: [
         {
           code: "INVALID_RANGE",
-          path: "proposals[0]",
+          path: "proposals[0].endSeconds",
         },
       ],
     });

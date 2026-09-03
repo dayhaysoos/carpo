@@ -10,7 +10,6 @@
   },
   "vars": {
     "AUTH_MODE": "legacy",
-    "MAX_CLIP_LENGTH_SECONDS": "60",
     "R2_PUBLIC_PREFIX": "/artifacts",
     "WORKER_BASE_URL": "http://example.com",
     "HELPER_TOKEN": "test-helper-token",

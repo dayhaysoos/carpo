@@ -159,6 +159,79 @@ describe("CreatorPage upload metadata", () => {
     );
   });
 
+  it("creates a 20-minute clip from a one-hour uploaded Video", async () => {
+    const user = userEvent.setup();
+    const video = uploadVideo("long-upload-id", "Long_recording.mp4", 60 * 60);
+    const queuedClip = {
+      id: "long-clip",
+      videoId: video.id,
+      title: "Long recording",
+      source: video.source,
+      trimStart: 0,
+      trimEnd: 20 * 60,
+      quality: "1080p" as const,
+      caption: null,
+      filters: [],
+      status: "queued" as const,
+      errorMessage: null,
+      gifStatus: "none" as const,
+      gifErrorMessage: null,
+      outputs: { mp4: null, thumbnail: null, gif: null },
+      createdAt: "2026-09-03T12:00:00.000Z",
+      updatedAt: "2026-09-03T12:00:00.000Z",
+    };
+    nativePlayer.mediaStateSourceUrl = `/api/videos/${video.id}/source`;
+    nativePlayer.duration = video.durationSeconds;
+    nativePlayer.ready = true;
+    api.getSourceVideo.mockResolvedValue({ video, clips: [] });
+    api.getVideoTranscript.mockResolvedValue({
+      transcriptStatus: "available",
+      language: "en",
+      automatic: false,
+      cached: true,
+      blocks: [],
+    });
+    api.createClipFromSourceVideo.mockResolvedValue(queuedClip);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={[`/?video=${video.id}`]}>
+          <CreatorPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    const titleInput = await screen.findByRole("textbox", { name: "Title" });
+    await waitFor(() =>
+      expect((titleInput as HTMLInputElement).value).toBe("Long recording"),
+    );
+    const endInput = screen.getByRole("textbox", {
+      name: "End",
+    }) as HTMLInputElement;
+    await user.clear(endInput);
+    await user.type(endInput, "20:00.000");
+    await user.tab();
+
+    const createButton = screen.getByRole("button", { name: "Create clip" });
+    await waitFor(() =>
+      expect((createButton as HTMLButtonElement).disabled).toBe(false),
+    );
+    await user.click(createButton);
+
+    await waitFor(() =>
+      expect(api.createClipFromSourceVideo).toHaveBeenCalledWith(video.id, {
+        title: "Long recording",
+        trimStart: 0,
+        trimEnd: 20 * 60,
+        filters: [],
+        quality: "1080p",
+      }),
+    );
+  });
+
   it("keeps the exact uploaded clip inline through completion", async () => {
     const user = userEvent.setup();
     const video = uploadVideo("upload-id", "Launch_day-final.MP4", 45);

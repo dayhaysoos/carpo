@@ -14,7 +14,6 @@ import type {
 import { useClipProposalReview } from "../hooks/useClipProposalReview";
 import { useYoutubePlayer } from "../hooks/useYoutubePlayer";
 import {
-  MAX_CLIP_LENGTH_SECONDS,
   MIN_TRIM_GAP_SECONDS,
   type ClipSource,
 } from "../types";
@@ -224,7 +223,6 @@ function ClipRangeEditor({
   const changeStart = (nextValue: number) => {
     const nextStart = Math.max(
       window.min,
-      input.endSeconds - MAX_CLIP_LENGTH_SECONDS,
       Math.min(nextValue, input.endSeconds - MIN_TRIM_GAP_SECONDS),
     );
     onChange({ ...input, startSeconds: nextStart });
@@ -232,7 +230,6 @@ function ClipRangeEditor({
   const changeEnd = (nextValue: number) => {
     const nextEnd = Math.min(
       window.max,
-      input.startSeconds + MAX_CLIP_LENGTH_SECONDS,
       Math.max(nextValue, input.startSeconds + MIN_TRIM_GAP_SECONDS),
     );
     onChange({ ...input, endSeconds: nextEnd });

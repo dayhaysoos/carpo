@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import shutil
@@ -20,7 +21,6 @@ from pathlib import Path
 from typing import Any
 
 
-MAX_CLIP_LENGTH_SECONDS = 60
 HOST = "0.0.0.0"
 PORT = int(os.environ.get("PORT", "8080"))
 STAGED_UPLOAD_PATH = "/tmp/carpo-upload-source.mp4"
@@ -441,33 +441,23 @@ class ProgressCallbackTracker:
             self._needs_resync = False
 
 
-def resolve_max_clip_length(value: Any) -> float:
-    if value is None:
-        return float(MAX_CLIP_LENGTH_SECONDS)
-    if not isinstance(value, (int, float)):
-        return float(MAX_CLIP_LENGTH_SECONDS)
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        return float(MAX_CLIP_LENGTH_SECONDS)
-    if parsed <= 0:
-        return float(MAX_CLIP_LENGTH_SECONDS)
-    return parsed
-
-
 def validate_job(job: dict[str, Any]) -> str | None:
     trim_start = job.get("trimStart")
     trim_end = job.get("trimEnd")
-    max_len = resolve_max_clip_length(job.get("maxClipLengthSeconds"))
 
     if not isinstance(trim_start, (int, float)) or not isinstance(trim_end, (int, float)):
         return "trimStart and trimEnd must be numbers"
 
-    duration = float(trim_end) - float(trim_start)
+    parsed_start = float(trim_start)
+    parsed_end = float(trim_end)
+    if not math.isfinite(parsed_start) or not math.isfinite(parsed_end):
+        return "trimStart and trimEnd must be finite numbers"
+    if parsed_start < 0:
+        return "trimStart must be non-negative"
+
+    duration = parsed_end - parsed_start
     if duration <= 0:
         return "trimEnd must be greater than trimStart"
-    if duration > max_len:
-        return f"Clip length exceeds maximum of {max_len} seconds"
 
     source = job.get("source")
     if not isinstance(source, dict):

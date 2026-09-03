@@ -140,7 +140,6 @@ export async function handleHelperClaim(
     trimStart: record.trim_start,
     trimEnd: record.trim_end,
     quality: record.quality,
-    maxClipLengthSeconds: Number(env.MAX_CLIP_LENGTH_SECONDS) || 60,
   });
 }
 

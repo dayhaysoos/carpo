@@ -7,7 +7,6 @@ export interface Env {
   TRANSCRIPT_PREPARATION: DurableObjectNamespace;
   VideoClipAgent: DurableObjectNamespace;
   ASSETS: Fetcher;
-  MAX_CLIP_LENGTH_SECONDS: string;
   R2_PUBLIC_PREFIX: string;
   AUTH_MODE?: string;
   ACCESS_TEAM_DOMAIN?: string;

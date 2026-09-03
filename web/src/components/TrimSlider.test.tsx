@@ -87,6 +87,8 @@ describe("TrimSlider precision controls", () => {
     expect(start).toBeTruthy();
     expect(end).toBeTruthy();
     expect(start.getAttribute("aria-valuemax")).toBe("9.999");
+    expect(start.getAttribute("aria-valuemin")).toBe("0");
+    expect(end.getAttribute("aria-valuemax")).toBe("1440");
     expect(end.getAttribute("aria-valuemin")).toBe("0.001");
 
     await user.click(start);
@@ -138,6 +140,22 @@ describe("TrimSlider precision controls", () => {
       "24:00.000",
     );
     expect(screen.getByText("5.00s")).toBeTruthy();
+  });
+
+  it("does not round an end-of-source selection past a fractional duration", async () => {
+    const user = userEvent.setup();
+    render(<TrimHarness duration={3600.1236} />);
+    const endInput = screen.getByLabelText("End") as HTMLInputElement;
+
+    await user.clear(endInput);
+    await user.type(endInput, "60:00.124");
+    fireEvent.blur(endInput);
+
+    expect(
+      screen.getByRole("slider", { name: "Trim end" }).getAttribute(
+        "aria-valuenow",
+      ),
+    ).toBe("3600.1236");
   });
 
   it("recenters precision for every timestamp selection, even nearby ones", async () => {
@@ -202,7 +220,7 @@ describe("TrimSlider precision controls", () => {
     expect(endInput.value).toBe("0:10.000");
   });
 
-  it("recenters precision after a rough overview drag", () => {
+  it("allows a rough overview selection longer than 60 seconds", () => {
     render(<TrimHarness />);
     const end = screen.getByRole("slider", { name: "Trim end" });
     const track = end.parentElement as HTMLDivElement;
@@ -226,10 +244,10 @@ describe("TrimSlider precision controls", () => {
     });
 
     expect((screen.getByLabelText("End") as HTMLInputElement).value).toBe(
-      "1:00.000",
+      "12:00.000",
     );
-    expect(screen.getByText("0:45.000")).toBeTruthy();
-    expect(screen.getByText("1:15.000")).toBeTruthy();
+    expect(screen.getByText("11:45.000")).toBeTruthy();
+    expect(screen.getByText("12:15.000")).toBeTruthy();
   });
 
   it("recenters precision when an overview drag is cancelled", () => {
@@ -255,8 +273,8 @@ describe("TrimSlider precision controls", () => {
       { pointerId: 3, clientX: 500 },
     );
 
-    expect(screen.getByText("0:45.000")).toBeTruthy();
-    expect(screen.getByText("1:15.000")).toBeTruthy();
+    expect(screen.getByText("11:45.000")).toBeTruthy();
+    expect(screen.getByText("12:15.000")).toBeTruthy();
   });
 
   it("closes stale precision state when the source duration changes", async () => {
@@ -291,7 +309,7 @@ describe("TrimSlider precision controls", () => {
     const startInput = screen.getByLabelText("Start") as HTMLInputElement;
 
     await user.clear(endInput);
-    await user.type(endInput, "1:10.000");
+    await user.type(endInput, "1:00.000");
     fireEvent.blur(endInput);
     await user.clear(startInput);
     await user.type(startInput, "0:50.000");

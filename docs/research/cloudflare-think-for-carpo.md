@@ -39,7 +39,7 @@ It is batch-capable and currently listed at $0.00051 per audio minute. [Whisper 
 
 Cloudflare also publishes a tutorial for transcribing large audio inputs in chunks to address Worker memory and execution constraints. [Whisper chunking tutorial](https://developers.cloudflare.com/workers-ai/guides/tutorials/build-a-workers-ai-whisper-with-chunking/)
 
-Word timestamps mean the LLM should **not** be asked to guess where `code` occurred. Normal code can normalize punctuation/case, select each matching word, add configurable lead-in/lead-out, merge overlapping ranges, enforce Carpo's maximum clip length, and produce a reviewable list. That makes results repeatable and testable.
+Word timestamps mean the LLM should **not** be asked to guess where `code` occurred. Normal code can normalize punctuation/case, select each matching word, add configurable lead-in/lead-out, merge overlapping ranges, keep every range inside the source duration, and produce a reviewable list. That makes results repeatable and testable.
 
 ## Recommended Carpo architecture
 

@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  MAX_CLIP_LENGTH_SECONDS,
-  MIN_TRIM_GAP_SECONDS,
-} from "../types";
+import { MIN_TRIM_GAP_SECONDS } from "../types";
 import { formatTimestamp, parseTimestampInput } from "../youtube";
+
+const DEFAULT_CLIP_END_SECONDS = 10;
 
 interface TrimRange {
   start: number;
@@ -28,9 +27,14 @@ function clampRange(
   duration: number,
   movedHandle?: TrimHandle,
 ): TrimRange {
-  const maxEnd = duration > 0 ? duration : MAX_CLIP_LENGTH_SECONDS;
-  let s = Math.max(0, Math.min(start, maxEnd));
-  let e = Math.max(0, Math.min(end, maxEnd));
+  const safeStart = Number.isFinite(start) ? start : 0;
+  const safeEnd = Number.isFinite(end) ? end : DEFAULT_CLIP_END_SECONDS;
+  const maxEnd =
+    duration > 0
+      ? duration
+      : Math.max(DEFAULT_CLIP_END_SECONDS, safeStart, safeEnd);
+  let s = Math.max(0, Math.min(safeStart, maxEnd));
+  let e = Math.max(0, Math.min(safeEnd, maxEnd));
 
   if (e <= s) {
     const fallbackGap = Math.min(1, maxEnd);
@@ -41,16 +45,12 @@ function clampRange(
     }
   }
 
-  if (e - s > MAX_CLIP_LENGTH_SECONDS) {
-    if (movedHandle === "start") {
-      s = e - MAX_CLIP_LENGTH_SECONDS;
-    } else {
-      e = s + MAX_CLIP_LENGTH_SECONDS;
-    }
-  }
-
   s = Math.round(s * 1000) / 1000;
   e = Math.round(e * 1000) / 1000;
+  if (duration > 0) {
+    s = Math.min(s, duration);
+    e = Math.min(e, duration);
+  }
   if (e <= s) {
     const minimumGap = Math.min(MIN_TRIM_GAP_SECONDS, maxEnd);
     if (movedHandle === "start") {
@@ -110,7 +110,10 @@ export function useTrimRange({ duration, onSeek }: UseTrimRangeOptions) {
 
   const setClipWindow = useCallback(
     (start: number, end: number) => {
-      const maxEnd = duration > 0 ? duration : MAX_CLIP_LENGTH_SECONDS;
+      const maxEnd =
+        duration > 0
+          ? duration
+          : Math.max(DEFAULT_CLIP_END_SECONDS, start, end);
       const minimumGap = Math.min(MIN_TRIM_GAP_SECONDS, maxEnd);
       const safeStart = Math.max(
         0,
@@ -131,7 +134,7 @@ export function useTrimRange({ duration, onSeek }: UseTrimRangeOptions) {
     setActiveHandle(null);
     setDraggingHandle(null);
     if (duration > 0) {
-      const end = Math.min(10, duration, MAX_CLIP_LENGTH_SECONDS);
+      const end = Math.min(DEFAULT_CLIP_END_SECONDS, duration);
       applyRange(0, end, "start");
     }
   }, [duration]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -139,7 +142,6 @@ export function useTrimRange({ duration, onSeek }: UseTrimRangeOptions) {
   const startPercent = duration > 0 ? (range.start / duration) * 100 : 0;
   const endPercent = duration > 0 ? (range.end / duration) * 100 : 100;
   const clipDuration = range.end - range.start;
-  const overMax = clipDuration > MAX_CLIP_LENGTH_SECONDS;
 
   const valueFromClientX = (clientX: number) => {
     const drag = dragRef.current;
@@ -257,7 +259,6 @@ export function useTrimRange({ duration, onSeek }: UseTrimRangeOptions) {
     startPercent,
     endPercent,
     clipDuration,
-    overMax,
     activeHandle,
     draggingHandle,
     clipWindowRevision,

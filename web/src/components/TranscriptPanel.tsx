@@ -7,10 +7,7 @@ import {
   useState,
 } from "react";
 import { getVideoTranscript } from "../api";
-import {
-  MAX_CLIP_LENGTH_SECONDS,
-  type TranscriptBlock,
-} from "../types";
+import { type TranscriptBlock } from "../types";
 import { formatTimestamp } from "../youtube";
 
 interface TranscriptPanelProps {
@@ -74,13 +71,6 @@ export function TranscriptPanel({
     .sort((left, right) => left - right)
     .map((index) => blocks[index])
     .filter((block): block is TranscriptBlock => Boolean(block));
-  const selectedDuration =
-    selectedBlocks.length > 0
-      ? selectedBlocks.at(-1)!.endSeconds -
-        selectedBlocks[0].startSeconds
-      : 0;
-  const selectionTooLong = selectedDuration > MAX_CLIP_LENGTH_SECONDS;
-
   useEffect(() => {
     setQuery("");
     setAnchorIndex(null);
@@ -221,9 +211,7 @@ export function TranscriptPanel({
             <span aria-live="polite">
               {!editorReady
                 ? "Waiting for the video player"
-                : selectionTooLong
-                  ? `Selection exceeds the ${MAX_CLIP_LENGTH_SECONDS}-second clip limit`
-                  : selectedBlocks.length === 0
+                : selectedBlocks.length === 0
                 ? "No text selected"
                 : `${selectedBlocks.length} passage${selectedBlocks.length === 1 ? "" : "s"} selected`}
             </span>
@@ -246,8 +234,7 @@ export function TranscriptPanel({
                 onClick={useSelection}
                 disabled={
                   !editorReady ||
-                  selectedBlocks.length === 0 ||
-                  selectionTooLong
+                  selectedBlocks.length === 0
                 }
               >
                 Use selected text

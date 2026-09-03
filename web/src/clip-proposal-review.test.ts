@@ -261,26 +261,34 @@ describe("ClipProposalReview", () => {
     });
   });
 
-  it("admits valid proposals individually and keeps invalid proposals out of review", () => {
+  it("admits clips longer than 60 seconds and rejects only ranges past the Video duration", () => {
+    const longProposal = proposal("long", 0);
+    longProposal.input.endSeconds = 75;
     const result = review.admit(
       submission("partial", [
         proposal("valid", 2),
+        longProposal,
         {
           ...proposal("invalid", 5),
-          input: { ...proposal("invalid", 5).input, endSeconds: 80 },
+          input: { ...proposal("invalid", 5).input, endSeconds: 91 },
         },
       ]),
     );
 
     expect(result.items).toMatchObject([
       { proposalId: "valid", state: "ready-for-review", issues: [] },
+      { proposalId: "long", state: "ready-for-review", issues: [] },
       {
         proposalId: "invalid",
         state: "rejected",
         issues: [{ code: "INVALID_RANGE" }],
       },
     ]);
-    expect(review.getSnapshot().items).toHaveLength(1);
+    expect(review.getSnapshot().items).toHaveLength(2);
+    expect(review.getSnapshot().items[0].input).toMatchObject({
+      startSeconds: 0,
+      endSeconds: 75,
+    });
   });
 
   it("owns title, quality, and Overlay Text validation for every adapter", () => {
@@ -315,7 +323,7 @@ describe("ClipProposalReview", () => {
           proposal("valid", 2),
           {
             ...proposal("invalid", 5),
-            input: { ...proposal("invalid", 5).input, endSeconds: 80 },
+            input: { ...proposal("invalid", 5).input, endSeconds: 91 },
           },
         ],
         { adapter: "webmcp", atomic: true },

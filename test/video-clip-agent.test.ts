@@ -18,7 +18,7 @@ async function waitForStoredTranscript(videoId: string): Promise<void> {
 }
 
 describe("VideoClipAgent context", () => {
-  it("injects a persisted duration so random clip requests never need user input", async () => {
+  it("uses the persisted source duration as the clip boundary", async () => {
     const videoId = crypto.randomUUID();
     await env.DB.prepare(
       `INSERT INTO source_videos (
@@ -33,22 +33,40 @@ describe("VideoClipAgent context", () => {
         videoId,
         "https://www.youtube.com/watch?v=context-test",
         "Context test",
-        1009,
+        60 * 60,
       )
       .run();
 
     const context = await loadAgentVideoContext(env, videoId);
     expect(context).toMatchObject({
       title: "Context test",
-      durationSeconds: 1009,
+      durationSeconds: 60 * 60,
       sourceType: "youtube",
+      constraints: { maximumClipLengthSeconds: 60 * 60 },
     });
 
     const systemBlock = agentVideoContextSystemBlock(context);
-    expect(systemBlock).toContain('"durationSeconds":1009');
+    expect(systemBlock).toContain('"durationSeconds":3600');
+    expect(systemBlock).toContain('"maximumClipLengthSeconds":3600');
     expect(systemBlock).toContain(
       "never ask the user for the video duration",
     );
+
+    const agent = {
+      env,
+      name: videoId,
+    } as unknown as VideoClipAgent;
+    const tools = VideoClipAgent.prototype.getTools.call(agent);
+    const schema = tools.createClip.inputSchema as unknown as {
+      safeParse: (input: unknown) => { success: boolean };
+    };
+    expect(
+      schema.safeParse({
+        title: "Twenty-minute proposal",
+        startSeconds: 10 * 60,
+        endSeconds: 30 * 60,
+      }).success,
+    ).toBe(true);
   });
 
   it("forces the context tool before the model can answer", () => {

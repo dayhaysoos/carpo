@@ -171,7 +171,6 @@ export async function dispatchEncodingJob(
       quality: request.quality ?? "1080p",
       caption: extractCaptionFromFilters(request.filters),
       filters: request.filters,
-      maxClipLengthSeconds: Number(env.MAX_CLIP_LENGTH_SECONDS) || 60,
       outputs: outputKeys,
       callbackUrl,
       callbackSecret: record.callback_secret,

@@ -1,5 +1,3 @@
-export const MAX_CLIP_LENGTH_SECONDS = 60;
-
 export const CLIP_STATUSES = [
   "queued",
   "downloading",
@@ -241,7 +239,6 @@ export interface EncoderJobSpec {
   quality: ClipQuality;
   caption: string | null;
   filters: FilterSpec[];
-  maxClipLengthSeconds: number;
   outputs: {
     mp4Key: string;
     thumbnailKey: string;

@@ -55,7 +55,7 @@ Carpo does not initially expose an arbitrary JavaScript executor through WebMCP.
 | Render Themed Open Captions into an approved Clip | Required | Not exposed | Not exposed |
 | Export Closed Caption Artifacts as WebVTT and SubRip | Required | Required | Required |
 
-WebMCP tools expose structured Carpo capabilities; they do not reproduce or automate Think's chat interface. An external agent may choose tools and propose creative decisions, but Carpo remains responsible for enforcing timestamps, clip-duration limits, source readiness, authorization, idempotency, and review requirements.
+WebMCP tools expose structured Carpo capabilities; they do not reproduce or automate Think's chat interface. An external agent may choose tools and propose creative decisions, but Carpo remains responsible for enforcing timestamp ranges against the source duration, source readiness, authorization, idempotency, and review requirements.
 
 ## Caption outputs
 

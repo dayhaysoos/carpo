@@ -866,8 +866,7 @@ async function handleCreateClip(
     return json({ error: "Invalid JSON body" }, 400);
   }
 
-  const maxClipLength = Number(env.MAX_CLIP_LENGTH_SECONDS) || 60;
-  const validation = validateCreateClipRequest(body, maxClipLength);
+  const validation = validateCreateClipRequest(body);
   if (!validation.ok) {
     return json({ error: "Validation failed", details: validation.errors }, 400);
   }

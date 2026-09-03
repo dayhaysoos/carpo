@@ -3,7 +3,6 @@ import {
   DEFAULT_CLIP_QUALITY,
   FILTER_TYPES,
   MAX_CAPTION_LENGTH,
-  MAX_CLIP_LENGTH_SECONDS,
 } from "./types";
 import type {
   ClipQuality,
@@ -27,9 +26,13 @@ export interface ValidationError {
   message: string;
 }
 
+export interface CreateClipConstraints {
+  sourceDurationSeconds?: number | null;
+}
+
 export function validateCreateClipRequest(
   body: unknown,
-  maxClipLength = MAX_CLIP_LENGTH_SECONDS,
+  constraints: CreateClipConstraints = {},
 ): { ok: true; value: CreateClipRequest & { caption: string | null } } | { ok: false; errors: ValidationError[] } {
   const errors: ValidationError[] = [];
 
@@ -65,14 +68,17 @@ export function validateCreateClipRequest(
         field: "trimEnd",
         message: "trimEnd must be greater than trimStart",
       });
-    } else {
-      const duration = trimEnd - trimStart;
-      if (duration > maxClipLength) {
-        errors.push({
-          field: "trim",
-          message: `Clip length must not exceed ${maxClipLength} seconds (got ${duration.toFixed(2)}s)`,
-        });
-      }
+    } else if (
+      constraints.sourceDurationSeconds !== undefined &&
+      constraints.sourceDurationSeconds !== null &&
+      Number.isFinite(constraints.sourceDurationSeconds) &&
+      constraints.sourceDurationSeconds > 0 &&
+      trimEnd > constraints.sourceDurationSeconds
+    ) {
+      errors.push({
+        field: "trimEnd",
+        message: `trimEnd must not exceed the ${constraints.sourceDurationSeconds}-second source duration`,
+      });
     }
   }
 

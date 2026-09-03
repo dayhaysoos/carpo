@@ -8,7 +8,6 @@ import { useTrimRange } from "../hooks/useTrimRange";
 import { useYoutubePlayer } from "../hooks/useYoutubePlayer";
 import {
   MAX_CAPTION_LENGTH,
-  MAX_CLIP_LENGTH_SECONDS,
   type ClipResponse,
   type ClipQuality,
   type CreateClipRequest,
@@ -206,8 +205,12 @@ export function CreatorForm({
     ready &&
     remoteSourceReadyForClip &&
     title.trim().length > 0 &&
+    Number.isFinite(trim.range.start) &&
+    Number.isFinite(trim.range.end) &&
+    trim.range.start >= 0 &&
     clipDuration > 0 &&
-    clipDuration <= MAX_CLIP_LENGTH_SECONDS &&
+    duration > 0 &&
+    trim.range.end <= duration &&
     Boolean(reusableVideo || manualSource.preparedSource);
   const clipItems = useMemo(
     () =>

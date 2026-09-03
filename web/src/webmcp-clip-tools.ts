@@ -12,7 +12,6 @@ import {
 import {
   CLIP_QUALITIES,
   MAX_CAPTION_LENGTH,
-  MAX_CLIP_LENGTH_SECONDS,
   type ClipQuality,
   type CaptionTrackProposal,
   type CaptionTrackProposalInput,
@@ -621,7 +620,7 @@ export function createCarpoWebMcpTools(
                 error: state.transcriptError,
               },
         limits: {
-          maxClipLengthSeconds: MAX_CLIP_LENGTH_SECONDS,
+          maxClipLengthSeconds: state.video.durationSeconds,
           maxProposalsPerCall: MAX_CLIP_PROPOSALS_PER_BATCH,
           maxQueuedProposalBatches: MAX_QUEUED_CLIP_PROPOSAL_BATCHES,
           maxOverlayTextCharacters: MAX_CAPTION_LENGTH,

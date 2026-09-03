@@ -1,6 +1,6 @@
 import { getSourceVideoById } from "./db";
 import type { Env } from "./env";
-import { MAX_CLIP_LENGTH_SECONDS, type SourceVideoRecord } from "./types";
+import type { SourceVideoRecord } from "./types";
 import {
   readCachedTranscript,
   type StoredTranscript,
@@ -88,8 +88,6 @@ export function buildTranscriptClipRange(input: {
 }): TranscriptClipRange | null {
   if (
     input.spokenEndSeconds <= input.spokenStartSeconds ||
-    input.spokenEndSeconds - input.spokenStartSeconds >
-      MAX_CLIP_LENGTH_SECONDS ||
     (input.durationSeconds !== null &&
       (input.spokenStartSeconds >= input.durationSeconds ||
         input.spokenEndSeconds > input.durationSeconds))
@@ -106,22 +104,7 @@ export function buildTranscriptClipRange(input: {
     input.durationSeconds === null
       ? paddedEnd
       : Math.min(input.durationSeconds, paddedEnd);
-
-  if (endSeconds - startSeconds > MAX_CLIP_LENGTH_SECONDS) {
-    endSeconds = Math.min(
-      input.durationSeconds ?? Number.POSITIVE_INFINITY,
-      startSeconds + MAX_CLIP_LENGTH_SECONDS,
-    );
-    if (endSeconds < input.spokenEndSeconds) {
-      endSeconds = input.spokenEndSeconds;
-      startSeconds = Math.max(0, endSeconds - MAX_CLIP_LENGTH_SECONDS);
-    }
-  }
-
-  if (
-    endSeconds <= startSeconds ||
-    endSeconds - startSeconds > MAX_CLIP_LENGTH_SECONDS
-  ) {
+  if (endSeconds <= startSeconds) {
     return null;
   }
   return { startSeconds, endSeconds };
@@ -132,14 +115,8 @@ function mergeTranscriptMatchRanges(
 ): TranscriptSearchMatch[] {
   return matches.reduce<TranscriptSearchMatch[]>((merged, match) => {
     const previous = merged.at(-1);
-    const mergedEnd = previous
-      ? Math.max(previous.endSeconds, match.endSeconds)
-      : match.endSeconds;
-    if (
-      previous &&
-      match.startSeconds <= previous.endSeconds &&
-      mergedEnd - previous.startSeconds <= MAX_CLIP_LENGTH_SECONDS
-    ) {
+    if (previous && match.startSeconds <= previous.endSeconds) {
+      const mergedEnd = Math.max(previous.endSeconds, match.endSeconds);
       previous.endSeconds = mergedEnd;
       previous.spokenEndSeconds = Math.max(
         previous.spokenEndSeconds,

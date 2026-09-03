@@ -250,7 +250,7 @@ describe("TranscriptPanel", () => {
     ).toBe("78");
   });
 
-  it("rejects a transcript selection longer than the clip limit", async () => {
+  it("uses a transcript selection longer than 60 seconds", async () => {
     vi.mocked(getVideoTranscript).mockResolvedValue({
       ...transcript,
       blocks: [
@@ -268,29 +268,33 @@ describe("TranscriptPanel", () => {
           endCueId: "cue-3",
           startSeconds: 65,
           endSeconds: 70,
-          text: "The selection ends too late",
+          text: "The selection ends much later",
         },
       ],
     });
     const user = userEvent.setup();
-    renderPanel();
+    const onRangeSelect = vi.fn();
+    renderPanel({ onRangeSelect });
     const first = await screen.findByRole("button", {
       name: /0:00 The selection begins here/,
     });
     const second = screen.getByRole("button", {
-      name: /1:05 The selection ends too late/,
+      name: /1:05 The selection ends much later/,
     });
 
     await user.click(first);
     fireEvent.click(second, { shiftKey: true });
 
-    expect(
-      screen.getByText("Selection exceeds the 60-second clip limit"),
-    ).toBeTruthy();
-    expect(
-      screen
-        .getByRole("button", { name: "Use selected text" })
-        .hasAttribute("disabled"),
-    ).toBe(true);
+    expect(screen.getByText("2 passages selected")).toBeTruthy();
+    const useSelection = screen.getByRole("button", {
+      name: "Use selected text",
+    });
+    expect(useSelection.hasAttribute("disabled")).toBe(false);
+
+    await user.click(useSelection);
+    expect(onRangeSelect).toHaveBeenCalledWith({
+      startSeconds: 0,
+      endSeconds: 70,
+    });
   });
 });
