@@ -20,6 +20,7 @@ import {
 import type { ClipWindowRequest } from "../timestamp-windows";
 import { toExistingClipRanges } from "../timeline";
 import { formatTimestamp } from "../youtube";
+import { YOUTUBE_SOURCE_ENABLED } from "../source-options";
 import { carpoIdentityTokens } from "../styles/carpoIdentityTokens.stylex";
 import {
   CreatorWorkspaceClipPreview,
@@ -340,7 +341,7 @@ export function CreatorForm({
     <aside aria-label="Clip builder" {...stylex.props(styles.builder)}>
       <h1 {...stylex.props(styles.builderTitle)}>New clip</h1>
 
-      {!reusableVideoId ? (
+      {!reusableVideoId && YOUTUBE_SOURCE_ENABLED ? (
         <div
           role="tablist"
           aria-label="Source type"
@@ -373,7 +374,7 @@ export function CreatorForm({
         </div>
       ) : null}
 
-      {!reusableVideoId && sourceMode === "youtube" ? (
+      {!reusableVideoId && YOUTUBE_SOURCE_ENABLED && sourceMode === "youtube" ? (
         <label {...stylex.props(styles.field)}>
           <span {...stylex.props(styles.fieldLabel)}>YouTube URL</span>
           <input

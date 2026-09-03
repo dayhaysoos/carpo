@@ -1,4 +1,5 @@
 import { useSessionActive } from "../session-activity";
+import { YOUTUBE_SOURCE_ENABLED } from "../source-options";
 import { useAgentChat } from "@cloudflare/think/react";
 import { getToolName, isToolUIPart } from "ai";
 import type { UIMessage } from "ai";
@@ -91,7 +92,9 @@ export function VideoAgentChat(props: VideoAgentChatProps) {
           <div>
             <h2>Ask Carpo</h2>
             <p>
-              Choose a YouTube video or upload a file to start clipping.
+              {YOUTUBE_SOURCE_ENABLED
+                ? "Choose a YouTube video or upload a file to start clipping."
+                : "Upload a video to start clipping."}
             </p>
           </div>
           <span className="agent-connection" role="status" aria-live="polite">
@@ -109,7 +112,9 @@ export function VideoAgentChat(props: VideoAgentChatProps) {
             <p>
               {canCompose
                 ? "Your draft will be ready when Carpo connects."
-                : "Paste a YouTube URL or upload a video to continue."}
+                : YOUTUBE_SOURCE_ENABLED
+                  ? "Paste a YouTube URL or upload a video to continue."
+                  : "Upload a video to continue."}
             </p>
           </div>
         </div>

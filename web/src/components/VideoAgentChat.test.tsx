@@ -166,7 +166,7 @@ describe("VideoAgentChat", () => {
     expect(screen.getByRole("heading", { name: "Ask Carpo" })).toBeTruthy();
     expect(screen.getByText("Waiting")).toBeTruthy();
     expect(
-      screen.getByText("Choose a YouTube video or upload a file to start clipping."),
+      screen.getByText("Upload a video to start clipping."),
     ).toBeTruthy();
     expect(
       screen

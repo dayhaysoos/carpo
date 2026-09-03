@@ -28,6 +28,18 @@ const api = vi.hoisted(() => ({
 const youtubePlayer = vi.hoisted(() => ({
   ready: true,
 }));
+const youtubeSource = vi.hoisted(() => ({
+  enabled: null as boolean | null,
+}));
+
+vi.mock("../source-options", async (importOriginal) => {
+  const original = await importOriginal<typeof import("../source-options")>();
+  return {
+    get YOUTUBE_SOURCE_ENABLED() {
+      return youtubeSource.enabled ?? original.YOUTUBE_SOURCE_ENABLED;
+    },
+  };
+});
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -119,6 +131,7 @@ describe("CreatorPage", () => {
     cleanup();
     vi.clearAllMocks();
     youtubePlayer.ready = true;
+    youtubeSource.enabled = null;
     delete (document as Document & { modelContext?: unknown }).modelContext;
     delete (navigator as Navigator & { modelContext?: unknown }).modelContext;
   });
@@ -154,9 +167,35 @@ describe("CreatorPage", () => {
     expect(screen.queryByRole("heading", { name: "Ask Carpo" })).toBeNull();
   });
 
+  it.each(["/", "/?source=youtube"])(
+    "offers uploads without YouTube entry points at %s",
+    async (entry) => {
+      const user = userEvent.setup();
+      renderPage(entry);
+
+      expect(screen.queryByRole("tablist", { name: "Source type" })).toBeNull();
+      expect(screen.queryByRole("textbox", { name: "YouTube URL" })).toBeNull();
+      const input = screen.getByLabelText<HTMLInputElement>("Video file");
+      expect(input.closest("[hidden]")).toBeNull();
+      const chooseFile = vi.spyOn(input, "click").mockImplementation(() => {});
+      await user.click(screen.getByRole("button", { name: "Upload a video" }));
+      expect(chooseFile).toHaveBeenCalledTimes(1);
+      chooseFile.mockRestore();
+      expect(api.requestUploadUrl).not.toHaveBeenCalled();
+      expect(api.createSourceVideo).not.toHaveBeenCalled();
+
+      await user.click(screen.getByRole("button", { name: "Ask Carpo" }));
+      expect(screen.getByText("Upload a video to start clipping.")).toBeTruthy();
+      expect(screen.queryByText(/Choose a YouTube video/)).toBeNull();
+      expect(screen.queryByText(/Paste a YouTube URL/)).toBeNull();
+    },
+  );
+
+  // Keep regression coverage for the preserved integration without exposing it.
   it.each(["Upload file", "YouTube URL"])(
     "opens the existing file chooser from the empty stage in %s mode",
     async (mode) => {
+      youtubeSource.enabled = true;
       const user = userEvent.setup();
       renderPage();
       await user.click(screen.getByRole("tab", { name: mode }));
@@ -421,6 +460,7 @@ describe("CreatorPage", () => {
   });
 
   it("activates Think for a valid URL before the player is ready", async () => {
+    youtubeSource.enabled = true;
     const user = userEvent.setup();
     youtubePlayer.ready = false;
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
@@ -469,6 +509,7 @@ describe("CreatorPage", () => {
   });
 
   it("accepts and preserves a Think draft while a valid YouTube URL activates", async () => {
+    youtubeSource.enabled = true;
     const user = userEvent.setup();
     const activation = deferred<SourceVideoResponse>();
     const youtubeUrl = "https://www.youtube.com/watch?v=pendingThink1";
@@ -608,6 +649,7 @@ describe("CreatorPage", () => {
   });
 
   it("ignores a stale activation after the pasted URL changes", async () => {
+    youtubeSource.enabled = true;
     const user = userEvent.setup();
     const staleVideo = {
       id: "stale-video-id",
@@ -676,6 +718,7 @@ describe("CreatorPage", () => {
   });
 
   it("finishes activation when player metadata arrives during the request", async () => {
+    youtubeSource.enabled = true;
     const user = userEvent.setup();
     youtubePlayer.ready = false;
     const video = {
@@ -725,6 +768,7 @@ describe("CreatorPage", () => {
   });
 
   it("does not reopen a library video after choosing another", async () => {
+    youtubeSource.enabled = true;
     const user = userEvent.setup();
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
       configurable: true,
@@ -936,6 +980,7 @@ describe("CreatorPage", () => {
   });
 
   it("abandons an upload when the source mode changes", async () => {
+    youtubeSource.enabled = true;
     const user = userEvent.setup();
     let finishUpload: () => void = () => {};
     const upload = new Promise<void>((resolve) => {
