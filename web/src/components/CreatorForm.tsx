@@ -112,6 +112,7 @@ export function CreatorForm({
       : null;
   const uploadProgress = manualSource.progress;
   const appliedClipWindowRequest = useRef<number | null>(null);
+  const uploadInput = useRef<HTMLInputElement | null>(null);
   const previousActiveVideoId = useRef(reusableVideoId);
   const selectedClipTrigger = useRef<HTMLButtonElement | null>(null);
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
@@ -272,6 +273,9 @@ export function CreatorForm({
   }, [clipCreatedNotice]);
 
   const handleSourceModeChange = (mode: "youtube" | "upload") => {
+    if (mode !== sourceMode && uploadInput.current) {
+      uploadInput.current.value = "";
+    }
     dispatch({ type: "source-ui-reset" });
     void perform({ type: "source-mode-changed", mode });
   };
@@ -400,11 +404,18 @@ export function CreatorForm({
         </label>
       ) : null}
 
-      {!reusableVideoId && sourceMode === "upload" ? (
+      {!reusableVideoId ? (
         <>
-          <label {...stylex.props(styles.field)}>
+          <label
+            hidden={sourceMode !== "upload"}
+            {...stylex.props(
+              styles.field,
+              sourceMode !== "upload" && styles.hiddenField,
+            )}
+          >
             <span {...stylex.props(styles.fieldLabel)}>Video file</span>
             <input
+              ref={uploadInput}
               type="file"
               accept="video/mp4,video/webm,video/quicktime,video/x-matroska,.mp4,.webm,.mov,.mkv"
               onChange={(event) =>
@@ -425,7 +436,10 @@ export function CreatorForm({
               <span {...stylex.props(styles.fieldHint)}>{uploadProgress}</span>
             ) : null}
           </label>
-          {uploadError && selectedUpload && manualSource.issue?.retryable ? (
+          {sourceMode === "upload" &&
+          uploadError &&
+          selectedUpload &&
+          manualSource.issue?.retryable ? (
             <button
               type="button"
               onClick={() => void perform({ type: "retry-upload" })}
@@ -650,17 +664,28 @@ export function CreatorForm({
           </div>
         </div>
       ) : (
-        <div {...stylex.props(styles.emptyStage)}>
+        <button
+          type="button"
+          disabled={
+            Boolean(reusableVideoId) ||
+            manualSource.phase === "uploading" ||
+            manualSource.phase === "activating"
+          }
+          onClick={() => {
+            if (sourceMode !== "upload") handleSourceModeChange("upload");
+            uploadInput.current?.click();
+          }}
+          {...stylex.props(styles.emptyStage)}
+        >
           <svg
             viewBox="0 0 24 24"
             aria-hidden="true"
             {...stylex.props(styles.emptyStageIcon)}
           >
-            <rect x="3.5" y="5" width="17" height="14" rx="1.5" />
-            <path d="M7 5v14M17 5v14M3.5 9h3.5M17 9h3.5M3.5 15h3.5M17 15h3.5" />
+            <path d="M12 16V3m-5 5 5-5 5 5M4 15v6h16v-6" />
           </svg>
-          <span>Choose a source to begin.</span>
-        </div>
+          <span>Upload a video</span>
+        </button>
       )}
 
       {reusableVideoId ? (
@@ -827,6 +852,7 @@ const styles = stylex.create({
     color: carpoIdentityTokens.ink,
   },
   field: { display: "grid", gap: "7px" },
+  hiddenField: { display: "none" },
   fieldLabel: {
     color: carpoIdentityTokens.inkDim,
     fontFamily: carpoIdentityTokens.fontDisplay,
@@ -1097,18 +1123,32 @@ const styles = stylex.create({
     borderTopColor: carpoIdentityTokens.lineMuted,
   },
   emptyStage: {
+    width: "100%",
     minHeight: "min(52vh, 520px)",
+    padding: "24px",
     display: "grid",
     placeContent: "center",
     justifyItems: "center",
     gap: "12px",
     borderWidth: "1px",
-    borderStyle: "solid",
-    borderColor: "#454a57",
-    backgroundColor: carpoIdentityTokens.carbon,
-    color: carpoIdentityTokens.inkFaint,
-    clipPath:
-      "polygon(0 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%)",
+    borderStyle: "dashed",
+    borderColor: carpoIdentityTokens.lineInteractive,
+    borderRadius: 0,
+    backgroundColor: carpoIdentityTokens.navySoft,
+    color: carpoIdentityTokens.ink,
+    fontFamily: carpoIdentityTokens.fontUi,
+    fontSize: "16px",
+    fontWeight: 600,
+    cursor: "pointer",
+    ":hover:not(:disabled)": {
+      borderColor: carpoIdentityTokens.vermilion,
+      backgroundColor: carpoIdentityTokens.navyRaised,
+    },
+    ":focus-visible": controlFocus,
+    ":disabled": {
+      cursor: "default",
+      color: carpoIdentityTokens.inkFaint,
+    },
   },
   emptyStageIcon: {
     width: "44px",

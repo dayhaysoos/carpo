@@ -153,6 +153,10 @@
   border-radius: 2px;
 }
 
+.xbsl7fq:not(#\#):not(#\#) {
+  border-style: dashed;
+}
+
 .x1y0btm7:not(#\#):not(#\#) {
   border-style: solid;
 }
@@ -293,6 +297,10 @@
   text-decoration: none;
 }
 
+.xh9ida4:hover:not(:disabled):not(#\#):not(#\#) {
+  border-color: var(--x17qjvy3);
+}
+
 .x1isak4i:disabled:not(#\#):not(#\#) {
   border-color: var(--x1u6ffl4);
 }
@@ -395,6 +403,10 @@
 
 .xmaqwrb:not(#\#):not(#\#):not(#\#) {
   background-color: var(--x1d9rzdz);
+}
+
+.xeernfu:not(#\#):not(#\#):not(#\#) {
+  background-color: var(--x1wakl3r);
 }
 
 .x18n0d15:not(#\#):not(#\#):not(#\#) {
@@ -555,6 +567,10 @@
 
 .x3nfvp2:not(#\#):not(#\#):not(#\#) {
   display: inline-flex;
+}
+
+.x1s85apg:not(#\#):not(#\#):not(#\#) {
+  display: none;
 }
 
 .xbh8q5q:not(#\#):not(#\#):not(#\#) {
@@ -882,6 +898,10 @@
   background-color: var(--x8hl02z);
 }
 
+.xude43k:hover:not(:disabled):not(#\#):not(#\#):not(#\#) {
+  background-color: var(--xnrmfjy);
+}
+
 .x1wfyjrj:hover:not(:disabled):not(#\#):not(#\#):not(#\#) {
   box-shadow: 5px 5px #791f16;
 }
@@ -928,6 +948,10 @@
 
 .xp0diyw:disabled:not(#\#):not(#\#):not(#\#) {
   color: var(--x8zjw2r);
+}
+
+.xtgyt42:disabled:not(#\#):not(#\#):not(#\#) {
+  cursor: default;
 }
 
 .x1s07b3s:disabled:not(#\#):not(#\#):not(#\#) {

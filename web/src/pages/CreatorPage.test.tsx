@@ -154,6 +154,46 @@ describe("CreatorPage", () => {
     expect(screen.queryByRole("heading", { name: "Ask Carpo" })).toBeNull();
   });
 
+  it.each(["Upload file", "YouTube URL"])(
+    "opens the existing file chooser from the empty stage in %s mode",
+    async (mode) => {
+      const user = userEvent.setup();
+      renderPage();
+      await user.click(screen.getByRole("tab", { name: mode }));
+      const input = screen.getByLabelText("Video file");
+      const chooseFile = vi.spyOn(input, "click").mockImplementation(() => {});
+
+      await user.click(screen.getByRole("button", { name: "Upload a video" }));
+
+      expect(chooseFile).toHaveBeenCalledTimes(1);
+      expect(screen.getByLabelText("Video file")).toBe(input);
+      expect(
+        screen.getByRole("tab", { name: "Upload file" }).getAttribute("aria-selected"),
+      ).toBe("true");
+      // Merely opening or cancelling the chooser must not upload anything.
+      expect(api.requestUploadUrl).not.toHaveBeenCalled();
+      expect(api.createSourceVideo).not.toHaveBeenCalled();
+      chooseFile.mockRestore();
+    },
+  );
+
+  it.each(["{Enter}", " "])(
+    "opens the empty-stage chooser with %s",
+    async (key) => {
+      const user = userEvent.setup();
+      renderPage();
+      const chooseFile = vi
+        .spyOn(screen.getByLabelText("Video file"), "click")
+        .mockImplementation(() => {});
+      screen.getByRole("button", { name: "Upload a video" }).focus();
+
+      await user.keyboard(key);
+
+      expect(chooseFile).toHaveBeenCalledTimes(1);
+      chooseFile.mockRestore();
+    },
+  );
+
   it("renders the accepted three-zone production line around one active source", async () => {
     const video = uploadedVideo("workspace-video", "One active source");
     api.getSourceVideo.mockResolvedValue({ video, clips: [] });
@@ -183,6 +223,7 @@ describe("CreatorPage", () => {
 
     expect(Array.from(workspace.children)).toEqual([stage, builder, reel]);
     expect(screen.getAllByText(video.title)).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Upload a video" })).toBeNull();
     expect(screen.queryByText("Private copy ready")).toBeNull();
     expect(screen.queryByText("Ready to create")).toBeNull();
   });
@@ -925,5 +966,9 @@ describe("CreatorPage", () => {
     expect(screen.getByRole("textbox", { name: "YouTube URL" })).toBeTruthy();
     expect(screen.getByText("Waiting")).toBeTruthy();
     expect(api.createSourceVideo).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("tab", { name: "Upload file" }));
+    const resetInput = screen.getByLabelText<HTMLInputElement>("Video file");
+    expect(resetInput.value).toBe("");
+    expect(resetInput.files).toHaveLength(0);
   });
 });
