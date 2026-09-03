@@ -38,8 +38,23 @@ export function isWebShellRequest(request: Request): boolean {
   );
 }
 
-export function loginResponse(request: Request): Response | null {
+/** Preserve old entry links while sharing the API's Access destination. */
+export function legacyLoginRedirect(request: Request): Response | null {
   if (new URL(request.url).pathname !== "/auth/login") return null;
+  if (request.method !== "GET")
+    return new Response("Method not allowed", { status: 405, headers: { Allow: "GET" } });
+  const destination = loginDestination(new URL(request.url).searchParams.get("returnTo"));
+  return new Response(null, {
+    status: 303,
+    headers: {
+      Location: `/api/auth/login?returnTo=${encodeURIComponent(destination)}`,
+      "Cache-Control": "no-store",
+    },
+  });
+}
+
+export function loginResponse(request: Request): Response | null {
+  if (new URL(request.url).pathname !== "/api/auth/login") return null;
   if (request.method !== "GET")
     return new Response("Method not allowed", {
       status: 405,

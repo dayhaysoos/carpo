@@ -26,7 +26,7 @@ export async function checkLaunchAccess(origin, fetcher = fetch) {
       contentType: "text/html",
     },
     ...[
-      "/auth/login",
+      "/api/auth/login",
       "/create",
       "/library",
       "/api/me",

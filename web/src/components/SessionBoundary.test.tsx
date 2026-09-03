@@ -91,7 +91,7 @@ describe("private workspace session", () => {
     const link = screen.getByRole("link", { name: "Sign in again (new tab)" });
     expect(link.getAttribute("target")).toBe("_blank");
     expect(link.getAttribute("href")).toBe(
-      "/auth/login?returnTo=%2Fauth%2Frefresh",
+      "/api/auth/login?returnTo=%2Fauth%2Frefresh",
     );
     fireEvent.click(
       screen.getByRole("button", { name: "Check session again" }),

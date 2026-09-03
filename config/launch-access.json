@@ -5,7 +5,6 @@
   "hostname": "carpo.ndejesus1227.workers.dev",
   "applicationChanges": {
     "destinations": [
-      { "type": "public", "uri": "carpo.ndejesus1227.workers.dev/auth" },
       { "type": "public", "uri": "carpo.ndejesus1227.workers.dev/create" },
       { "type": "public", "uri": "carpo.ndejesus1227.workers.dev/library" },
       { "type": "public", "uri": "carpo.ndejesus1227.workers.dev/api" },

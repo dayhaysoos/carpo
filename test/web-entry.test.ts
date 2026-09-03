@@ -49,8 +49,8 @@ describe("public entry and private workspace boundary", () => {
     ).toBe(0);
   });
   it("authenticates before redirecting and provisions the first account once", async () => {
-    expect((await request("/auth/login?returnTo=%2Flibrary")).status).toBe(401);
-    const login = await request("/auth/login?returnTo=%2Flibrary", true);
+    expect((await request("/api/auth/login?returnTo=%2Flibrary")).status).toBe(401);
+    const login = await request("/api/auth/login?returnTo=%2Flibrary", true);
     expect(login.status).toBe(303);
     expect(login.headers.get("Location")).toBe("/library");
     expect(login.headers.get("Cache-Control")).toBe("no-store");
@@ -63,6 +63,13 @@ describe("public entry and private workspace boundary", () => {
     expect(await (await request("/api/videos", true)).json()).toMatchObject({
       videos: [],
     });
+  });
+  it("forwards old sign-in links into the protected API destination", async () => {
+    const response = await request("/auth/login?returnTo=%2Flibrary");
+    expect(response.status).toBe(303);
+    expect(response.headers.get("Location")).toBe("/api/auth/login?returnTo=%2Flibrary");
+    const unsafe = await request("/auth/login?returnTo=https%3A%2F%2Fevil.example");
+    expect(unsafe.headers.get("Location")).toBe("/api/auth/login?returnTo=%2Fcreate");
   });
   it.each([
     "/api/me",

@@ -1,4 +1,4 @@
-import { isWebShellRequest, loginResponse } from "./web-entry";
+import { isWebShellRequest, legacyLoginRedirect, loginResponse } from "./web-entry";
 import { EncoderContainer } from "./encoder-container";
 import type { Env } from "./env";
 import { handleRequest } from "./routes";
@@ -64,6 +64,8 @@ export default {
       return publicDistributionResponse;
     }
 
+    const legacyLogin = legacyLoginRedirect(request);
+    if (legacyLogin) return legacyLogin;
     if (isWebShellRequest(request)) return env.ASSETS.fetch(request);
 
     let user: AuthenticatedUser | null = null;

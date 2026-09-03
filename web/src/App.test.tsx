@@ -129,7 +129,7 @@ describe("App routing", () => {
       screen
         .getByRole("link", { name: "Continue with Google" })
         .getAttribute("href"),
-    ).toBe("/auth/login?returnTo=%2Flibrary");
+    ).toBe("/api/auth/login?returnTo=%2Flibrary");
     expect(getCurrentUser).not.toHaveBeenCalled();
   });
 });

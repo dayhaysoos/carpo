@@ -15,7 +15,7 @@ type Status = "loading" | "ready" | "signed-out" | "expired" | "error";
 type Workspace = { user: CurrentUserResponse; client: QueryClient };
 
 export function signInUrl(returnTo = "/create"): string {
-  return `/auth/login?returnTo=${encodeURIComponent(returnTo)}`;
+  return `/api/auth/login?returnTo=${encodeURIComponent(returnTo)}`;
 }
 
 export function SessionBoundary({
