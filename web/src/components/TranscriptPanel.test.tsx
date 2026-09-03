@@ -128,8 +128,9 @@ describe("TranscriptPanel", () => {
     renderPanel();
 
     expect(
-      await screen.findByText("simulated transcript preparation failure"),
+      await screen.findByText(/You can still create clips by setting the start and end times manually/),
     ).toBeTruthy();
+    expect(screen.queryByText("simulated transcript preparation failure")).toBeNull();
     expect(screen.queryByText("Preparing transcript…")).toBeNull();
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(getVideoTranscript).toHaveBeenCalledTimes(2);

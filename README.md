@@ -18,12 +18,9 @@ For reliable YouTube downloads from a residential IP, see [helper/README.md](hel
 
 ## Authentication and private libraries
 
-Production is protected by a hostname-level Cloudflare Access application with
-Google as its identity provider. The Worker resolves the verified Access
-identity to an internal Carpo user and scopes every user-facing video, clip,
-upload, artifact, transcript, and video-agent entry point to that user. An
-unknown or unauthenticated production request fails closed; knowing another
-record's UUID is not sufficient to read it.
+The public homepage lives at `/`, sign-in at `/sign-in`, and the private editor at `/create`. Cloudflare Access provides Google sign-in for private routes, while the Worker maps verified identities to stable Carpo users and scopes videos, clips, uploads, transcripts, artifacts, and agents to their owners. First sign-in creates a private workspace automatically.
+
+The launch candidate requires the Access destination change in [the rollout plan](docs/launch-entry-rollout.md). Code deployment alone does not remove the current Worker-wide login gate.
 
 Production requires `AUTH_MODE=cloudflare-access`, the HTTPS
 `ACCESS_TEAM_DOMAIN`, and the Access application's `ACCESS_AUD`. The isolated
@@ -40,17 +37,7 @@ configure a broad Access bypass for either client.
 
 ### Public share path
 
-Revocable Clip links use `/share/*` as their only anonymous entry point. In
-production, configure a separate, more-specific Cloudflare Access application
-for `carpo.ndejesus1227.workers.dev/share/*` with a Bypass policy for Everyone;
-keep the existing hostname-level Access application on every other path. Never
-bypass `/artifacts/*`: the share handler validates the opaque link, expiry, and
-revocation before streaming the single allowed object from R2.
-
-Access does not log requests covered by a Bypass policy. Carpo therefore treats
-each share URL as a bearer secret, stores only its SHA-256 hash, sends
-`Cache-Control: private, no-store`, and exposes owner-visible revocation. Apply
-the D1 migrations before enabling the public path.
+Revocable Clip links use `/share/*` as their only anonymous media entry point. The [launch Access configuration](config/launch-access.json) protects the private paths individually, leaving the homepage and share handler reachable. Never expose `/artifacts/*`: the share handler validates the opaque token, expiry, and revocation before streaming the single allowed object from R2. Share pages use no-store caching and owner-visible revocation.
 
 ## Reusable remote Video sources
 
@@ -101,10 +88,20 @@ validation, authorization, human review, and recoverable manual correction. See
 and the [WebMCP capability contract](docs/webmcp-capability-contract.md).
 
 The WebMCP surface exposes typed browser tools that explain Carpo's authority
-boundary, read revision-bound evidence, and prepare transcript- or sampled-
-frame-grounded drafts in the existing editable Clip Proposal Review. The tools
-cannot approve, create, encode, publish, or share clips; browsers without WebMCP
-continue to use the normal manual and Think interfaces.
+boundary, read revision-bound evidence, and prepare drafts in the existing
+editable Clip Proposal Review. Proposals can use transcript evidence, sampled
+frames, or an explicit timestamp selection for videos without speech. Timestamp
+proposals require a ready source, a known duration, and a rationale; they do not
+claim transcript or visual evidence. The homepage exposes getting-started
+instructions before a private workspace is selected.
+
+After the user approves and creates clips, `readClipWorkspace` reports processing
+status, failures, and private MP4/thumbnail/GIF URLs. `readCaptionTrack` reports
+saved VTT/SRT and completed captioned-video outputs. Returning a private URL does
+not publish the clip. The tools cannot approve, create, encode, publish, or share
+clips; browsers without WebMCP continue to use the normal manual and Think
+interfaces. See the [challenge verification and judge walkthrough](docs/webmcp-challenge-readiness.md)
+for the exact local evidence and remaining hosted checks.
 
 ## Caption outputs
 

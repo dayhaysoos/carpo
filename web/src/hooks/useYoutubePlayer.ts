@@ -1,70 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-declare global {
-  interface Window {
-    YT?: {
-      Player: new (
-        elementId: string,
-        options: {
-          videoId: string;
-          width?: string | number;
-          height?: string | number;
-          playerVars?: Record<string, string | number>;
-          events?: {
-            onReady?: (event: { target: YTPlayer }) => void;
-            onStateChange?: (event: { data: number; target: YTPlayer }) => void;
-          };
-        },
-      ) => YTPlayer;
-      PlayerState: {
-        PLAYING: number;
-        PAUSED: number;
-        ENDED: number;
-      };
-    };
-    onYouTubeIframeAPIReady?: () => void;
-  }
-}
-
-export interface YTPlayer {
-  seekTo(seconds: number, allowSeekAhead: boolean): void;
-  getCurrentTime(): number;
-  getDuration(): number;
-  getVideoData(): { title?: string };
-  pauseVideo(): void;
-  playVideo(): void;
-  destroy(): void;
-}
-
-let apiLoadPromise: Promise<void> | null = null;
-
-function loadYoutubeApi(): Promise<void> {
-  if (window.YT?.Player) {
-    return Promise.resolve();
-  }
-
-  if (!apiLoadPromise) {
-    apiLoadPromise = new Promise((resolve) => {
-      const previous = window.onYouTubeIframeAPIReady;
-      window.onYouTubeIframeAPIReady = () => {
-        previous?.();
-        resolve();
-      };
-
-      if (!document.querySelector('script[src*="youtube.com/iframe_api"]')) {
-        const script = document.createElement("script");
-        script.src = "https://www.youtube.com/iframe_api";
-        script.async = true;
-        document.head.appendChild(script);
-      }
-    });
-  }
-
-  return apiLoadPromise;
-}
+import { loadYoutubeApi, type YTPlayer } from "../youtube-api";
 
 export function useYoutubePlayer(videoId: string | null) {
-  const containerIdRef = useRef(`yt-player-${Math.random().toString(36).slice(2)}`);
+  const containerIdRef = useRef(
+    `yt-player-${Math.random().toString(36).slice(2)}`,
+  );
   const playerRef = useRef<YTPlayer | null>(null);
   const [ready, setReady] = useState(false);
   const [duration, setDuration] = useState(0);

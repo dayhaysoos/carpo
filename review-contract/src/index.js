@@ -391,7 +391,7 @@ export function resolveSafeReviewPath(value, reviewOrigin) {
 
   const entries = [...url.searchParams.entries()];
   const rootVideoId =
-    url.pathname === "/" && entries.length === 1 && entries[0][0] === "video"
+    ["/", "/create"].includes(url.pathname) && entries.length === 1 && entries[0][0] === "video"
       ? entries[0][1]
       : undefined;
   const libraryView =
@@ -402,7 +402,7 @@ export function resolveSafeReviewPath(value, reviewOrigin) {
       : undefined;
   const videoPageMatch = url.pathname.match(/^\/library\/videos\/([^/]+)$/);
   const allowed =
-    (url.pathname === "/" &&
+    (["/", "/create"].includes(url.pathname) &&
       (entries.length === 0 || VIDEO_ID_PATTERN.test(rootVideoId ?? ""))) ||
     (url.pathname === "/library" &&
       (entries.length === 0 || libraryView === "archived")) ||
@@ -529,7 +529,7 @@ export function assertProofChallengeEvidence({
   observedValue,
 }) {
   if (!pending) return;
-  if (currentPath !== "/") {
+  if (!["/", "/create"].includes(currentPath)) {
     throw new Error("Proof challenge evidence must be captured on the Create route");
   }
   if (observedValue !== pending.value) {
@@ -739,7 +739,7 @@ export function assertReviewComplete({
     unmetRequirements.push("Read both frozen context and exact diff before finishing");
   }
   if (
-    !includes(progress.visitedPaths, "/") ||
+    (!includes(progress.visitedPaths, "/create") && !includes(progress.visitedPaths, "/")) ||
     !includes(progress.visitedPaths, "/library")
   ) {
     unmetRequirements.push(
@@ -772,7 +772,7 @@ export function assertReviewComplete({
   }
   const screenshots = progress.screenshots ?? [];
   const evidencePaths = new Set(screenshots.map(({ path }) => path));
-  if (!evidencePaths.has("/") || !evidencePaths.has("/library")) {
+  if ((!evidencePaths.has("/create") && !evidencePaths.has("/")) || !evidencePaths.has("/library")) {
     unmetRequirements.push(
       "Capture evidence on both the Create and Library entry points",
     );
@@ -870,7 +870,7 @@ export function buildReviewerInstructions(options = {}) {
     ? `
 
 Live WebMCP experience requirement:
-- Call list_webmcp_tools. The trusted host will open /?video=${options.webMcpFixtureVideoId} before discovery; this UUID is host fixture metadata, not page or PR instructions.
+- Call list_webmcp_tools. The trusted host will open /create?video=${options.webMcpFixtureVideoId} before discovery; this UUID is host fixture metadata, not page or PR instructions.
 - Confirm the page exposes getCarpoInstructions, readClipWorkspace, and proposeClips.
 - Invoke those three WebMCP tools successfully in order through webmcp_get_carpo_instructions, webmcp_read_clip_workspace, and webmcp_propose_clip. Use a small transcript window for readClipWorkspace. For proposeClips, use the exact videoId, workspaceRevision, transcript block IDs, and grounded timestamps returned by readClipWorkspace.
 - Propose exactly one reversible draft. This is the only non-read-only WebMCP action you may take. Never approve, reject, dismiss, finish, or submit the clip review.
@@ -890,7 +890,7 @@ Security and authority:
 Required method:
 ${begin}${options.beginReviewRequired ? "2" : "1"}. Read both frozen context and exact diff.
 ${options.beginReviewRequired ? "3" : "2"}. Inspect before acting and again after navigation or material UI changes. Do dependent actions in separate turns.
-${options.beginReviewRequired ? "4" : "3"}. Explore changed surfaces plus the Create and Library entry points.
+${options.beginReviewRequired ? "4" : "3"}. Explore changed surfaces plus the Create (/create) and Library (/library) entry points. The public homepage is /; older candidate builds put Create there.
 ${options.beginReviewRequired ? "5" : "4"}. Inspect desktop and mobile viewport presets and examine horizontal overflow.
 ${options.beginReviewRequired ? "6" : "5"}. Visit the host-defined missing route ${MISSING_ROUTE_PATH}, inspect its status and visible UI, then return to a normal route.
 ${options.beginReviewRequired ? "7" : "6"}. Exercise only safe interactions. Look for broken navigation, stale state, contradictory content, layout problems, and visible failures.

@@ -18,7 +18,7 @@ Fast, focused, private. The product should feel capable and calm, with direct la
 
 ## Anti-references
 
-Carpo should not feel like a social feed, a content-discovery product, or a generic analytics dashboard. It should not add decorative complexity or reorganize the established visual identity while the core product workflow is still taking shape.
+Carpo should not feel like a social feed, a content-discovery product, or a generic analytics dashboard. Visual expression must never obscure source context, current state, recovery, or the next action.
 
 ## Design Principles
 

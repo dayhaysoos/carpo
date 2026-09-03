@@ -90,6 +90,9 @@ describe("bounded review policy contract", () => {
   });
 
   it("owns the shared route and action safety policy", () => {
+    assert.equal(resolveSafeReviewPath("/create", origin), "/create");
+    assert.equal(resolveSafeReviewPath("/create?video=8a8dfc12-2917-4331-92db-8ae8a45e7621", origin), "/create?video=8a8dfc12-2917-4331-92db-8ae8a45e7621");
+    assert.throws(() => resolveSafeReviewPath("/create?action=delete", origin));
     assert.equal(resolveSafeReviewPath("/library?view=archived", origin), "/library?view=archived");
     assert.equal(resolveSafeReviewPath("/__carpo-review-missing", origin), "/__carpo-review-missing");
     assert.throws(() => resolveSafeReviewPath("/api/review/identity", origin));

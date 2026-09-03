@@ -1,3 +1,4 @@
+import { sessionFetch, uploadFailure } from "./session-fetch";
 import type {
   ApiError,
   CaptionCue,
@@ -33,12 +34,18 @@ import type {
 } from "./types";
 
 export async function getCurrentUser(): Promise<CurrentUserResponse> {
-  const response = await fetch("/api/me");
+  const response = await sessionFetch("/api/me", { signal: AbortSignal.timeout(10000) });
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as ApiError;
     throw new Error(body.error || `Request failed (${response.status})`);
   }
-  return response.json() as Promise<CurrentUserResponse>;
+  const user: unknown = await response.json();
+  if (!user || typeof user !== "object" || !("id" in user) ||
+    typeof user.id !== "string" || !user.id || !("email" in user) ||
+    (user.email !== null && typeof user.email !== "string")) {
+    throw new Error("We couldn’t verify your account. Please try again.");
+  }
+  return { id: user.id, email: user.email };
 }
 
 export async function requestUploadUrl(input: {
@@ -46,7 +53,7 @@ export async function requestUploadUrl(input: {
   sizeBytes: number;
   filename: string;
 }): Promise<UploadUrlResponse> {
-  const response = await fetch("/api/upload-url", {
+  const response = await sessionFetch("/api/upload-url", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
@@ -79,6 +86,10 @@ export function uploadFileWithProgress(
     };
 
     xhr.onload = () => {
+      if (xhr.status === 401 || xhr.status === 0) {
+        void uploadFailure(xhr.status).then(reject);
+        return;
+      }
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve();
         return;
@@ -92,7 +103,7 @@ export function uploadFileWithProgress(
       }
     };
 
-    xhr.onerror = () => reject(new Error("Upload failed due to a network error"));
+    xhr.onerror = () => { void uploadFailure(xhr.status).then(reject); };
     xhr.send(file);
   });
 }
@@ -100,7 +111,7 @@ export function uploadFileWithProgress(
 export async function createClip(
   request: CreateClipRequest,
 ): Promise<ClipResponse> {
-  const response = await fetch("/api/clips", {
+  const response = await sessionFetch("/api/clips", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(request),
@@ -116,7 +127,7 @@ export async function createClip(
 }
 
 export async function getClip(id: string): Promise<ClipResponse> {
-  const response = await fetch(`/api/clips/${id}`);
+  const response = await sessionFetch(`/api/clips/${id}`);
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as ApiError;
     throw new Error(body.error || `Request failed (${response.status})`);
@@ -127,7 +138,7 @@ export async function getClip(id: string): Promise<ClipResponse> {
 export async function getCaptionTrack(
   clipId: string,
 ): Promise<CaptionTrackResponse> {
-  const response = await fetch(
+  const response = await sessionFetch(
     `/api/clips/${encodeURIComponent(clipId)}/captions`,
   );
   if (!response.ok) {
@@ -145,7 +156,7 @@ export async function saveCaptionTrack(
     proposalSource?: CaptionProposalSource;
   } = {},
 ): Promise<CaptionTrackAvailable> {
-  const response = await fetch(
+  const response = await sessionFetch(
     `/api/clips/${encodeURIComponent(clipId)}/captions`,
     {
       method: "PUT",
@@ -178,7 +189,7 @@ export async function validateCaptionTrackProposal(
     theme: CaptionThemeId;
   },
 ): Promise<CaptionTrackProposal> {
-  const response = await fetch(
+  const response = await sessionFetch(
     `/api/clips/${encodeURIComponent(clipId)}/captions/proposals`,
     {
       method: "POST",
@@ -197,7 +208,7 @@ export async function validateCaptionTrackProposal(
 export async function renderCaptionTrack(
   clipId: string,
 ): Promise<CaptionTrackAvailable> {
-  const response = await fetch(
+  const response = await sessionFetch(
     `/api/clips/${encodeURIComponent(clipId)}/captions/render`,
     { method: "POST" },
   );
@@ -216,7 +227,7 @@ export async function listClips(
     limit: String(limit),
     offset: String(offset),
   });
-  const response = await fetch(`/api/clips?${params}`);
+  const response = await sessionFetch(`/api/clips?${params}`);
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as ApiError;
     throw new Error(body.error || `Request failed (${response.status})`);
@@ -234,7 +245,7 @@ export async function listSourceVideos(
     offset: String(offset),
     archived: String(archived),
   });
-  const response = await fetch(`/api/videos?${params}`);
+  const response = await sessionFetch(`/api/videos?${params}`);
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as ApiError;
     throw new Error(body.error || `Request failed (${response.status})`);
@@ -248,7 +259,7 @@ export async function searchPrivateLibrary(input: {
   archived?: boolean;
   limit?: number;
 }): Promise<LibrarySearchResponse> {
-  const response = await fetch("/api/library/search", {
+  const response = await sessionFetch("/api/library/search", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
@@ -263,7 +274,7 @@ export async function searchPrivateLibrary(input: {
 export async function prepareLibraryMomentReview(
   input: PrepareLibraryMomentRequest,
 ): Promise<PreparedLibraryMomentReview> {
-  const response = await fetch("/api/library/moments", {
+  const response = await sessionFetch("/api/library/moments", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
@@ -279,7 +290,7 @@ export async function getPreparedLibraryMomentReview(
   proposalId: string,
   signal?: AbortSignal,
 ): Promise<PreparedLibraryMomentReview> {
-  const response = await fetch(
+  const response = await sessionFetch(
     `/api/library/moments/${encodeURIComponent(proposalId)}`,
     { signal },
   );
@@ -294,7 +305,7 @@ export async function searchVisualMoments(
   videoId: string,
   query: string,
 ): Promise<VisualSearchResponse> {
-  const response = await fetch(
+  const response = await sessionFetch(
     `/api/videos/${encodeURIComponent(videoId)}/visual-search`,
     {
       method: "POST",
@@ -312,7 +323,7 @@ export async function searchVisualMoments(
 export async function prepareVisualMomentReview(
   input: PrepareVisualMomentRequest,
 ): Promise<PreparedVisualMomentReview> {
-  const response = await fetch("/api/visual-moments", {
+  const response = await sessionFetch("/api/visual-moments", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(input),
@@ -328,7 +339,7 @@ export async function getPreparedVisualMomentReview(
   proposalId: string,
   signal?: AbortSignal,
 ): Promise<PreparedVisualMomentReview> {
-  const response = await fetch(
+  const response = await sessionFetch(
     `/api/visual-moments/${encodeURIComponent(proposalId)}`,
     { signal },
   );
@@ -342,7 +353,7 @@ export async function getPreparedVisualMomentReview(
 export async function createSourceVideo(
   request: CreateSourceVideoRequest,
 ): Promise<SourceVideoResponse> {
-  const response = await fetch("/api/videos", {
+  const response = await sessionFetch("/api/videos", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(request),
@@ -358,7 +369,7 @@ export async function createSourceVideo(
 export async function retryRemoteSourceIngestion(
   videoId: string,
 ): Promise<SourceVideoResponse> {
-  const response = await fetch(
+  const response = await sessionFetch(
     `/api/videos/${encodeURIComponent(videoId)}/ingest`,
     { method: "POST" },
   );
@@ -374,7 +385,7 @@ export async function createClipFromSourceVideo(
   request: CreateClipFromVideoRequest,
   idempotencyKey?: string,
 ): Promise<ClipResponse> {
-  const response = await fetch(
+  const response = await sessionFetch(
     `/api/videos/${encodeURIComponent(videoId)}/clips`,
     {
       method: "POST",
@@ -397,7 +408,7 @@ export async function setSourceVideoArchived(
   videoId: string,
   archived: boolean,
 ): Promise<SourceVideoResponse> {
-  const response = await fetch(`/api/videos/${encodeURIComponent(videoId)}`, {
+  const response = await sessionFetch(`/api/videos/${encodeURIComponent(videoId)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ archived }),
@@ -413,7 +424,7 @@ export async function updateSourceVideoDuration(
   videoId: string,
   durationSeconds: number,
 ): Promise<SourceVideoResponse> {
-  const response = await fetch(`/api/videos/${encodeURIComponent(videoId)}`, {
+  const response = await sessionFetch(`/api/videos/${encodeURIComponent(videoId)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ durationSeconds }),
@@ -426,7 +437,7 @@ export async function updateSourceVideoDuration(
 }
 
 export async function deleteSourceVideo(videoId: string): Promise<void> {
-  const response = await fetch(`/api/videos/${encodeURIComponent(videoId)}`, {
+  const response = await sessionFetch(`/api/videos/${encodeURIComponent(videoId)}`, {
     method: "DELETE",
   });
   if (!response.ok) {
@@ -442,7 +453,7 @@ export function sourceVideoUploadUrl(videoId: string): string {
 export async function getSourceVideo(
   id: string,
 ): Promise<SourceVideoDetailResponse> {
-  const response = await fetch(`/api/videos/${encodeURIComponent(id)}`);
+  const response = await sessionFetch(`/api/videos/${encodeURIComponent(id)}`);
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as ApiError;
     throw new Error(body.error || `Request failed (${response.status})`);
@@ -453,7 +464,7 @@ export async function getSourceVideo(
 export async function getVideoTranscript(
   videoId: string,
 ): Promise<TranscriptResponse> {
-  const response = await fetch(
+  const response = await sessionFetch(
     `/api/videos/${encodeURIComponent(videoId)}/transcript`,
   );
   if (!response.ok) {
@@ -464,7 +475,7 @@ export async function getVideoTranscript(
 }
 
 export async function deleteClip(id: string): Promise<void> {
-  const response = await fetch(`/api/clips/${id}`, { method: "DELETE" });
+  const response = await sessionFetch(`/api/clips/${id}`, { method: "DELETE" });
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as ApiError;
     throw new Error(body.error || `Request failed (${response.status})`);
@@ -472,7 +483,7 @@ export async function deleteClip(id: string): Promise<void> {
 }
 
 export async function requestGifExport(id: string): Promise<ClipResponse> {
-  const response = await fetch(`/api/clips/${id}/gif`, { method: "POST" });
+  const response = await sessionFetch(`/api/clips/${id}/gif`, { method: "POST" });
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as ApiError;
     throw new Error(body.error || `Request failed (${response.status})`);
@@ -483,7 +494,7 @@ export async function requestGifExport(id: string): Promise<ClipResponse> {
 export async function getClipDistribution(
   clipId: string,
 ): Promise<ClipDistributionView> {
-  const response = await fetch(
+  const response = await sessionFetch(
     `/api/clips/${encodeURIComponent(clipId)}/distribution`,
   );
   if (!response.ok) {
@@ -497,7 +508,7 @@ export async function createClipShare(
   clipId: string,
   expiration: ShareExpirationPreset,
 ): Promise<ClipShareCreatedResult> {
-  const response = await fetch(
+  const response = await sessionFetch(
     `/api/clips/${encodeURIComponent(clipId)}/distribution/shares`,
     {
       method: "POST",
@@ -516,7 +527,7 @@ export async function revokeClipShare(
   clipId: string,
   shareId: string,
 ): Promise<ClipShareRevokedResult> {
-  const response = await fetch(
+  const response = await sessionFetch(
     `/api/clips/${encodeURIComponent(clipId)}/distribution/shares/${encodeURIComponent(shareId)}`,
     { method: "DELETE" },
   );
@@ -531,7 +542,7 @@ export async function createClipExport(
   clipId: string,
   preset: ClipExportPreset,
 ): Promise<ClipExportResult> {
-  const response = await fetch(
+  const response = await sessionFetch(
     `/api/clips/${encodeURIComponent(clipId)}/distribution/exports/${encodeURIComponent(preset)}`,
     { method: "POST" },
   );

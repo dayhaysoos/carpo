@@ -318,6 +318,7 @@ export interface ApiError {
 }
 
 export interface CurrentUserResponse {
+  id: string;
   email: string | null;
 }
 

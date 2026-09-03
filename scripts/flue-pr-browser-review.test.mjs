@@ -316,7 +316,7 @@ describe("bounded Flue browser review", () => {
       );
       assert.equal(
         currentUrl,
-        `https://carpo-pr-review.ndejesus1227.workers.dev/?video=${videoId}`,
+        `https://carpo-pr-review.ndejesus1227.workers.dev/create?video=${videoId}`,
       );
       await assert.rejects(
         () =>

@@ -74,32 +74,41 @@ export async function readCandidateIdentity(
   page,
   { reviewOrigin, expectedVersionTag, expectedVersionId },
 ) {
-  const response = await page.goto(`${reviewOrigin}/api/review/identity`, {
-    waitUntil: "domcontentloaded",
-    timeout: 30_000,
-  });
-  if (!response?.ok()) {
-    throw new Error(
-      `Candidate identity request failed with status ${response?.status() ?? "unknown"}`,
-    );
+  // Initial admission tolerates bounded edge propagation. Once pinned, any
+  // identity change fails immediately so one review cannot span deployments.
+  const attempts = expectedVersionId ? 1 : 16;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const response = await page.goto(`${reviewOrigin}/api/review/identity`, {
+      waitUntil: "domcontentloaded",
+      timeout: 30_000,
+    });
+    if (!response?.ok()) {
+      throw new Error(
+        `Candidate identity request failed with status ${response?.status() ?? "unknown"}`,
+      );
+    }
+    const candidate = await response.json();
+    if (
+      typeof candidate?.id !== "string" ||
+      typeof candidate?.tag !== "string" ||
+      typeof candidate?.timestamp !== "string"
+    ) {
+      throw new Error("Candidate identity returned invalid Worker version metadata");
+    }
+    if (candidate.tag !== expectedVersionTag) {
+      if (attempt + 1 < attempts) {
+        await page.waitForTimeout(2_000);
+        continue;
+      }
+      throw new Error(
+        `Deployed Worker tag ${JSON.stringify(candidate.tag)} does not match expected tag ${JSON.stringify(expectedVersionTag)}`,
+      );
+    }
+    if (expectedVersionId && candidate.id !== expectedVersionId) {
+      throw new Error(
+        `Deployed Worker version changed from ${expectedVersionId} to ${candidate.id} during browser review`,
+      );
+    }
+    return candidate;
   }
-  const candidate = await response.json();
-  if (
-    typeof candidate?.id !== "string" ||
-    typeof candidate?.tag !== "string" ||
-    typeof candidate?.timestamp !== "string"
-  ) {
-    throw new Error("Candidate identity returned invalid Worker version metadata");
-  }
-  if (candidate.tag !== expectedVersionTag) {
-    throw new Error(
-      `Deployed Worker tag ${JSON.stringify(candidate.tag)} does not match expected tag ${JSON.stringify(expectedVersionTag)}`,
-    );
-  }
-  if (expectedVersionId && candidate.id !== expectedVersionId) {
-    throw new Error(
-      `Deployed Worker version changed from ${expectedVersionId} to ${candidate.id} during browser review`,
-    );
-  }
-  return candidate;
 }

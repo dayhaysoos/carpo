@@ -44,7 +44,7 @@ describe("live WebMCP review fixture", () => {
       });
 
       assert.equal(fixture.videoId, WEBMCP_REVIEW_FIXTURE.videoId);
-      assert.equal(fixture.path, `/?video=${WEBMCP_REVIEW_FIXTURE.videoId}`);
+      assert.equal(fixture.path, `/create?video=${WEBMCP_REVIEW_FIXTURE.videoId}`);
       assert.deepEqual(calls[0].transcript, webMcpReviewTranscript());
       assert.match(calls[1].args.at(-1), new RegExp(WEBMCP_REVIEW_FIXTURE.videoId));
       assert.match(calls[1].args.at(-1), /transcript_status/);

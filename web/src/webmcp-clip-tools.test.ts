@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import * as api from "./api";
 import { ClipProposalReview } from "./clip-proposal-review";
 import type {
   ClipResponse,
@@ -124,6 +125,48 @@ function validProposal(state: WebMcpClipWorkspaceState) {
 }
 
 describe("Carpo WebMCP clip tools", () => {
+  it("offers only getting-started instructions on the public entry page", async () => {
+    const tools = createCarpoWebMcpTools(null, false);
+    expect(tools.map(({ name }) => name)).toEqual(["getCarpoInstructions"]);
+    expect(await tools[0].execute({})).toMatchObject({ ok: true, workflow: expect.arrayContaining([expect.stringContaining("/create")]) });
+  });
+
+  it("reports transcript failure instead of leaving an agent waiting on cached checking state", async () => {
+    const { state, tools } = workspace();
+    state.transcript = { transcriptStatus: "checking", retryAfterMs: 1000 };
+    state.transcriptError = "Transcription unavailable";
+    expect(await requiredTool(tools, "readClipWorkspace").execute({})).toMatchObject({
+      video: { transcriptStatus: "failed" },
+      transcript: { status: "unavailable", error: "Transcription unavailable" },
+    });
+  });
+
+  it("returns caption exports only for a saved track on the active video's completed clip", async () => {
+    const { state, tools } = workspace();
+    const getTrack = vi.spyOn(api, "getCaptionTrack").mockResolvedValue({
+      captionStatus: "available", clipId: completedClip.id, clipDurationSeconds: 5,
+      saved: true, sourceLanguage: null, sourceAutomatic: null, cues: [],
+      theme: "classic", lastProposalSource: "webmcp", renderStatus: "complete",
+      renderErrorMessage: null, outputCaptionedMp4: "/artifacts/clips/clip-1/captioned.mp4",
+      revision: "saved-1", updatedAt: video.updatedAt,
+    });
+    try {
+      const tool = requiredTool(tools, "readCaptionTrack");
+      expect(await tool.execute({ clipId: completedClip.id })).toMatchObject({
+        ok: true, outputs: {
+          vtt: api.captionTrackVttUrl(completedClip.id),
+          srt: api.captionTrackSrtUrl(completedClip.id),
+          captionedMp4: "/artifacts/clips/clip-1/captioned.mp4",
+        },
+      });
+      state.video = { ...video, id: "different-video" };
+      expect(await tool.execute({ clipId: completedClip.id })).toMatchObject({ ok: false, error: { code: "clip_not_available" } });
+      expect(getTrack).toHaveBeenCalledTimes(1);
+    } finally {
+      getTrack.mockRestore();
+    }
+  });
+
   it("exposes only the bounded proposal surface and describes its authority", async () => {
     const { tools } = workspace();
 
@@ -225,6 +268,81 @@ describe("Carpo WebMCP clip tools", () => {
         },
       ],
     });
+  });
+
+  it("admits explicit timestamp drafts without a transcript and preserves human edits on retry", async () => {
+    const { create, review, state, tools } = workspace();
+    state.transcript = null;
+    state.transcriptError = "No speech available";
+    const input = {
+      ...validProposal(state),
+      proposals: [{
+        ...validProposal(state).proposals[0],
+        basis: "timestamps",
+        sourceBlockIds: [],
+        rationale: "The user requested the opening five seconds.",
+        startSeconds: 0,
+        endSeconds: 5,
+      }],
+    };
+    const tool = requiredTool(tools, "proposeClips");
+    expect(await tool.execute(input)).toMatchObject({
+      ok: true, requiresHumanReview: true, createdClipIds: [],
+    });
+    const draft = review.getSnapshot().items[0];
+    expect(draft).toMatchObject({ decision: null, provenance: { basis: "timestamps", sourceBlockIds: [] } });
+    review.dispatch({ type: "edit", proposalId: draft.proposalId, input: { ...draft.input, title: "My corrected title", endSeconds: 6 } });
+    expect(await tool.execute(input)).toMatchObject({ ok: true, proposalStates: [{ replayed: true }] });
+    expect(review.getSnapshot().items).toHaveLength(1);
+    expect(review.getSnapshot().items[0].input).toMatchObject({ title: "My corrected title", endSeconds: 6 });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("keeps timestamp selection explicit and enforces shared range and source readiness rules", async () => {
+    const { create, review, state, tools } = workspace();
+    state.transcript = null;
+    const input = validProposal(state);
+    const proposal = { ...input.proposals[0], basis: "timestamps", sourceBlockIds: [] };
+    const tool = requiredTool(tools, "proposeClips");
+    expect(await tool.execute(input)).toMatchObject({ ok: false, error: { code: "TRANSCRIPT_UNAVAILABLE" } });
+    for (const override of [
+      { sourceBlockIds: ["invented-evidence"] },
+      { rationale: undefined },
+      { startSeconds: -1 },
+      { endSeconds: 91 },
+      { startSeconds: 0, endSeconds: 61 },
+      { endSeconds: 3 },
+    ]) {
+      expect(await tool.execute({ ...input, proposals: [{ ...proposal, ...override }] })).toMatchObject({ ok: false, error: { code: "INVALID_PROPOSALS" } });
+    }
+    expect(await tool.execute({ ...input, workspaceRevision: "stale", proposals: [proposal] })).toMatchObject({ ok: false, error: { code: "STALE_WORKSPACE" } });
+    state.video = { ...video, retainedSourceReady: false };
+    expect(await tool.execute({ ...input, proposals: [proposal] })).toMatchObject({ ok: false, error: { code: "INVALID_PROPOSALS" } });
+    state.video = { ...video, durationSeconds: null };
+    expect(await tool.execute({ ...input, proposals: [proposal] })).toMatchObject({ ok: false, error: { code: "INVALID_PROPOSALS" } });
+    expect(review.getSnapshot().items).toEqual([]);
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it("reports current clip progress and private outputs without exposing another video's clips or source keys", async () => {
+    const { state, tools } = workspace();
+    state.clips = [
+      completedClip,
+      { ...completedClip, id: "pending", status: "encoding", outputs: completedClip.outputs },
+      { ...completedClip, id: "failed", status: "failed", errorMessage: "Encoder unavailable" },
+      { ...completedClip, id: "other-video-clip", videoId: "other-video" },
+    ];
+    const result = await requiredTool(tools, "readClipWorkspace").execute({});
+    expect(result).toMatchObject({
+      ok: true,
+      clips: [
+        { id: "clip-1", status: "complete", outputs: { mp4: "/artifacts/clips/clip-1/clip.mp4" } },
+        { id: "pending", status: "encoding", outputs: null },
+        { id: "failed", status: "failed", error: "Encoder unavailable", outputs: null },
+      ],
+    });
+    expect(JSON.stringify(result)).not.toContain("other-video-clip");
+    expect(JSON.stringify(result)).not.toContain("uploads/private-source.mp4");
   });
 
   it("places a WebMCP caption proposal into human review without saving or rendering", async () => {

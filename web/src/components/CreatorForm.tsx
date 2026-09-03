@@ -1,10 +1,7 @@
 import { useMutation } from "@tanstack/react-query";
 import * as stylex from "@stylexjs/stylex";
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
-import {
-  createClip,
-  createClipFromSourceVideo,
-} from "../api";
+import { createClip, createClipFromSourceVideo } from "../api";
 import type { ActiveVideoLifecycle } from "../active-video-lifecycle";
 import { useNativeVideoPlayer } from "../hooks/useNativeVideoPlayer";
 import { useTrimRange } from "../hooks/useTrimRange";
@@ -24,7 +21,7 @@ import {
 import type { ClipWindowRequest } from "../timestamp-windows";
 import { toExistingClipRanges } from "../timeline";
 import { formatTimestamp } from "../youtube";
-import { creatorWorkspaceTokens } from "../styles/creatorWorkspaceTokens.stylex";
+import { carpoIdentityTokens } from "../styles/carpoIdentityTokens.stylex";
 import {
   CreatorWorkspaceClipPreview,
   CreatorWorkspaceClipReel,
@@ -150,22 +147,14 @@ export function CreatorForm({
         ? native.ready
         : false;
   const duration =
-    preview.type === "youtube"
-      ? youtube.duration
-      : native.duration;
+    preview.type === "youtube" ? youtube.duration : native.duration;
   const currentTime =
-    preview.type === "youtube"
-      ? youtube.currentTime
-      : native.currentTime;
-  const seekTo =
-    preview.type === "youtube"
-      ? youtube.seekTo
-      : native.seekTo;
+    preview.type === "youtube" ? youtube.currentTime : native.currentTime;
+  const seekTo = preview.type === "youtube" ? youtube.seekTo : native.seekTo;
   const trim = useTrimRange({ duration, onSeek: seekTo });
   const durationMatchesActiveSource =
     preview.type === "youtube" ||
-    (preview.type === "native" &&
-      native.mediaStateSourceUrl === preview.url);
+    (preview.type === "native" && native.mediaStateSourceUrl === preview.url);
 
   useEffect(() => {
     if (
@@ -181,13 +170,7 @@ export function CreatorForm({
       videoId: reusableVideoId,
       durationSeconds: duration,
     });
-  }, [
-    duration,
-    durationMatchesActiveSource,
-    perform,
-    ready,
-    reusableVideoId,
-  ]);
+  }, [duration, durationMatchesActiveSource, perform, ready, reusableVideoId]);
 
   useEffect(() => {
     if (reusableVideo?.source.type !== "upload") return;
@@ -259,8 +242,11 @@ export function CreatorForm({
   const mutation = useMutation({
     mutationFn: (request: CreateClipRequest) => {
       if (reusableVideoId && reusableVideo) {
-        const { source: _source, sourceTitle: _sourceTitle, ...clipRequest } =
-          request;
+        const {
+          source: _source,
+          sourceTitle: _sourceTitle,
+          ...clipRequest
+        } = request;
         return createClipFromSourceVideo(reusableVideoId, clipRequest);
       }
       return createClip(request);
@@ -345,277 +331,358 @@ export function CreatorForm({
 
   const builderPanel = (
     <aside aria-label="Clip builder" {...stylex.props(styles.builder)}>
-        <h1 {...stylex.props(styles.builderTitle)}>New clip</h1>
+      <h1 {...stylex.props(styles.builderTitle)}>New clip</h1>
 
-        {!reusableVideoId ? (
-          <div role="tablist" aria-label="Source type" {...stylex.props(styles.sourceTabs)}>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={sourceMode === "youtube"}
-              onClick={() => handleSourceModeChange("youtube")}
-              {...stylex.props(styles.sourceTab, sourceMode === "youtube" && styles.sourceTabActive)}
-            >
-              YouTube URL
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={sourceMode === "upload"}
-              onClick={() => handleSourceModeChange("upload")}
-              {...stylex.props(styles.sourceTab, sourceMode === "upload" && styles.sourceTabActive)}
-            >
-              Upload file
-            </button>
-          </div>
-        ) : null}
+      {!reusableVideoId ? (
+        <div
+          role="tablist"
+          aria-label="Source type"
+          {...stylex.props(styles.sourceTabs)}
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={sourceMode === "youtube"}
+            onClick={() => handleSourceModeChange("youtube")}
+            {...stylex.props(
+              styles.sourceTab,
+              sourceMode === "youtube" && styles.sourceTabActive,
+            )}
+          >
+            YouTube URL
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={sourceMode === "upload"}
+            onClick={() => handleSourceModeChange("upload")}
+            {...stylex.props(
+              styles.sourceTab,
+              sourceMode === "upload" && styles.sourceTabActive,
+            )}
+          >
+            Upload file
+          </button>
+        </div>
+      ) : null}
 
-        {!reusableVideoId && sourceMode === "youtube" ? (
+      {!reusableVideoId && sourceMode === "youtube" ? (
+        <label {...stylex.props(styles.field)}>
+          <span {...stylex.props(styles.fieldLabel)}>YouTube URL</span>
+          <input
+            type="url"
+            placeholder="https://youtube.com/watch?v=…"
+            value={url}
+            onChange={(event) =>
+              void perform({
+                type: "youtube-url-changed",
+                value: event.target.value,
+              })
+            }
+            onBlur={() =>
+              dispatch({ type: "update", patch: { urlTouched: true } })
+            }
+            autoComplete="off"
+            spellCheck={false}
+            {...stylex.props(styles.input)}
+          />
+          {urlInvalid ? (
+            <span {...stylex.props(styles.fieldError)}>
+              Enter a valid YouTube URL.
+            </span>
+          ) : null}
+          {urlValid ? (
+            <span {...stylex.props(styles.fieldOk)}>Valid YouTube URL</span>
+          ) : null}
+        </label>
+      ) : null}
+
+      {!reusableVideoId && sourceMode === "upload" ? (
+        <>
           <label {...stylex.props(styles.field)}>
-            <span {...stylex.props(styles.fieldLabel)}>YouTube URL</span>
+            <span {...stylex.props(styles.fieldLabel)}>Video file</span>
             <input
-              type="url"
-              placeholder="https://youtube.com/watch?v=…"
-              value={url}
+              type="file"
+              accept="video/mp4,video/webm,video/quicktime,video/x-matroska,.mp4,.webm,.mov,.mkv"
               onChange={(event) =>
-                void perform({
-                  type: "youtube-url-changed",
-                  value: event.target.value,
-                })
+                handleFileChange(event.target.files?.[0] ?? null)
               }
-              onBlur={() => dispatch({ type: "update", patch: { urlTouched: true } })}
-              autoComplete="off"
-              spellCheck={false}
-              {...stylex.props(styles.input)}
+              {...stylex.props(styles.fileInput)}
             />
-            {urlInvalid ? (
-              <span {...stylex.props(styles.fieldError)}>
-                Enter a valid YouTube URL.
+            {selectedUpload && !uploadError ? (
+              <span {...stylex.props(styles.fieldOk)}>
+                {selectedUpload.fileName} (
+                {Math.round(selectedUpload.sizeBytes / 1024)} KB)
               </span>
             ) : null}
-            {urlValid ? <span {...stylex.props(styles.fieldOk)}>Valid YouTube URL</span> : null}
-          </label>
-        ) : null}
-
-        {!reusableVideoId && sourceMode === "upload" ? (
-          <>
-            <label {...stylex.props(styles.field)}>
-              <span {...stylex.props(styles.fieldLabel)}>Video file</span>
-              <input
-                type="file"
-                accept="video/mp4,video/webm,video/quicktime,video/x-matroska,.mp4,.webm,.mov,.mkv"
-                onChange={(event) => handleFileChange(event.target.files?.[0] ?? null)}
-                {...stylex.props(styles.fileInput)}
-              />
-              {selectedUpload && !uploadError ? (
-                <span {...stylex.props(styles.fieldOk)}>
-                  {selectedUpload.fileName} ({Math.round(selectedUpload.sizeBytes / 1024)} KB)
-                </span>
-              ) : null}
-              {uploadError ? <span {...stylex.props(styles.fieldError)}>{uploadError}</span> : null}
-              {uploadProgress ? <span {...stylex.props(styles.fieldHint)}>{uploadProgress}</span> : null}
-            </label>
-            {uploadError && selectedUpload && manualSource.issue?.retryable ? (
-              <button
-                type="button"
-                onClick={() => void perform({ type: "retry-upload" })}
-                {...stylex.props(styles.secondaryButton)}
-              >
-                Retry upload
-              </button>
+            {uploadError ? (
+              <span {...stylex.props(styles.fieldError)}>{uploadError}</span>
             ) : null}
-          </>
-        ) : null}
+            {uploadProgress ? (
+              <span {...stylex.props(styles.fieldHint)}>{uploadProgress}</span>
+            ) : null}
+          </label>
+          {uploadError && selectedUpload && manualSource.issue?.retryable ? (
+            <button
+              type="button"
+              onClick={() => void perform({ type: "retry-upload" })}
+              {...stylex.props(styles.secondaryButton)}
+            >
+              Retry upload
+            </button>
+          ) : null}
+        </>
+      ) : null}
 
-        <label {...stylex.props(styles.field)}>
-          <span {...stylex.props(styles.fieldLabel)}>Title</span>
-          <input
-            type="text"
-            placeholder="Name this clip"
-            value={title}
-            onChange={(event) =>
-              dispatch({ type: "update", patch: { title: event.target.value } })
-            }
-            maxLength={200}
-            {...stylex.props(styles.input)}
-          />
-        </label>
+      <label {...stylex.props(styles.field)}>
+        <span {...stylex.props(styles.fieldLabel)}>Title</span>
+        <input
+          type="text"
+          placeholder="Name this clip"
+          value={title}
+          onChange={(event) =>
+            dispatch({ type: "update", patch: { title: event.target.value } })
+          }
+          maxLength={200}
+          {...stylex.props(styles.input)}
+        />
+      </label>
 
-        <label {...stylex.props(styles.field)}>
-          <span {...stylex.props(styles.fieldLabel)}>Overlay text (optional)</span>
-          <input
-            type="text"
-            placeholder="Show static text throughout"
-            value={caption}
-            onChange={(event) =>
-              dispatch({ type: "update", patch: { caption: event.target.value } })
-            }
-            maxLength={MAX_CAPTION_LENGTH}
-            {...stylex.props(styles.input)}
-          />
-        </label>
+      <label {...stylex.props(styles.field)}>
+        {/* prettier-ignore */}
+        <span {...stylex.props(styles.fieldLabel)}>Overlay text (optional)</span>
+        <input
+          type="text"
+          placeholder="Show static text throughout"
+          value={caption}
+          onChange={(event) =>
+            dispatch({ type: "update", patch: { caption: event.target.value } })
+          }
+          maxLength={MAX_CAPTION_LENGTH}
+          {...stylex.props(styles.input)}
+        />
+      </label>
 
-        <div role="group" aria-label="Output quality" {...stylex.props(styles.field)}>
-          <span {...stylex.props(styles.fieldLabel)}>Quality</span>
-          <div {...stylex.props(styles.qualityOptions)}>
-            {(["1080p", "720p"] as const).map((option) => (
-              <button
-                key={option}
-                type="button"
-                aria-pressed={quality === option}
-                onClick={() => dispatch({ type: "update", patch: { quality: option } })}
-                {...stylex.props(styles.qualityButton, quality === option && styles.qualityButtonActive)}
-              >
-                {option}
-              </button>
-            ))}
-          </div>
+      <div
+        role="group"
+        aria-label="Output quality"
+        {...stylex.props(styles.field)}
+      >
+        <span {...stylex.props(styles.fieldLabel)}>Quality</span>
+        <div {...stylex.props(styles.qualityOptions)}>
+          {(["1080p", "720p"] as const).map((option) => (
+            <button
+              key={option}
+              type="button"
+              aria-pressed={quality === option}
+              onClick={() =>
+                dispatch({ type: "update", patch: { quality: option } })
+              }
+              {...stylex.props(
+                styles.qualityButton,
+                quality === option && styles.qualityButtonActive,
+              )}
+            >
+              {option}
+            </button>
+          ))}
         </div>
+      </div>
 
-        {mutation.error ? (
-          <div role="alert" {...stylex.props(styles.inlineError)}>{mutation.error.message}</div>
-        ) : null}
-        {sourceActivationError ? (
-          <div role="alert" {...stylex.props(styles.inlineError)}>{sourceActivationError}</div>
-        ) : null}
+      {mutation.error ? (
+        <div role="alert" {...stylex.props(styles.inlineError)}>
+          {mutation.error.message}
+        </div>
+      ) : null}
+      {sourceActivationError ? (
+        <div role="alert" {...stylex.props(styles.inlineError)}>
+          {sourceActivationError}
+        </div>
+      ) : null}
 
-        <button
-          type="submit"
-          disabled={!canCreate || mutation.isPending}
-          {...stylex.props(styles.createButton)}
-        >
-          {mutation.isPending ? "Creating…" : "Create clip"}
-        </button>
-        {clipCreatedNotice ? <span className="sr-only" role="status">Clip queued.</span> : null}
+      <button
+        type="submit"
+        disabled={!canCreate || mutation.isPending}
+        {...stylex.props(styles.createButton)}
+      >
+        {mutation.isPending ? "Creating…" : "Create clip"}
+      </button>
+      {clipCreatedNotice ? (
+        <span className="sr-only" role="status">
+          Clip queued.
+        </span>
+      ) : null}
     </aside>
   );
 
   const stagePanel = (
     <section aria-label="Moment workspace" {...stylex.props(styles.stage)}>
-        <div {...stylex.props(styles.stageHeading)}>
-          <div>
-            <h2 {...stylex.props(styles.stageTitle)}>Mark a moment</h2>
-            <p {...stylex.props(styles.stageInstructions)}>
-              Drag the handles or select words below.
-            </p>
-          </div>
-          {ready ? (
-            <span {...stylex.props(styles.stageTime)}>
-              {formatTimestamp(Math.max(0, clipDuration))} selected
-            </span>
-          ) : null}
+      <div {...stylex.props(styles.stageHeading)}>
+        <div>
+          <h2 {...stylex.props(styles.stageTitle)}>Mark a moment</h2>
+          <p {...stylex.props(styles.stageInstructions)}>
+            Drag the handles or select words below.
+          </p>
         </div>
+        {ready ? (
+          <span {...stylex.props(styles.stageTime)}>
+            {formatTimestamp(Math.max(0, clipDuration))} selected
+          </span>
+        ) : null}
+      </div>
 
-        {active.status === "loading" ? (
-          <div role="status" {...stylex.props(styles.sourceStatus)}>Loading video…</div>
-        ) : null}
-        {active.status === "failed" ? (
-          <div role="alert" {...stylex.props(styles.sourceStatus, styles.sourceStatusFailed)}>
-            {active.issue.message}
-          </div>
-        ) : null}
-        {active.status === "ready" && refreshIssue ? (
-          <div role="alert" {...stylex.props(styles.sourceStatus, styles.sourceStatusFailed)}>
-            {refreshIssue.message}
-          </div>
-        ) : null}
+      {active.status === "loading" ? (
+        <div role="status" {...stylex.props(styles.sourceStatus)}>
+          Loading video…
+        </div>
+      ) : null}
+      {active.status === "failed" ? (
+        <div
+          role="alert"
+          {...stylex.props(styles.sourceStatus, styles.sourceStatusFailed)}
+        >
+          {active.issue.message}
+        </div>
+      ) : null}
+      {active.status === "ready" && refreshIssue ? (
+        <div
+          role="alert"
+          {...stylex.props(styles.sourceStatus, styles.sourceStatusFailed)}
+        >
+          {refreshIssue.message}
+        </div>
+      ) : null}
 
-        {reusableVideo?.remoteIngestion && reusableVideo.remoteIngestion.status !== "ready" ? (
-          <div
-            role={reusableVideo.remoteIngestion.status === "failed" ? "alert" : "status"}
-            {...stylex.props(
-              styles.sourceStatus,
-              reusableVideo.remoteIngestion.status === "failed" && styles.sourceStatusFailed,
-            )}
-          >
-            {reusableVideo.remoteIngestion.failure ? (
-              <>
-                <strong>Import blocked</strong>
-                <p>{reusableVideo.remoteIngestion.failure.message}</p>
-                <RemoteSourceFailureHint failure={reusableVideo.remoteIngestion.failure} />
-                <div {...stylex.props(styles.recoveryActions)}>
-                  {reusableVideo.remoteIngestion.failure.retryable ? (
-                    <button
-                      type="button"
-                      disabled={manualSource.phase === "activating"}
-                      onClick={() => void perform({ type: "retry-ingestion" })}
-                      {...stylex.props(styles.dangerButton)}
-                    >
-                      {manualSource.phase === "activating" ? "Retrying…" : "Retry import"}
-                    </button>
-                  ) : null}
+      {reusableVideo?.remoteIngestion &&
+      reusableVideo.remoteIngestion.status !== "ready" ? (
+        <div
+          role={
+            reusableVideo.remoteIngestion.status === "failed"
+              ? "alert"
+              : "status"
+          }
+          {...stylex.props(
+            styles.sourceStatus,
+            reusableVideo.remoteIngestion.status === "failed" &&
+              styles.sourceStatusFailed,
+          )}
+        >
+          {reusableVideo.remoteIngestion.failure ? (
+            <>
+              <strong>Import blocked</strong>
+              <p>{reusableVideo.remoteIngestion.failure.message}</p>
+              <RemoteSourceFailureHint
+                failure={reusableVideo.remoteIngestion.failure}
+              />
+              <div {...stylex.props(styles.recoveryActions)}>
+                {reusableVideo.remoteIngestion.failure.retryable ? (
                   <button
                     type="button"
-                    onClick={() => void handleUseOwnFile()}
-                    {...stylex.props(styles.secondaryButton)}
+                    disabled={manualSource.phase === "activating"}
+                    onClick={() => void perform({ type: "retry-ingestion" })}
+                    {...stylex.props(styles.dangerButton)}
                   >
-                    Upload your file
+                    {manualSource.phase === "activating"
+                      ? "Retrying…"
+                      : "Retry import"}
                   </button>
-                </div>
-              </>
-            ) : (
-              <strong>Importing source</strong>
-            )}
-          </div>
-        ) : null}
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => void handleUseOwnFile()}
+                  {...stylex.props(styles.secondaryButton)}
+                >
+                  Upload your file
+                </button>
+              </div>
+            </>
+          ) : (
+            <strong>Importing source</strong>
+          )}
+        </div>
+      ) : null}
 
-        {preview.type === "youtube" ? (
-          <div {...stylex.props(styles.playerSection)}>
-            <div {...stylex.props(styles.playerFrame)}>
-              <div id={youtube.containerId} className="player-embed" />
-              {!youtube.ready ? <div className="player-loading">Loading player…</div> : null}
-            </div>
-            <div {...stylex.props(styles.timelineSurface)}>
-              <TrimSlider duration={duration} ready={ready} trim={trim} existingClips={existingClips} />
-            </div>
+      {preview.type === "youtube" ? (
+        <div {...stylex.props(styles.playerSection)}>
+          <div {...stylex.props(styles.playerFrame)}>
+            <div id={youtube.containerId} className="player-embed" />
+            {!youtube.ready ? (
+              <div className="player-loading">Loading player…</div>
+            ) : null}
           </div>
-        ) : preview.type === "native" ? (
-          <div {...stylex.props(styles.playerSection)}>
-            <div {...stylex.props(styles.playerFrame)}>
-              <video ref={native.videoRef} className="native-player" controls playsInline preload="metadata" />
-              {!ready ? (
-                <div className="player-loading">
-                  {native.error ? "Original uploaded video is unavailable" : "Loading preview…"}
-                </div>
-              ) : null}
-            </div>
-            <div {...stylex.props(styles.timelineSurface)}>
-              <TrimSlider duration={duration} ready={ready} trim={trim} existingClips={existingClips} />
-            </div>
-          </div>
-        ) : (
-          <div {...stylex.props(styles.emptyStage)}>
-            <svg viewBox="0 0 24 24" aria-hidden="true" {...stylex.props(styles.emptyStageIcon)}>
-              <rect x="3.5" y="5" width="17" height="14" rx="1.5" />
-              <path d="M7 5v14M17 5v14M3.5 9h3.5M17 9h3.5M3.5 15h3.5M17 15h3.5" />
-            </svg>
-            <span>Choose a source to begin.</span>
-          </div>
-        )}
-
-        {reusableVideoId ? (
-          <div {...stylex.props(styles.transcriptSurface)}>
-            <TranscriptPanel
-              videoId={reusableVideoId}
-              currentTime={currentTime}
-              editorReady={ready && duration > 0}
-              onSeek={seekTo}
-              onRangeSelect={({ startSeconds, endSeconds }) =>
-                trim.setClipWindow(startSeconds, endSeconds)
-              }
+          <div {...stylex.props(styles.timelineSurface)}>
+            <TrimSlider
+              duration={duration}
+              ready={ready}
+              trim={trim}
+              existingClips={existingClips}
             />
           </div>
-        ) : null}
+        </div>
+      ) : preview.type === "native" ? (
+        <div {...stylex.props(styles.playerSection)}>
+          <div {...stylex.props(styles.playerFrame)}>
+            <video
+              ref={native.videoRef}
+              className="native-player"
+              controls
+              playsInline
+              preload="metadata"
+            />
+            {!ready ? (
+              <div className="player-loading">
+                {native.error
+                  ? "Original uploaded video is unavailable"
+                  : "Loading preview…"}
+              </div>
+            ) : null}
+          </div>
+          <div {...stylex.props(styles.timelineSurface)}>
+            <TrimSlider
+              duration={duration}
+              ready={ready}
+              trim={trim}
+              existingClips={existingClips}
+            />
+          </div>
+        </div>
+      ) : (
+        <div {...stylex.props(styles.emptyStage)}>
+          <svg
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            {...stylex.props(styles.emptyStageIcon)}
+          >
+            <rect x="3.5" y="5" width="17" height="14" rx="1.5" />
+            <path d="M7 5v14M17 5v14M3.5 9h3.5M17 9h3.5M3.5 15h3.5M17 15h3.5" />
+          </svg>
+          <span>Choose a source to begin.</span>
+        </div>
+      )}
 
-        {selectedClip ? (
-          <CreatorWorkspaceClipPreview
-            item={selectedClip}
-            onClose={() => {
-              setSelectedClipId(null);
-              requestAnimationFrame(() => selectedClipTrigger.current?.focus());
-            }}
+      {reusableVideoId ? (
+        <div {...stylex.props(styles.transcriptSurface)}>
+          <TranscriptPanel
+            videoId={reusableVideoId}
+            currentTime={currentTime}
+            editorReady={ready && duration > 0}
+            onSeek={seekTo}
+            onRangeSelect={({ startSeconds, endSeconds }) =>
+              trim.setClipWindow(startSeconds, endSeconds)
+            }
           />
-        ) : null}
+        </div>
+      ) : null}
+
+      {selectedClip ? (
+        <CreatorWorkspaceClipPreview
+          item={selectedClip}
+          onClose={() => {
+            setSelectedClipId(null);
+            requestAnimationFrame(() => selectedClipTrigger.current?.focus());
+          }}
+        />
+      ) : null}
     </section>
   );
 
@@ -624,7 +691,12 @@ export function CreatorForm({
       role="region"
       aria-label="Creator workspace"
       onSubmit={handleSubmit}
-      {...stylex.props(styles.workspace)}
+      {...stylex.props(
+        styles.workspace,
+        reusableVideo
+          ? styles.workspaceWithSource
+          : styles.workspaceWithoutSource,
+      )}
     >
       {stagePanel}
       {builderPanel}
@@ -643,7 +715,7 @@ export function CreatorForm({
 const controlFocus = {
   outlineWidth: "2px",
   outlineStyle: "solid",
-  outlineColor: creatorWorkspaceTokens.focus,
+  outlineColor: carpoIdentityTokens.focus,
   outlineOffset: "2px",
 } as const;
 
@@ -651,25 +723,32 @@ const styles = stylex.create({
   workspace: {
     gridColumn: "1 / -1",
     width: "100%",
-    height: "calc(100vh - 146px)",
     minHeight: "620px",
     display: "grid",
-    gridTemplateColumns: "minmax(286px, 310px) minmax(440px, 1fr) minmax(238px, 276px)",
+    gridTemplateColumns:
+      "minmax(286px, 310px) minmax(440px, 1fr) minmax(238px, 276px)",
     gridTemplateAreas: '"builder stage reel"',
     margin: 0,
     borderWidth: 0,
-    backgroundColor: creatorWorkspaceTokens.bench,
-    color: creatorWorkspaceTokens.ink,
-    fontFamily: creatorWorkspaceTokens.fontUi,
+    backgroundColor: carpoIdentityTokens.carbon,
+    color: carpoIdentityTokens.ink,
+    fontFamily: carpoIdentityTokens.fontUi,
     "@media (max-width: 1080px)": {
       gridTemplateColumns: "260px minmax(360px, 1fr) 260px",
     },
     "@media (max-width: 900px)": {
-      height: "auto",
       minHeight: 0,
       gridTemplateColumns: "minmax(0, 1fr)",
       gridTemplateAreas: '"stage" "builder" "reel"',
     },
+  },
+  workspaceWithSource: {
+    height: "calc(100vh - 152px)",
+    "@media (max-width: 900px)": { height: "auto" },
+  },
+  workspaceWithoutSource: {
+    height: "calc(100vh - 70px)",
+    "@media (max-width: 900px)": { height: "auto" },
   },
   builder: {
     gridArea: "builder",
@@ -683,31 +762,44 @@ const styles = stylex.create({
     paddingInline: "18px",
     borderRightWidth: "1px",
     borderRightStyle: "solid",
-    borderRightColor: creatorWorkspaceTokens.line,
-    backgroundColor: "#25261f",
-    scrollbarColor: "#55564c transparent",
+    borderRightColor: carpoIdentityTokens.lineMuted,
+    backgroundColor: carpoIdentityTokens.builderSurface,
+    scrollbarColor: "#5c6982 transparent",
     "@media (max-width: 900px)": {
       overflowY: "visible",
       borderRightWidth: 0,
       borderBottomWidth: "1px",
       borderBottomStyle: "solid",
-      borderBottomColor: creatorWorkspaceTokens.line,
+      borderBottomColor: carpoIdentityTokens.lineMuted,
     },
     "@media (max-width: 560px)": { paddingInline: "14px" },
   },
   builderTitle: {
+    position: "relative",
     margin: 0,
-    fontSize: "24px",
+    fontFamily: carpoIdentityTokens.fontDisplay,
+    fontSize: "27px",
     fontWeight: 700,
-    lineHeight: 1.2,
-    letterSpacing: "0.008em",
+    lineHeight: 1.05,
+    letterSpacing: "0.035em",
+    textTransform: "uppercase",
+    "::after": {
+      content: '""',
+      width: "36px",
+      height: "4px",
+      display: "block",
+      marginTop: "7px",
+      backgroundColor: carpoIdentityTokens.vermilion,
+      transform: "skewX(-24deg)",
+      transformOrigin: "left",
+    },
   },
   sourceTabs: {
     display: "grid",
     gridTemplateColumns: "1fr 1fr",
     borderBottomWidth: "1px",
     borderBottomStyle: "solid",
-    borderBottomColor: creatorWorkspaceTokens.sourceLine,
+    borderBottomColor: carpoIdentityTokens.line,
   },
   sourceTab: {
     minHeight: "44px",
@@ -717,21 +809,27 @@ const styles = stylex.create({
     borderBottomStyle: "solid",
     borderBottomColor: "transparent",
     backgroundColor: "transparent",
-    color: creatorWorkspaceTokens.inkFaint,
+    color: carpoIdentityTokens.inkFaint,
     cursor: "pointer",
+    fontFamily: carpoIdentityTokens.fontDisplay,
+    fontSize: "15px",
     fontWeight: 600,
-    ":hover": { color: creatorWorkspaceTokens.ink },
+    letterSpacing: "0.025em",
+    textTransform: "uppercase",
+    ":hover": { color: carpoIdentityTokens.ink },
     ":focus-visible": controlFocus,
   },
   sourceTabActive: {
-    borderBottomColor: creatorWorkspaceTokens.amber,
-    color: creatorWorkspaceTokens.ink,
+    borderBottomColor: carpoIdentityTokens.vermilion,
+    color: carpoIdentityTokens.ink,
   },
   field: { display: "grid", gap: "7px" },
   fieldLabel: {
-    color: creatorWorkspaceTokens.inkDim,
-    fontSize: "14px",
+    color: carpoIdentityTokens.inkDim,
+    fontFamily: carpoIdentityTokens.fontDisplay,
+    fontSize: "16px",
     fontWeight: 600,
+    letterSpacing: "0.025em",
     lineHeight: 1.4,
   },
   input: {
@@ -742,12 +840,13 @@ const styles = stylex.create({
     paddingInline: "11px",
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: "#56574e",
-    borderRadius: 0,
-    backgroundColor: "#181914",
-    color: creatorWorkspaceTokens.ink,
-    caretColor: creatorWorkspaceTokens.amber,
-    "::placeholder": { color: creatorWorkspaceTokens.inkFaint },
+    borderColor: carpoIdentityTokens.lineControl,
+    borderRadius: "2px",
+    backgroundColor: carpoIdentityTokens.carbonRaised,
+    color: carpoIdentityTokens.ink,
+    caretColor: carpoIdentityTokens.vermilion,
+    "::placeholder": { color: carpoIdentityTokens.inkFaint },
+    ":hover": { borderColor: "#777d8b" },
     ":focus-visible": controlFocus,
   },
   fileInput: {
@@ -757,35 +856,52 @@ const styles = stylex.create({
     padding: "8px",
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: "#56574e",
-    backgroundColor: "#181914",
-    color: creatorWorkspaceTokens.inkDim,
+    borderColor: carpoIdentityTokens.lineControl,
+    borderRadius: "2px",
+    backgroundColor: carpoIdentityTokens.carbonRaised,
+    color: carpoIdentityTokens.inkDim,
     fontSize: "13px",
+    ":hover": { borderColor: "#777d8b" },
     ":focus-visible": controlFocus,
   },
-  fieldError: { color: creatorWorkspaceTokens.red, fontSize: "12px", lineHeight: 1.4 },
-  fieldOk: { color: creatorWorkspaceTokens.green, fontSize: "12px", lineHeight: 1.4 },
-  fieldHint: { color: creatorWorkspaceTokens.inkFaint, fontSize: "12px", lineHeight: 1.4 },
+  fieldError: {
+    color: carpoIdentityTokens.red,
+    fontSize: "12px",
+    lineHeight: 1.4,
+  },
+  fieldOk: {
+    color: carpoIdentityTokens.green,
+    fontSize: "12px",
+    lineHeight: 1.4,
+  },
+  fieldHint: {
+    color: carpoIdentityTokens.inkFaint,
+    fontSize: "12px",
+    lineHeight: 1.4,
+  },
   qualityOptions: { display: "flex", gap: "8px" },
   qualityButton: {
     minWidth: "82px",
-    minHeight: "42px",
+    minHeight: "44px",
     paddingInline: "14px",
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: "#585950",
-    borderRadius: "8px",
-    backgroundColor: "transparent",
-    color: creatorWorkspaceTokens.inkDim,
+    borderColor: carpoIdentityTokens.lineInteractive,
+    borderRadius: "2px",
+    backgroundColor: carpoIdentityTokens.controlSurface,
+    color: carpoIdentityTokens.inkDim,
     cursor: "pointer",
     fontWeight: 700,
-    ":hover": { backgroundColor: creatorWorkspaceTokens.benchHigh },
+    ":hover": {
+      borderColor: "#7d8494",
+      backgroundColor: carpoIdentityTokens.controlHover,
+    },
     ":focus-visible": controlFocus,
   },
   qualityButtonActive: {
-    borderColor: creatorWorkspaceTokens.paper,
-    backgroundColor: creatorWorkspaceTokens.paper,
-    color: creatorWorkspaceTokens.paperInk,
+    borderColor: carpoIdentityTokens.vermilion,
+    backgroundColor: carpoIdentityTokens.vermilion,
+    color: carpoIdentityTokens.paperInk,
   },
   createButton: {
     width: "100%",
@@ -794,49 +910,67 @@ const styles = stylex.create({
     paddingInline: "18px",
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: creatorWorkspaceTokens.amber,
-    borderRadius: "8px",
-    backgroundColor: creatorWorkspaceTokens.amber,
-    color: "#1f1c13",
+    borderColor: "#ff6c5c",
+    borderRadius: "2px",
+    backgroundColor: carpoIdentityTokens.vermilion,
+    boxShadow: "4px 4px 0 #791f16",
+    color: carpoIdentityTokens.paperInk,
     cursor: "pointer",
-    fontSize: "17px",
+    fontFamily: carpoIdentityTokens.fontDisplay,
+    fontSize: "19px",
     fontWeight: 700,
-    ":hover:not(:disabled)": { backgroundColor: creatorWorkspaceTokens.amberHover },
+    letterSpacing: "0.035em",
+    textTransform: "uppercase",
+    transitionDuration: "150ms",
+    transitionProperty: "background-color, border-color, transform, box-shadow",
+    transitionTimingFunction: "ease-out",
+    ":hover:not(:disabled)": {
+      backgroundColor: carpoIdentityTokens.vermilionHover,
+      transform: "translate(-1px, -1px)",
+      boxShadow: "5px 5px 0 #791f16",
+    },
     ":disabled": {
-      borderColor: "#585950",
-      backgroundColor: creatorWorkspaceTokens.benchHigh,
-      color: creatorWorkspaceTokens.inkFaint,
+      borderColor: carpoIdentityTokens.lineInteractive,
+      backgroundColor: carpoIdentityTokens.navyRaised,
+      boxShadow: "none",
+      color: carpoIdentityTokens.inkFaint,
       cursor: "not-allowed",
       opacity: 0.58,
     },
     ":focus-visible": controlFocus,
+    "@media (prefers-reduced-motion: reduce)": {
+      transitionDuration: "0ms",
+    },
   },
   secondaryButton: {
-    minHeight: "42px",
+    minHeight: "44px",
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
     paddingInline: "13px",
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: "#585950",
-    borderRadius: "8px",
-    backgroundColor: "#2a2b25",
-    color: creatorWorkspaceTokens.ink,
+    borderColor: carpoIdentityTokens.lineInteractive,
+    borderRadius: "2px",
+    backgroundColor: carpoIdentityTokens.controlSurface,
+    color: carpoIdentityTokens.ink,
     cursor: "pointer",
     fontWeight: 600,
-    ":hover": { backgroundColor: "#34352e" },
+    ":hover": {
+      borderColor: "#7d8494",
+      backgroundColor: carpoIdentityTokens.controlHover,
+    },
     ":focus-visible": controlFocus,
   },
   dangerButton: {
-    minHeight: "42px",
+    minHeight: "44px",
     paddingInline: "13px",
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: "#ad534b",
-    borderRadius: "8px",
-    backgroundColor: "#6a302b",
-    color: "#fff4f0",
+    borderColor: "#ff7a6a",
+    borderRadius: "2px",
+    backgroundColor: carpoIdentityTokens.vermilionSoft,
+    color: carpoIdentityTokens.ink,
     cursor: "pointer",
     fontWeight: 700,
     ":focus-visible": controlFocus,
@@ -845,9 +979,9 @@ const styles = stylex.create({
     padding: "10px 11px",
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: "#7e3e39",
-    backgroundColor: creatorWorkspaceTokens.redDeep,
-    color: "#ffe2df",
+    borderColor: "#7d3235",
+    backgroundColor: carpoIdentityTokens.redDeep,
+    color: "#ffb0a8",
     fontSize: "13px",
     lineHeight: 1.45,
   },
@@ -859,8 +993,8 @@ const styles = stylex.create({
     overflowY: "auto",
     paddingBlock: "22px 36px",
     paddingInline: "22px",
-    backgroundColor: "#151612",
-    scrollbarColor: "#55564c transparent",
+    backgroundColor: carpoIdentityTokens.carbonRaised,
+    scrollbarColor: "#5c6982 transparent",
     "@media (max-width: 900px)": { overflowY: "visible" },
     "@media (max-width: 560px)": { paddingInline: "14px" },
   },
@@ -873,20 +1007,33 @@ const styles = stylex.create({
     "@media (max-width: 560px)": { alignItems: "flex-start" },
   },
   stageTitle: {
+    position: "relative",
     margin: 0,
-    fontSize: "clamp(24px, 2.2vw, 32px)",
+    fontFamily: carpoIdentityTokens.fontDisplay,
+    fontSize: "clamp(27px, 2.4vw, 36px)",
     fontWeight: 700,
-    lineHeight: 1.18,
-    letterSpacing: "0.006em",
+    lineHeight: 1.05,
+    letterSpacing: "0.035em",
+    textTransform: "uppercase",
+    "::after": {
+      content: '""',
+      width: "36px",
+      height: "4px",
+      display: "block",
+      marginTop: "7px",
+      backgroundColor: carpoIdentityTokens.vermilion,
+      transform: "skewX(-24deg)",
+      transformOrigin: "left",
+    },
   },
   stageInstructions: {
-    marginBlock: "5px 0",
-    color: creatorWorkspaceTokens.inkDim,
+    marginBlock: "7px 0",
+    color: carpoIdentityTokens.inkDim,
     lineHeight: 1.45,
   },
   stageTime: {
-    color: creatorWorkspaceTokens.amber,
-    fontFamily: creatorWorkspaceTokens.fontTime,
+    color: carpoIdentityTokens.time,
+    fontFamily: carpoIdentityTokens.fontTime,
     fontSize: "13px",
     whiteSpace: "nowrap",
     "@media (max-width: 560px)": { display: "none" },
@@ -896,18 +1043,23 @@ const styles = stylex.create({
     padding: "12px 14px",
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: "#5f6056",
-    backgroundColor: creatorWorkspaceTokens.benchRaised,
-    color: creatorWorkspaceTokens.inkDim,
+    borderColor: carpoIdentityTokens.lineStrong,
+    backgroundColor: carpoIdentityTokens.navy,
+    color: carpoIdentityTokens.inkDim,
     fontSize: "13px",
     lineHeight: 1.5,
   },
   sourceStatusFailed: {
-    borderColor: "#7e3e39",
-    backgroundColor: creatorWorkspaceTokens.redDeep,
-    color: "#ffe2df",
+    borderColor: "#7d3235",
+    backgroundColor: carpoIdentityTokens.redDeep,
+    color: "#ffb0a8",
   },
-  recoveryActions: { display: "flex", flexWrap: "wrap", gap: "8px", marginTop: "10px" },
+  recoveryActions: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "8px",
+    marginTop: "10px",
+  },
   playerSection: { width: "100%" },
   playerFrame: {
     width: "min(100%, calc(56vh * 16 / 9))",
@@ -915,8 +1067,13 @@ const styles = stylex.create({
     position: "relative",
     marginInline: "auto",
     overflow: "hidden",
-    backgroundColor: "#080907",
-    boxShadow: creatorWorkspaceTokens.shadow,
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: "#454a57",
+    backgroundColor: carpoIdentityTokens.mediaSurface,
+    boxShadow: "9px 9px 0 #08090c",
+    clipPath:
+      "polygon(0 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%)",
   },
   timelineSurface: {
     marginTop: "14px",
@@ -924,17 +1081,17 @@ const styles = stylex.create({
     paddingInline: "18px",
     borderTopWidth: "1px",
     borderTopStyle: "solid",
-    borderTopColor: creatorWorkspaceTokens.line,
+    borderTopColor: carpoIdentityTokens.lineMuted,
     borderBottomWidth: "1px",
     borderBottomStyle: "solid",
-    borderBottomColor: creatorWorkspaceTokens.line,
-    backgroundColor: "#11120f",
+    borderBottomColor: carpoIdentityTokens.lineMuted,
+    backgroundColor: carpoIdentityTokens.timelineSurface,
   },
   transcriptSurface: {
     marginTop: "16px",
     borderTopWidth: "1px",
     borderTopStyle: "solid",
-    borderTopColor: creatorWorkspaceTokens.line,
+    borderTopColor: carpoIdentityTokens.lineMuted,
   },
   emptyStage: {
     minHeight: "min(52vh, 520px)",
@@ -944,9 +1101,11 @@ const styles = stylex.create({
     gap: "12px",
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: creatorWorkspaceTokens.line,
-    backgroundColor: "#11120f",
-    color: creatorWorkspaceTokens.inkFaint,
+    borderColor: "#454a57",
+    backgroundColor: carpoIdentityTokens.carbon,
+    color: carpoIdentityTokens.inkFaint,
+    clipPath:
+      "polygon(0 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%)",
   },
   emptyStageIcon: {
     width: "44px",

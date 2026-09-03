@@ -124,7 +124,10 @@ export async function handleRequest(
   }
 
   if (request.method === "GET" && url.pathname === "/api/me") {
-    return json({ email: user!.id === LEGACY_USER_ID ? null : user!.email });
+    return Response.json(
+      { id: user!.id, email: user!.id === LEGACY_USER_ID ? null : user!.email },
+      { headers: { "Cache-Control": "private, no-store" } },
+    );
   }
 
   if (request.method === "POST" && url.pathname === "/api/clips") {

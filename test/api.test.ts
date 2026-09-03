@@ -3063,6 +3063,8 @@ describe("source video library", () => {
     expect(checking?.transcript_status).toBe("checking");
 
     const ready = await waitForTranscript(videoId);
+    // The cached R2 response can become readable before background metadata settles.
+    await waitForTranscriptStatus(videoId, "available");
     const prepared = await getSourceVideoById(env.DB, videoId);
     expect(prepared).toMatchObject({ transcript_status: "available" });
     expect(ready.status).toBe(200);

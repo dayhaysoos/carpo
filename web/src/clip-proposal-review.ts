@@ -24,6 +24,7 @@ export interface ClipProposalProvenance {
   adapter: ClipProposalAdapter;
   label: string;
   rationale?: string;
+  basis?: "transcript" | "timestamps";
   sourceBlockIds?: string[];
   workspaceRevision?: string;
   contractVersion?: string;
@@ -34,6 +35,7 @@ export interface ClipProposalProvenance {
 
 export interface ClipProposalEvidence {
   rationale?: string;
+  basis?: "transcript" | "timestamps";
   sourceBlockIds?: string[];
   workspaceRevision?: string;
   contractVersion?: string;

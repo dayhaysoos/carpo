@@ -235,7 +235,7 @@ export async function startBrowserReview(
       );
       await cdp.send(
         "Page.navigate",
-        { url: new URL("/", data.candidate.reviewOrigin).href },
+        { url: new URL("/create", data.candidate.reviewOrigin).href },
         { sessionId: attachedSessionId },
       );
       await waitForReady(cdp, attachedSessionId);

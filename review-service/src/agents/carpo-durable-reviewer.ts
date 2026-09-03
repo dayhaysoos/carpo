@@ -263,7 +263,7 @@ export function CarpoDurableReviewer({ id }: AgentProps) {
             `capture:${state.screenshots.length + 1}`,
             () => captureEvidence(bindings, state, data, note),
           );
-          if (pending && evidence.path !== "/") {
+          if (pending && !["/", "/create"].includes(evidence.path)) {
             throw new Error("Proof challenge evidence must be captured on Create");
           }
           setState((current) => ({

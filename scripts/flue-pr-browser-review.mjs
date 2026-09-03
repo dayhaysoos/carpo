@@ -307,10 +307,10 @@ export class BoundedPlaywrightReviewAdapter {
   }) {
     const currentUrl = new URL(this.page.url());
     if (
-      currentUrl.pathname !== "/" ||
+      currentUrl.pathname !== "/create" ||
       currentUrl.searchParams.get("video") !== fixtureVideoId
     ) {
-      await this.navigate(`/?video=${encodeURIComponent(fixtureVideoId)}`);
+      await this.navigate(`/create?video=${encodeURIComponent(fixtureVideoId)}`);
     }
     this.recordCurrentPath();
     const discovery = await this.page.evaluate(
@@ -775,7 +775,7 @@ async function runAgenticBrowserReview(args) {
       reviewOrigin: REVIEW_ORIGIN,
       expectedVersionTag,
     });
-    await page.goto(`${REVIEW_ORIGIN}/`, {
+    await page.goto(`${REVIEW_ORIGIN}/create`, {
       waitUntil: "domcontentloaded",
       timeout: 30_000,
     });

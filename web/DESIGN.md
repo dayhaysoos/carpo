@@ -1,146 +1,263 @@
-# Creator Workspace Visual System
+---
+name: Carpo
+description: A source-organized, high-throughput clip production workspace.
+colors:
+  carbon: "#08090c"
+  carbon-raised: "#0e0f10"
+  ink-navy: "#131517"
+  navy-raised: "#1d212c"
+  media-black: "#050608"
+  workbench-rose: "#19181c"
+  rule: "#434755"
+  rule-strong: "#5b6170"
+  ink: "#efefef"
+  ink-dim: "#c8b5b3"
+  metadata-rose: "#af8d89"
+  vermilion: "#ff412c"
+  vermilion-hover: "#ff6858"
+  vermilion-deep: "#791f16"
+  cobalt: "#248fd2"
+  time-blue: "#7ec9ff"
+  focus-blue: "#62b8ef"
+  complete-green: "#82dc9a"
+  warning-yellow: "#ffd166"
+  destructive-red: "#ff887a"
+typography:
+  display:
+    fontFamily: "Saira Condensed, Arial Narrow, sans-serif"
+    fontSize: "clamp(1.625rem, 3vw, 2.625rem)"
+    fontWeight: 700
+    lineHeight: 0.96
+    letterSpacing: "0.035em"
+  body:
+    fontFamily: "Atkinson Hyperlegible Next, Segoe UI, system-ui, sans-serif"
+    fontSize: "1rem"
+    fontWeight: 400
+    lineHeight: 1.55
+    letterSpacing: "0.006em"
+  label:
+    fontFamily: "Saira Condensed, Arial Narrow, sans-serif"
+    fontSize: "1.0625rem"
+    fontWeight: 600
+    lineHeight: 1.2
+    letterSpacing: "0.035em"
+  mono:
+    fontFamily: "Atkinson Hyperlegible Mono, SFMono-Regular, Consolas, monospace"
+    fontSize: "0.75rem"
+    fontWeight: 400
+    lineHeight: 1.35
+    letterSpacing: "0.04em"
+rounded:
+  structural: "0"
+  control: "2px"
+spacing:
+  compact: "8px"
+  control: "12px"
+  section: "20px"
+  shell: "26px"
+components:
+  button-primary:
+    backgroundColor: "{colors.vermilion}"
+    textColor: "{colors.carbon}"
+    typography: "{typography.label}"
+    rounded: "{rounded.control}"
+    padding: "10px 16px"
+    height: "44px"
+  button-secondary:
+    backgroundColor: "{colors.carbon-raised}"
+    textColor: "{colors.ink}"
+    typography: "{typography.label}"
+    rounded: "{rounded.control}"
+    padding: "10px 16px"
+    height: "44px"
+  field:
+    backgroundColor: "{colors.media-black}"
+    textColor: "{colors.ink}"
+    typography: "{typography.body}"
+    rounded: "{rounded.control}"
+    padding: "11px 12px"
+    height: "44px"
+---
 
-This document records the accepted Issue #30 creator workspace (`issue-30-clip-production-line`). It is a preservation guide for the current product and visual decisions, not a proposal for a different editor.
+# Design System: Carpo
 
-## Product and visual thesis
+## Overview
 
-Carpo is a clip production line for making many clips from one source. It is not a traditional long-form editor, a multitrack timeline, or a dashboard of unrelated cards.
+**Creative North Star: "The Production Signal"**
 
-The workspace tells one continuous story: choose one private source, mark a moment, create a clip, and repeat while completed and in-progress clips accumulate beside the same source. The manual workflow is primary. Ask Carpo is an optional overlay on that workflow, not a replacement for it.
+Carpo should feel like a focused production instrument: dark, compact, legible, and unmistakably in motion. Its visual identity borrows the urgency and clarity of a live production package without imitating a traditional video editor. The source stays visually dominant, the next action is easy to find, and completed output accumulates around that source without turning the interface into a dashboard of unrelated cards.
 
-The visual world is a near-black and olive production bench:
+The system combines condensed industrial display type, highly readable operational text, flat layered surfaces, firm rules, and a small set of meaningful signals. Vermilion carries the brand and decisive actions. Blue indicates time, selection, and focus. Green, yellow, and soft red communicate state. Decorative explanation, oversized pills, soft generic cards, and ambient gradients are outside this world.
 
-- Flat work surfaces and fine rules establish structure; cards are not the default container.
-- Restrained amber marks production actions and the current selection.
-- Blue is reserved for time references such as transcript timestamps.
-- Compact film-strip details and clip rows make the source-to-output relationship visible.
-- Off-white type, accessible typefaces, and explicit focus rings carry most of the hierarchy.
-- Corners are mostly square on work surfaces and inputs. Small 6–8px radii are reserved for controls and overlays; oversized pills are absent from the main workflow.
-- Shadows belong to media and temporary overlays, not every section.
+Manual clip creation is the complete product path. Ask Carpo, WebMCP, and other intelligent adapters may accelerate that path, but must remain visually and behaviorally secondary to the shared controls and recoverable state.
 
-## Layout hierarchy
+**Key Characteristics:**
 
-The application header sits above the workspace. The active-source ribbon spans the full width immediately below it, followed by a three-zone desktop workspace:
+- Dense but readable production layouts organized around one source.
+- Condensed, forceful headings paired with accessible operational text.
+- Flat near-black surfaces divided by precise slate rules.
+- Vermilion brand and action signals used with restraint.
+- Media-first cards with clean frames and diamond play geometry.
+- Compact, explicit state rather than explanatory prose or decorative pills.
 
-1. **Builder — “New clip.”** A narrow left column holds the clip title, optional overlay text, quality, errors/recovery, and the full-width Create clip action.
-2. **Stage — “Mark a moment.”** The flexible center column is dominant. It contains the 16:9 source viewer, trim controls, and transcript. Selecting a reel item opens its preview over this stage.
-3. **Reel — “Clips.”** A narrow right column contains dense, newest-first clip rows with thumbnail, title, duration, and processing state.
+## Colors
 
-At full desktop width the columns are approximately `286–310px / flexible / 238–276px`. Below 1080px they tighten to `260px / flexible / 260px`. The desktop workspace fills the remaining viewport below the 70px header and 76px source ribbon, with each zone able to scroll independently.
+The palette is a carbon production floor punctuated by vermilion action, cool blue utility, and restrained state colors. The frontmatter tokens are the normative values.
 
-The source ribbon is a persistent identity strip, not another card. Its edge perforations, thumbnail, truncated title, source type, duration, and “private workspace” metadata identify the material on the bench. “Choose another video” is a clear outlined escape action.
+### Primary
 
-Upload-only visual search and the collapsed “Other clip jobs” section sit below the production line. They are secondary utilities and do not compete in the first viewport. Ask Carpo is fixed to the lower-right and opens over the workspace.
+- **Signal Vermilion:** The Carpo mark, primary actions, active navigation underline, and restrained section accents. It is rare enough to remain decisive and never covers source footage.
+- **Hot Vermilion:** Hover and active emphasis for primary actions.
+- **Deep Vermilion:** Selected or low-emphasis vermilion surfaces; never body copy.
 
-## Palette
+### Secondary
 
-The creator workspace uses the tokens in `creatorWorkspaceTokens.stylex.ts`:
+- **Functional Cobalt:** Search, selected controls, and functional highlights that should not compete with the primary action.
+- **Time Blue:** Transcript timestamps, trim values, and other literal time references.
+- **Focus Blue:** Keyboard focus rings and accessibility state.
 
-| Role | Value | Use |
-| --- | --- | --- |
-| Ink | `#f7f5ee` | Primary text and icons |
-| Dim / faint ink | `#cfccc2` / `#a7a59b` | Instructions, labels, metadata |
-| Bench | `#171814` | Root work surface |
-| Raised / high bench | `#20211c` / `#292a24` | Panels, hover and selected rows |
-| Source surface | `#323329` | Active-source ribbon |
-| Deep media surfaces | `#11120f` / `#080907` | Timeline, transcript, and viewer wells |
-| Line / source line | `#3b3c34` / `#575748` | Zone boundaries and stronger source edges |
-| Amber / hover | `#f1b84b` / `#ffd071` | Create, trim selection, active tab, selection readouts |
-| Blue | `#7ba5ff` | Transcript and time references |
-| Green | `#9fce93` | Ready and complete states |
-| Red / red surface | `#ff8478` / `#4e2724` | Failure text and failure panels |
-| Paper / paper ink | `#e7e1d1` / `#1f211c` | Selected quality control |
-| Focus | `#a9c4ff` | Keyboard focus outlines |
+### Neutral
 
-Amber is scarce by design. The large Create clip button is its strongest use; time selection and small navigation marks are subordinate. Status colors always accompany words or other state information.
+- **Carbon:** The page canvas and global shell.
+- **Raised Carbon and Ink Navy:** Structural surfaces, controls, and section separation.
+- **Media Black:** Video, poster, and image wells.
+- **Workbench Rose:** Creator-only operational surfaces; do not spread it across every page.
+- **Rule and Strong Rule:** Borders, section dividers, and input outlines.
+- **Ink:** Primary text.
+- **Dim Ink and Metadata Rose:** Supporting copy and metadata.
+
+### State
+
+- **Complete Green:** Successfully completed or ready media.
+- **Warning Yellow:** Pending, blocked, or attention-needed states.
+- **Destructive Red:** Destructive actions and failure states; never the default accent.
+
+**The Vermilion Is Action Rule.** Vermilion identifies Carpo and the decisive next action. Do not use it as ambient decoration or on multiple equal-priority actions.
+
+**The Blue Has a Job Rule.** Blue means time, focus, search, or selection. It does not replace vermilion as the primary product signal.
 
 ## Typography
 
-The workspace UI declares the self-hosted `Atkinson Hyperlegible Next`, then Segoe UI and system sans-serif fallbacks. Time values declare the self-hosted `Atkinson Hyperlegible Mono`, then SFMono, Consolas, and system monospace fallbacks.
+**Display Font:** Saira Condensed, with Arial Narrow and sans-serif fallbacks.
 
-- Body copy begins at 16px with generous line height.
-- The stage title scales from 24px to 32px; builder and reel headings are 24px and 20px.
-- Labels are generally 14px and semibold; metadata, status, and time values are 11–13px.
-- Titles use sentence case and compact weight contrast, not display typography.
-- Durations and timestamps use the mono stack and tabular-looking alignment.
+**Body Font:** Atkinson Hyperlegible Next, with Segoe UI, system UI, and sans-serif fallbacks.
 
-## Components and states
+**Metadata Font:** Atkinson Hyperlegible Mono, with system monospace fallbacks.
 
-### Builder
+**Character:** Saira Condensed gives the interface its urgent production voice. Atkinson Hyperlegible keeps forms, instructions, transcript text, and recovery states easy to read. Mono type separates timestamps and machine-like metadata without making the whole product feel technical.
 
-- Source tabs appear only before a source is active. The active tab uses text plus a 2px amber underline.
-- Inputs are square, dark wells with persistent labels and muted placeholders. Validation sits directly below the relevant field in green or red.
-- Quality choices are compact outlined buttons. The selected choice switches to the light paper surface with dark ink.
-- Create clip is the only full-width amber control, 56px high. Its disabled state becomes dim olive with muted text and a not-allowed cursor.
-- Import and creation failures use bordered red surfaces. Retry import, upload-file recovery, and secondary actions remain explicit and adjacent to the failure.
+### Hierarchy
 
-### Stage, timeline, and transcript
+- **Display** (700, fluid 1.625–2.625rem, 0.96 line-height): Page titles, source titles, and major section headings. Uppercase is appropriate when the label is short.
+- **Headline** (700, 1.5–2rem, about 1 line-height): Section identity and prominent media titles.
+- **Title** (600–700, 1.125–1.375rem): Clip titles, source-card titles, and compact panel headings.
+- **Body** (400, 1rem, 1.55 line-height): Explanatory copy, field content, transcript, and recovery guidance. Keep readable lines below roughly 72 characters.
+- **Label** (600, 1.0625rem, 0.035em tracking): Buttons, navigation, field labels, and compact controls.
+- **Metadata** (400, 0.75rem, 0.04em tracking): Time, format, status detail, counts, and provenance.
 
-- The centered 16:9 viewer sits in a black well with the workspace shadow. It remains the largest single object.
-- The trim surface is separated by top and bottom rules. Amber fill and handles show the active window; existing clips use a separate violet rail and overlaps use warning amber.
-- The selected duration is a small amber mono readout at the heading edge, not a badge.
-- Transcript timestamps are blue and monospaced. Hover, active, and selected transcript rows use the raised olive surface.
-- Loading, importing, unavailable, and failed source states occupy the stage in direct status panels rather than detached notifications.
+**The Two-Voice Rule.** Use condensed type for identity and action; use hyperlegible type for anything a person must read, enter, or recover from.
 
-### Clip reel and preview
+**The Compression Is Not Crowding Rule.** Dense layouts may reduce space, but never collapse line-height, contrast, or target size below comfortable reading and interaction.
 
-- Reel rows are film-strip dense: a `42×24px` thumbnail, one-line ellipsized title, mono duration, and right-aligned state.
-- Rows are divided by 1px rules. Hover and `aria-pressed` selection use the high bench surface without growing the row.
-- Ready, working, and failed states use green, warm amber, and red respectively, always with a dot and a text label.
-- A selected clip previews in a raised overlay inside the stage. Complete clips play; working clips show labeled progress; failures show the failure message. Time range, duration, close, and Download remain visible around the media.
+## Layout
+
+The global shell is a persistent dark header with the Carpo mark, centered primary navigation, and a compact identity/action area. Content aligns to strong left edges and horizontal rules. Source identity precedes outputs on every authenticated surface.
+
+Spacing follows a compact rhythm: 8px for close relationships, 12px inside controls, 20px between sections, and approximately 26px for shell gutters. Interactive targets remain at least 44px tall even when the surrounding layout is dense.
+
+Surface composition is deliberately specific:
+
+- **Creator** is a three-zone production bench: builder, dominant source stage, and compact clip reel. It is the densest surface.
+- **Library** is a more breathable source contact sheet with transcript search and source-level grouping.
+- **Video detail** begins with a source mast and follows with a clip-management sheet.
+- **Clip viewer** is a cinematic overlay with dominant media and sequence controls.
+
+At narrower widths, columns stack or become compact media-left rows. Essential controls wrap into visible grids rather than disappearing into horizontal scrolling. The source remains identifiable, all actions retain touch-sized targets, and supporting metadata yields before the primary task does.
+
+**The Source-Before-Output Rule.** Always establish which video is active before presenting its clips, proposals, or controls. Do not repeat the source in multiple competing panels.
+
+## Elevation & Depth
+
+Carpo is flat by default. Depth comes from tonal layering, borders, media wells, and overlap—not generic card shadows. The only substantial ambient shadow belongs to temporary overlays such as the clip viewer. Media may use a hard offset shadow when it strengthens the production-poster composition.
+
+### Shadow Vocabulary
+
+- **Viewer Lift** (`0 20px 46px rgba(0, 0, 0, 0.48)`): Temporary media overlays and no other resting surface.
+- **Media Offset** (`8px 8px 0 rgba(0, 0, 0, 0.6)`): Select feature media where a hard editorial offset is part of the composition.
+
+**The Flat-by-Default Rule.** Resting surfaces are separated by tone and line. Do not add soft shadows to every card or control.
+
+## Shapes
+
+The core form language is square and precise. Structural panels, cards, media wells, and fields use square corners. Small 2px rounding is reserved for tactile controls and never grows into a pill. Thin slate borders structure the workspace; heavy outlines are used only for focus or decisive selection.
+
+The diamond play mark is the signature media geometry. It indicates playback or media activation without modifying the source image beneath it. Thumbnail borders and small clipped corners may frame media, but decorative color bars, tints, and stripes never cross user footage.
+
+**The Unobstructed Media Rule.** Source frames and clip thumbnails remain visually unobstructed. Playback controls may overlay media only when they clearly communicate an available action.
+
+## Components
+
+### Buttons
+
+- **Shape:** Tight rectangular controls with 2px corners and a minimum 44px target.
+- **Primary:** Vermilion surface, carbon text, condensed label type, and direct action language.
+- **Secondary:** Raised carbon surface, ink text, and a visible rule; hover strengthens the border or surface.
+- **Destructive:** Quiet by default and soft red only when the destructive meaning must be explicit.
+- **Focus:** A visible focus-blue ring that is not replaced by hover styling.
+
+### Inputs / Fields
+
+- **Style:** Media-black or raised-carbon fill, one-pixel rule, square-to-2px corners, and hyperlegible text.
+- **Focus:** Focus blue strengthens the outline without shifting layout.
+- **Error / Disabled:** Error uses soft red with readable text. Disabled controls lose contrast but remain legible and keep their geometry.
+
+### Navigation
+
+- **Style:** Compact condensed labels inside the persistent carbon shell.
+- **Active state:** Vermilion underline or mark, not a filled pill.
+- **Mobile:** Preserve the same destinations and visible active state; reduce spacing before removing labels.
+
+### Source Cards and Source Masts
+
+- **Character:** Media first, source title second, operational metadata last.
+- **Geometry:** Square containers, dark media wells, a clean thumbnail, and no decorative overlay across the footage.
+- **Behavior:** The whole useful target is clickable, while overflow or source-management actions remain distinct.
+
+### Clip Rows and Clip Cards
+
+- **Character:** Compact output records with a thumbnail or first frame, title, duration, and status visible at a glance.
+- **Desktop:** Use the density appropriate to the surface: tiny reel rows in Creator and larger management cards on video detail.
+- **Mobile:** Convert to media-left rows with a visible action grid. Never hide core actions behind horizontal scroll.
+
+### Clip Viewer
+
+- **Character:** A media-dominant temporary overlay with a vermilion top rule, explicit close control, and previous/next sequence controls.
+- **Boundary:** This is the exception to the flat surface system, not the default dialog template.
 
 ### Ask Carpo
 
-- The closed trigger is a compact, outlined 44px control fixed at the lower-right. Its dark treatment keeps it secondary to Create clip.
-- The open state is a right-side dialog, up to 390px wide, inset from the header and viewport edges. It overlays rather than rearranges the production line.
-- The drawer uses the same bench surfaces, fine lines, small radii, and compact composer. User messages use amber with dark ink; other messages use raised olive.
-- The assistant copy describes clips by time, phrase, or idea and makes approval-before-creation explicit. Examples belong inside this secondary surface, not in the core builder.
+- **Character:** A compact secondary launcher and overlay attached to the shared manual workflow.
+- **Boundary:** It may propose or accelerate work but must not obscure the source, primary create action, manual correction, or recoverable state.
 
-## Responsive behavior
+**The Manual-First Rule.** The complete manual workflow must remain visible, understandable, and correct without Ask Carpo, WebMCP, or another intelligent adapter.
 
-- At `900px` and below, the workspace becomes one column in the order **stage → builder → reel**. DOM and visual order match. Zone scrolling is released into normal page flow.
-- The source ribbon becomes one column, with “Choose another video” below and right-aligned. Long source metadata remains one line and truncates.
-- At `640px` and below, the header becomes 62px high; the brand tagline and account summary are hidden and navigation gaps tighten.
-- At `560px` and below, stage and builder side padding becomes 14px, the ribbon thumbnail shrinks to 66px, and the desktop selected-duration label is hidden. Start and End inputs remain side by side.
-- On small screens Ask Carpo is inset 12px, and its drawer fills the available width (`100vw - 24px`) below the compact header.
-- The floating assistant may sit over lower-right content while closed; it remains a secondary overlay rather than entering the document flow.
+## Do's and Don'ts
 
-## Accessibility contracts
+### Do:
 
-- Preserve the current named regions: active source, creator workspace, clip builder, moment workspace, clips reel, clip preview, and Ask Carpo dialog.
-- Keep persistent form labels, semantic source tabs, `aria-pressed` quality and clip choices, labeled progress, and `role="status"` / `role="alert"` announcements for asynchronous states.
-- Keep visible blue focus treatment on every interactive control. Current primary targets are generally 42–56px high; close controls are 36–40px square and must retain an obvious label and focus state.
-- Never communicate selection, completion, progress, or failure by color alone. Text labels, underlines, dots, and/or progress geometry carry the same information.
-- Preserve focus restoration and Escape behavior: closing a clip preview returns focus to its reel row; closing Ask Carpo returns focus to its trigger. The closed drawer remains `inert` and `aria-hidden`.
-- Keep source-image alternative text meaningful and clip-row thumbnails decorative when the button label already names the clip and state.
-- Preserve reduced-motion handling for the drawer/trigger transitions and precision-trim entrance animation.
-- Keep the mobile stage → builder → reel order consistent in both layout and keyboard navigation.
+- **Do** organize each surface around the active source and its outputs.
+- **Do** use vermilion for the single decisive action and Carpo identity.
+- **Do** show compact clip thumbnails, time, and state where people scan output.
+- **Do** keep source images and clip thumbnails visually unobstructed.
+- **Do** keep controls rectangular, labels direct, and interactive targets at least 44px.
+- **Do** use state color together with readable text or accessible names.
+- **Do** preserve manual recovery and correction on every intelligent path.
 
-## Content and copy rules
+### Don't:
 
-- Use short, operational nouns and verbs: “New clip,” “Mark a moment,” “Create clip,” “Clips,” “Download,” and “Choose another video.”
-- Keep the core workflow to one-line instructions and compact metadata. Explain only what is required to take the next action.
-- Name the assistant **Carpo** and the entry point **Ask Carpo**.
-- Keep source provenance, duration, and privacy together in the ribbon. Keep clip duration and status in the reel.
-- Put recovery language beside the failure and name the action directly: retry the import, retry the upload, or upload the file.
-- Truncate long source and clip titles visually while preserving the full value through native title or accessible labeling.
-- Reserve examples and longer guidance for the assistant or a secondary state; do not turn the builder or empty reel into onboarding prose.
-
-## StyleX and compatibility CSS boundary
-
-StyleX owns the creator-workspace-specific system: shared tokens, source ribbon, three-zone form shell, builder and stage surfaces, clip reel and preview, and Ask Carpo trigger/drawer. These components express their responsive and interaction states beside the component.
-
-`index.css` still owns the global application frame and compatibility styling for reused, unmigrated descendants: TrimSlider, TranscriptPanel, VideoAgentChat, VisualMomentSearchPanel, status/background jobs, embedded/native player hooks, and shared legacy buttons/cards. The “Creator workspace” compatibility block restates the production-line palette for those adapters.
-
-Keep that boundary explicit: creator components should consume the StyleX tokens rather than acquire new global selectors, while compatibility selectors should target only the legacy adapters they currently bridge. The StyleX token values and the matching `:root`/compatibility colors must remain visually aligned while both systems coexist.
-
-## Anti-patterns
-
-- A generic card-grid dashboard or a conventional multitrack editor shell.
-- Multiple competing sources, or navigation that removes the user from the active source after each clip.
-- A clip gallery with large cards instead of compact accumulating reel rows.
-- Amber on routine secondary controls, or blue used as a general brand accent instead of a time reference.
-- Oversized pills, excessive rounding, gradients, glow-heavy decoration, or shadows on every section.
-- Explanatory paragraphs, marketing copy, or large empty-state illustrations in the core production line.
-- Making Ask Carpo more prominent than Create clip or allowing it to obscure the manual workflow by default.
-- Duplicating workspace state styles across StyleX and global CSS without respecting the compatibility boundary.
+- **Don't** introduce oversized pills, soft generic cards, ambient gradients, or decorative glass effects.
+- **Don't** explain behavior in prose when state, hierarchy, and button treatment can make it obvious.
+- **Don't** make Ask Carpo the visual center of the product or rename it to Think in user-facing UI.
+- **Don't** reuse the Creator three-column composition as a universal page template.
+- **Don't** place decorative stripes, color bars, or tints across source images or clip thumbnails.
+- **Don't** hide essential mobile actions in a horizontally scrolling strip.

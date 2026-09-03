@@ -1,3 +1,4 @@
+import { useSessionActive } from "../session-activity";
 import { useAgentChat } from "@cloudflare/think/react";
 import { getToolName, isToolUIPart } from "ai";
 import type { UIMessage } from "ai";
@@ -49,6 +50,7 @@ function messageText(parts: Array<{ type: string; text?: string }>): string {
 }
 
 export function VideoAgentChat(props: VideoAgentChatProps) {
+  const sessionActive = useSessionActive();
   const [fallbackProposalReview] = useState(createClipProposalReview);
   const proposalReview = props.proposalReview ?? fallbackProposalReview;
   const [input, setInput] = useState("");
@@ -78,6 +80,8 @@ export function VideoAgentChat(props: VideoAgentChatProps) {
   useEffect(() => {
     if (!props.videoId) proposalReview.activate(null);
   }, [proposalReview, props.videoId]);
+
+  if (!sessionActive) return null;
 
   if (!props.videoId) {
     const canCompose = Boolean(props.pendingYoutubeVideoId);

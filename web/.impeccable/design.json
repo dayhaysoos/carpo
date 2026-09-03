@@ -1,0 +1,319 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-31T19:33:52Z",
+  "title": "Design System: Carpo",
+  "extensions": {
+    "colorMeta": {
+      "carbon": {
+        "role": "neutral",
+        "displayName": "Carbon",
+        "canonical": "#08090c",
+        "tonalRamp": ["oklch(15% 0.008 255)", "oklch(24% 0.008 255)", "oklch(34% 0.008 255)", "oklch(45% 0.008 255)", "oklch(57% 0.008 255)", "oklch(70% 0.008 255)", "oklch(83% 0.008 255)", "oklch(95% 0.008 255)"]
+      },
+      "carbon-raised": {
+        "role": "neutral",
+        "displayName": "Raised Carbon",
+        "canonical": "#0e0f10",
+        "tonalRamp": ["oklch(15% 0.006 255)", "oklch(24% 0.006 255)", "oklch(34% 0.006 255)", "oklch(45% 0.006 255)", "oklch(57% 0.006 255)", "oklch(70% 0.006 255)", "oklch(83% 0.006 255)", "oklch(95% 0.006 255)"]
+      },
+      "ink-navy": {
+        "role": "neutral",
+        "displayName": "Ink Navy",
+        "canonical": "#131517",
+        "tonalRamp": ["oklch(15% 0.012 250)", "oklch(24% 0.012 250)", "oklch(34% 0.012 250)", "oklch(45% 0.012 250)", "oklch(57% 0.012 250)", "oklch(70% 0.012 250)", "oklch(83% 0.012 250)", "oklch(95% 0.012 250)"]
+      },
+      "navy-raised": {
+        "role": "neutral",
+        "displayName": "Raised Navy",
+        "canonical": "#1d212c",
+        "tonalRamp": ["oklch(15% 0.025 260)", "oklch(24% 0.025 260)", "oklch(34% 0.025 260)", "oklch(45% 0.025 260)", "oklch(57% 0.025 260)", "oklch(70% 0.025 260)", "oklch(83% 0.025 260)", "oklch(95% 0.025 260)"]
+      },
+      "media-black": {
+        "role": "neutral",
+        "displayName": "Media Black",
+        "canonical": "#050608",
+        "tonalRamp": ["oklch(15% 0.006 255)", "oklch(24% 0.006 255)", "oklch(34% 0.006 255)", "oklch(45% 0.006 255)", "oklch(57% 0.006 255)", "oklch(70% 0.006 255)", "oklch(83% 0.006 255)", "oklch(95% 0.006 255)"]
+      },
+      "workbench-rose": {
+        "role": "neutral",
+        "displayName": "Workbench Rose",
+        "canonical": "#19181c",
+        "tonalRamp": ["oklch(15% 0.012 335)", "oklch(24% 0.012 335)", "oklch(34% 0.012 335)", "oklch(45% 0.012 335)", "oklch(57% 0.012 335)", "oklch(70% 0.012 335)", "oklch(83% 0.012 335)", "oklch(95% 0.012 335)"]
+      },
+      "rule": {
+        "role": "neutral",
+        "displayName": "Slate Rule",
+        "canonical": "#434755",
+        "tonalRamp": ["oklch(15% 0.025 260)", "oklch(24% 0.025 260)", "oklch(34% 0.025 260)", "oklch(45% 0.025 260)", "oklch(57% 0.025 260)", "oklch(70% 0.025 260)", "oklch(83% 0.025 260)", "oklch(95% 0.025 260)"]
+      },
+      "rule-strong": {
+        "role": "neutral",
+        "displayName": "Strong Slate Rule",
+        "canonical": "#5b6170",
+        "tonalRamp": ["oklch(15% 0.025 260)", "oklch(24% 0.025 260)", "oklch(34% 0.025 260)", "oklch(45% 0.025 260)", "oklch(57% 0.025 260)", "oklch(70% 0.025 260)", "oklch(83% 0.025 260)", "oklch(95% 0.025 260)"]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Warm Ink",
+        "canonical": "#efefef",
+        "tonalRamp": ["oklch(15% 0.004 80)", "oklch(24% 0.004 80)", "oklch(34% 0.004 80)", "oklch(45% 0.004 80)", "oklch(57% 0.004 80)", "oklch(70% 0.004 80)", "oklch(83% 0.004 80)", "oklch(95% 0.004 80)"]
+      },
+      "ink-dim": {
+        "role": "neutral",
+        "displayName": "Dim Ink",
+        "canonical": "#c8b5b3",
+        "tonalRamp": ["oklch(15% 0.025 25)", "oklch(24% 0.025 25)", "oklch(34% 0.025 25)", "oklch(45% 0.025 25)", "oklch(57% 0.025 25)", "oklch(70% 0.025 25)", "oklch(83% 0.025 25)", "oklch(95% 0.025 25)"]
+      },
+      "metadata-rose": {
+        "role": "neutral",
+        "displayName": "Metadata Rose",
+        "canonical": "#af8d89",
+        "tonalRamp": ["oklch(15% 0.04 25)", "oklch(24% 0.04 25)", "oklch(34% 0.04 25)", "oklch(45% 0.04 25)", "oklch(57% 0.04 25)", "oklch(70% 0.04 25)", "oklch(83% 0.04 25)", "oklch(95% 0.04 25)"]
+      },
+      "vermilion": {
+        "role": "primary",
+        "displayName": "Signal Vermilion",
+        "canonical": "#ff412c",
+        "tonalRamp": ["oklch(15% 0.18 30)", "oklch(24% 0.19 30)", "oklch(34% 0.2 30)", "oklch(45% 0.21 30)", "oklch(57% 0.22 30)", "oklch(70% 0.19 30)", "oklch(83% 0.12 30)", "oklch(95% 0.04 30)"]
+      },
+      "vermilion-hover": {
+        "role": "primary",
+        "displayName": "Hot Vermilion",
+        "canonical": "#ff6858",
+        "tonalRamp": ["oklch(15% 0.17 30)", "oklch(24% 0.18 30)", "oklch(34% 0.19 30)", "oklch(45% 0.2 30)", "oklch(57% 0.21 30)", "oklch(70% 0.18 30)", "oklch(83% 0.11 30)", "oklch(95% 0.04 30)"]
+      },
+      "vermilion-deep": {
+        "role": "primary",
+        "displayName": "Deep Vermilion",
+        "canonical": "#791f16",
+        "tonalRamp": ["oklch(15% 0.14 30)", "oklch(24% 0.15 30)", "oklch(34% 0.16 30)", "oklch(45% 0.17 30)", "oklch(57% 0.16 30)", "oklch(70% 0.13 30)", "oklch(83% 0.08 30)", "oklch(95% 0.03 30)"]
+      },
+      "cobalt": {
+        "role": "secondary",
+        "displayName": "Functional Cobalt",
+        "canonical": "#248fd2",
+        "tonalRamp": ["oklch(15% 0.13 240)", "oklch(24% 0.14 240)", "oklch(34% 0.15 240)", "oklch(45% 0.16 240)", "oklch(57% 0.17 240)", "oklch(70% 0.14 240)", "oklch(83% 0.09 240)", "oklch(95% 0.03 240)"]
+      },
+      "time-blue": {
+        "role": "secondary",
+        "displayName": "Time Blue",
+        "canonical": "#7ec9ff",
+        "tonalRamp": ["oklch(15% 0.1 240)", "oklch(24% 0.11 240)", "oklch(34% 0.12 240)", "oklch(45% 0.13 240)", "oklch(57% 0.14 240)", "oklch(70% 0.12 240)", "oklch(83% 0.08 240)", "oklch(95% 0.025 240)"]
+      },
+      "focus-blue": {
+        "role": "secondary",
+        "displayName": "Focus Blue",
+        "canonical": "#62b8ef",
+        "tonalRamp": ["oklch(15% 0.11 240)", "oklch(24% 0.12 240)", "oklch(34% 0.13 240)", "oklch(45% 0.14 240)", "oklch(57% 0.15 240)", "oklch(70% 0.13 240)", "oklch(83% 0.08 240)", "oklch(95% 0.025 240)"]
+      },
+      "complete-green": {
+        "role": "tertiary",
+        "displayName": "Complete Green",
+        "canonical": "#82dc9a",
+        "tonalRamp": ["oklch(15% 0.1 145)", "oklch(24% 0.11 145)", "oklch(34% 0.12 145)", "oklch(45% 0.13 145)", "oklch(57% 0.14 145)", "oklch(70% 0.12 145)", "oklch(83% 0.08 145)", "oklch(95% 0.025 145)"]
+      },
+      "warning-yellow": {
+        "role": "tertiary",
+        "displayName": "Warning Yellow",
+        "canonical": "#ffd166",
+        "tonalRamp": ["oklch(15% 0.1 90)", "oklch(24% 0.11 90)", "oklch(34% 0.12 90)", "oklch(45% 0.13 90)", "oklch(57% 0.14 90)", "oklch(70% 0.13 90)", "oklch(83% 0.09 90)", "oklch(95% 0.03 90)"]
+      },
+      "destructive-red": {
+        "role": "tertiary",
+        "displayName": "Destructive Red",
+        "canonical": "#ff887a",
+        "tonalRamp": ["oklch(15% 0.13 25)", "oklch(24% 0.14 25)", "oklch(34% 0.15 25)", "oklch(45% 0.16 25)", "oklch(57% 0.17 25)", "oklch(70% 0.14 25)", "oklch(83% 0.09 25)", "oklch(95% 0.03 25)"]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Production Display",
+        "purpose": "Page identity, source titles, section headings, and decisive labels."
+      },
+      "body": {
+        "displayName": "Operational Body",
+        "purpose": "Forms, transcript, explanations, errors, and recovery."
+      },
+      "label": {
+        "displayName": "Action Label",
+        "purpose": "Navigation, buttons, and compact controls."
+      },
+      "mono": {
+        "displayName": "Time and Metadata",
+        "purpose": "Timestamps, duration, format, counts, and provenance."
+      }
+    },
+    "shadows": [
+      {
+        "name": "viewer-lift",
+        "value": "0 20px 46px rgba(0, 0, 0, 0.48)",
+        "purpose": "Temporary media overlays only."
+      },
+      {
+        "name": "media-offset",
+        "value": "8px 8px 0 rgba(0, 0, 0, 0.6)",
+        "purpose": "Selected feature media with an editorial hard offset."
+      }
+    ],
+    "motion": [
+      {
+        "name": "state-change",
+        "value": "140ms ease",
+        "purpose": "Fast hover, focus, and control-state transitions."
+      },
+      {
+        "name": "overlay-entry",
+        "value": "180ms cubic-bezier(0.2, 0.8, 0.2, 1)",
+        "purpose": "Clip viewer and Ask Carpo overlay entry."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "0ms",
+        "purpose": "Remove nonessential transitions when reduced motion is requested."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "compact-desktop",
+        "value": "980px"
+      },
+      {
+        "name": "stacked-workspace",
+        "value": "900px"
+      },
+      {
+        "name": "mobile",
+        "value": "700px"
+      },
+      {
+        "name": "small-mobile",
+        "value": "480px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Action",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one decisive action in a task region.",
+      "html": "<button class=\"ds-btn-primary\">CREATE CLIP</button>",
+      "css": ".ds-btn-primary { min-height: 44px; border: 1px solid #ff412c; border-radius: 2px; padding: 10px 16px; background: #ff412c; color: #08090c; font: 700 1.0625rem/1.2 \"Saira Condensed\", \"Arial Narrow\", sans-serif; letter-spacing: 0.035em; text-transform: uppercase; cursor: pointer; transition: background 140ms ease, border-color 140ms ease; } .ds-btn-primary:hover { background: #ff6858; border-color: #ff6858; } .ds-btn-primary:focus-visible { outline: 3px solid #62b8ef; outline-offset: 2px; }"
+    },
+    {
+      "name": "Secondary Action",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "A visible but subordinate rectangular action.",
+      "html": "<button class=\"ds-btn-secondary\">CHOOSE ANOTHER</button>",
+      "css": ".ds-btn-secondary { min-height: 44px; border: 1px solid #5b6170; border-radius: 2px; padding: 10px 16px; background: #0e0f10; color: #efefef; font: 600 1.0625rem/1.2 \"Saira Condensed\", \"Arial Narrow\", sans-serif; letter-spacing: 0.035em; text-transform: uppercase; cursor: pointer; transition: background 140ms ease, border-color 140ms ease; } .ds-btn-secondary:hover { background: #1d212c; border-color: #efefef; } .ds-btn-secondary:focus-visible { outline: 3px solid #62b8ef; outline-offset: 2px; }"
+    },
+    {
+      "name": "Search Field",
+      "kind": "input",
+      "refersTo": "field",
+      "description": "A dark, legible field for direct operational input.",
+      "html": "<label class=\"ds-field-label\">SEARCH TRANSCRIPTS<input class=\"ds-field\" placeholder=\"Find a spoken moment\"></label>",
+      "css": ".ds-field-label { display: grid; gap: 8px; color: #c8b5b3; font: 600 1.0625rem/1.2 \"Saira Condensed\", \"Arial Narrow\", sans-serif; letter-spacing: 0.035em; } .ds-field { min-height: 44px; border: 1px solid #434755; border-radius: 2px; padding: 11px 12px; background: #050608; color: #efefef; font: 400 1rem/1.55 \"Atkinson Hyperlegible Next\", \"Segoe UI\", sans-serif; } .ds-field:focus { border-color: #62b8ef; outline: 2px solid #62b8ef; outline-offset: 1px; } .ds-field::placeholder { color: #af8d89; }"
+    },
+    {
+      "name": "Global Navigation",
+      "kind": "nav",
+      "description": "Compact centered navigation with a vermilion active signal.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"Primary\"><a class=\"ds-nav-link ds-nav-active\" href=\"#\">CREATE</a><a class=\"ds-nav-link\" href=\"#\">LIBRARY</a></nav>",
+      "css": ".ds-nav { display: flex; gap: 26px; align-items: center; padding: 0 12px; background: #08090c; } .ds-nav-link { position: relative; min-height: 44px; display: inline-flex; align-items: center; color: #c8b5b3; font: 600 1.0625rem/1.2 \"Saira Condensed\", \"Arial Narrow\", sans-serif; letter-spacing: 0.035em; text-decoration: none; } .ds-nav-link:hover { color: #efefef; } .ds-nav-link:focus-visible { outline: 3px solid #62b8ef; outline-offset: 2px; } .ds-nav-active { color: #efefef; } .ds-nav-active::after { content: \"\"; position: absolute; right: 0; bottom: 0; left: 0; height: 3px; background: #ff412c; }"
+    },
+    {
+      "name": "Source Card",
+      "kind": "card",
+      "description": "A media-first source record that leaves the thumbnail unobstructed.",
+      "html": "<article class=\"ds-source\"><div class=\"ds-source-media\"></div><div class=\"ds-source-copy\"><h3>SOURCE VIDEO TITLE</h3><p>12 CLIPS · 48:20</p></div></article>",
+      "css": ".ds-source { overflow: hidden; border: 1px solid #434755; border-radius: 0; background: #0e0f10; color: #efefef; } .ds-source-media { aspect-ratio: 16/9; background: #050608; } .ds-source-copy { padding: 12px; } .ds-source h3 { margin: 0; font: 700 1.375rem/1 \"Saira Condensed\", \"Arial Narrow\", sans-serif; letter-spacing: 0.035em; } .ds-source p { margin: 8px 0 0; color: #af8d89; font: 400 0.75rem/1.35 \"Atkinson Hyperlegible Mono\", monospace; letter-spacing: 0.04em; }"
+    },
+    {
+      "name": "Clip Play Card",
+      "kind": "card",
+      "description": "A compact clip record with thumbnail, status, time, and diamond play geometry.",
+      "html": "<article class=\"ds-clip\"><div class=\"ds-clip-thumb\"><button class=\"ds-play\" aria-label=\"Play clip\"><span></span></button></div><div class=\"ds-clip-copy\"><strong>OPENING REACTION</strong><span>00:18 · READY</span></div></article>",
+      "css": ".ds-clip { display: grid; grid-template-columns: 96px 1fr; min-height: 76px; border: 1px solid #434755; border-radius: 0; background: #131517; color: #efefef; } .ds-clip-thumb { display: grid; place-items: center; background: #050608; } .ds-play { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid #ff412c; background: #ff412c; transform: rotate(45deg); cursor: pointer; } .ds-play span { width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 8px solid #08090c; transform: rotate(-45deg); } .ds-play:hover { background: #ff6858; } .ds-play:focus-visible { outline: 3px solid #62b8ef; outline-offset: 3px; } .ds-clip-copy { display: grid; align-content: center; gap: 6px; padding: 10px 12px; } .ds-clip-copy strong { font: 700 1.125rem/1 \"Saira Condensed\", \"Arial Narrow\", sans-serif; letter-spacing: 0.035em; } .ds-clip-copy span { color: #82dc9a; font: 400 0.75rem/1.35 \"Atkinson Hyperlegible Mono\", monospace; letter-spacing: 0.04em; }"
+    },
+    {
+      "name": "Status Marker",
+      "kind": "custom",
+      "description": "Compact state evidence without an oversized pill.",
+      "html": "<span class=\"ds-status\"><span class=\"ds-status-dot\"></span>READY</span>",
+      "css": ".ds-status { display: inline-flex; align-items: center; gap: 8px; color: #82dc9a; font: 400 0.75rem/1.35 \"Atkinson Hyperlegible Mono\", monospace; letter-spacing: 0.04em; } .ds-status-dot { width: 7px; height: 7px; background: #82dc9a; transform: rotate(45deg); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Production Signal",
+    "overview": "Carpo should feel like a focused production instrument: dark, compact, legible, and unmistakably in motion. Its visual identity borrows the urgency and clarity of a live production package without imitating a traditional video editor. The source stays visually dominant, the next action is easy to find, and completed output accumulates around that source without turning the interface into a dashboard of unrelated cards.\n\nThe system combines condensed industrial display type, highly readable operational text, flat layered surfaces, firm rules, and a small set of meaningful signals. Vermilion carries the brand and decisive actions. Blue indicates time, selection, and focus. Green, yellow, and soft red communicate state. Decorative explanation, oversized pills, soft generic cards, and ambient gradients are outside this world.\n\nManual clip creation is the complete product path. Ask Carpo, WebMCP, and other intelligent adapters may accelerate that path, but must remain visually and behaviorally secondary to the shared controls and recoverable state.",
+    "keyCharacteristics": [
+      "Dense but readable production layouts organized around one source.",
+      "Condensed, forceful headings paired with accessible operational text.",
+      "Flat near-black surfaces divided by precise slate rules.",
+      "Vermilion brand and action signals used with restraint.",
+      "Media-first cards with clean frames and diamond play geometry.",
+      "Compact, explicit state rather than explanatory prose or decorative pills."
+    ],
+    "rules": [
+      {
+        "name": "The Vermilion Is Action Rule",
+        "body": "Vermilion identifies Carpo and the decisive next action. Do not use it as ambient decoration or on multiple equal-priority actions.",
+        "section": "colors"
+      },
+      {
+        "name": "The Blue Has a Job Rule",
+        "body": "Blue means time, focus, search, or selection. It does not replace vermilion as the primary product signal.",
+        "section": "colors"
+      },
+      {
+        "name": "The Two-Voice Rule",
+        "body": "Use condensed type for identity and action; use hyperlegible type for anything a person must read, enter, or recover from.",
+        "section": "typography"
+      },
+      {
+        "name": "The Compression Is Not Crowding Rule",
+        "body": "Dense layouts may reduce space, but never collapse line-height, contrast, or target size below comfortable reading and interaction.",
+        "section": "typography"
+      },
+      {
+        "name": "The Source-Before-Output Rule",
+        "body": "Always establish which video is active before presenting its clips, proposals, or controls. Do not repeat the source in multiple competing panels.",
+        "section": "layout"
+      },
+      {
+        "name": "The Flat-by-Default Rule",
+        "body": "Resting surfaces are separated by tone and line. Do not add soft shadows to every card or control.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Unobstructed Media Rule",
+        "body": "Source frames and clip thumbnails remain visually unobstructed. Playback controls may overlay media only when they clearly communicate an available action.",
+        "section": "shapes"
+      },
+      {
+        "name": "The Manual-First Rule",
+        "body": "The complete manual workflow must remain visible, understandable, and correct without Ask Carpo, WebMCP, or another intelligent adapter.",
+        "section": "components"
+      }
+    ],
+    "dos": [
+      "Do organize each surface around the active source and its outputs.",
+      "Do use vermilion for the single decisive action and Carpo identity.",
+      "Do show compact clip thumbnails, time, and state where people scan output.",
+      "Do keep source images and clip thumbnails visually unobstructed.",
+      "Do keep controls rectangular, labels direct, and interactive targets at least 44px.",
+      "Do use state color together with readable text or accessible names.",
+      "Do preserve manual recovery and correction on every intelligent path."
+    ],
+    "donts": [
+      "Don't introduce oversized pills, soft generic cards, ambient gradients, or decorative glass effects.",
+      "Don't explain behavior in prose when state, hierarchy, and button treatment can make it obvious.",
+      "Don't make Ask Carpo the visual center of the product or rename it to Think in user-facing UI.",
+      "Don't reuse the Creator three-column composition as a universal page template.",
+      "Don't place decorative stripes, color bars, or tints across source images or clip thumbnails.",
+      "Don't hide essential mobile actions in a horizontally scrolling strip."
+    ]
+  }
+}

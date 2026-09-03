@@ -29,7 +29,7 @@
     "test:pr-browser": "node scripts/run-cloudflare-browser-review.mjs",
     "test:pr-review-publisher": "node --test scripts/publish-pr-review-evidence.test.mjs",
     "test:pr-review-runner": "node --test scripts/run-pr-review.test.mjs scripts/pr-review-agentic-execution.test.mjs scripts/run-durable-flue-review.test.mjs scripts/pr-review-lease.test.mjs scripts/pr-review-webmcp-fixture.test.mjs",
-    "test:pr-review-agent": "node --test scripts/cloudflare-browser-session.test.mjs scripts/flue-pr-review-agent.test.mjs scripts/flue-pr-browser-review.test.mjs scripts/live-webmcp-verification-journey.test.mjs scripts/pr-browser-review-ui-contract.test.mjs",
+    "test:pr-review-agent": "node --test scripts/pr-browser-review-runtime.test.mjs scripts/cloudflare-browser-session.test.mjs scripts/flue-pr-review-agent.test.mjs scripts/flue-pr-browser-review.test.mjs scripts/live-webmcp-verification-journey.test.mjs scripts/pr-browser-review-ui-contract.test.mjs",
     "review:pr-agent": "node scripts/run-cloudflare-flue-review.mjs",
     "review:contract:test": "npm run test -w review-contract",
     "review:contract:typecheck": "npm run typecheck -w review-contract",
@@ -44,7 +44,9 @@
     "test:encoder": "node --experimental-strip-types scripts/test-encoder-contract.ts",
     "test:helper": "python3 -m unittest discover helper",
     "test:perf": "python3 scripts/perf-test.py",
-    "db:migrate:local": "wrangler d1 migrations apply carpo --local"
+    "db:migrate:local": "wrangler d1 migrations apply carpo --local",
+    "check:launch-access": "node scripts/check-launch-access.mjs",
+    "test:launch-access": "node --test scripts/check-launch-access.test.mjs"
   },
   "dependencies": {
     "@carpo/review-contract": "0.1.0",
