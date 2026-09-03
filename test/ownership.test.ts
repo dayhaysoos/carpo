@@ -68,6 +68,7 @@ describe("per-user ownership", () => {
   it("returns only the current account identity", async () => {
     await installUsers();
     expect(await (await requestAs(ALICE, "/api/me")).json()).toEqual({
+      id: ALICE.id,
       email: ALICE.email,
     });
   });

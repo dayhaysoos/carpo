@@ -245,6 +245,11 @@ async function reviewProductSurfaces(page, plan, run) {
     waitUntil: "domcontentloaded",
     timeout: 30_000,
   });
+  // Exact-base captures may predate the public landing page. Follow the actual
+  // new entry only when its heading is present; keep the prior editor supported.
+  if (await page.getByRole("heading", { name: "Your video. More moments." }).isVisible()) {
+    await page.goto(new URL("/create", plan.baseUrl).href, { waitUntil: "domcontentloaded", timeout: 30_000 });
+  }
   await visible(page.getByRole("heading", { name: "Carpo", level: 1 }), "Carpo shell renders", run.assertions);
   await visible(page.getByRole("heading", { name: "New clip" }), "Create surface renders", run.assertions);
   await assertCreateSettled(page, run.assertions);

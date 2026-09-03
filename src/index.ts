@@ -1,3 +1,4 @@
+import { isWebShellRequest, loginResponse } from "./web-entry";
 import { EncoderContainer } from "./encoder-container";
 import type { Env } from "./env";
 import { handleRequest } from "./routes";
@@ -63,12 +64,17 @@ export default {
       return publicDistributionResponse;
     }
 
+    if (isWebShellRequest(request)) return env.ASSETS.fetch(request);
+
     let user: AuthenticatedUser | null = null;
     if (!isMachineRequest(request)) {
       const authentication = await authenticateUser(request, env, ctx);
       if (!authentication.ok) return authentication.response;
       user = authentication.user;
     }
+
+    const login = loginResponse(request);
+    if (login) return login;
 
     if (user) {
       const agentAuthorizationError = await authorizeAgentRequest(

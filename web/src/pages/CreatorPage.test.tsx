@@ -5,15 +5,14 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { CreatorPage } from "./CreatorPage";
-import type {
-  SourceVideoResponse,
-} from "../types";
+import type { SourceVideoResponse } from "../types";
 
 const api = vi.hoisted(() => ({
   createSourceVideo: vi.fn(),
@@ -36,6 +35,13 @@ function deferred<T>() {
     resolve = complete;
   });
   return { promise, resolve };
+}
+
+function getAskCarpoStatus() {
+  return within(screen.getByRole("dialog", { hidden: true })).getByRole(
+    "status",
+    { hidden: true },
+  );
 }
 
 function uploadedVideo(id: string, title: string): SourceVideoResponse {
@@ -141,9 +147,9 @@ describe("CreatorPage", () => {
 
     expect(screen.getByRole("heading", { name: "New clip" })).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: "Ask Carpo" }).getAttribute(
-        "aria-expanded",
-      ),
+      screen
+        .getByRole("button", { name: "Ask Carpo" })
+        .getAttribute("aria-expanded"),
     ).toBe("false");
     expect(screen.queryByRole("heading", { name: "Ask Carpo" })).toBeNull();
   });
@@ -192,9 +198,7 @@ describe("CreatorPage", () => {
 
     renderPage();
 
-    await waitFor(() =>
-      expect(registered).toContain("getCarpoInstructions"),
-    );
+    await waitFor(() => expect(registered).toContain("getCarpoInstructions"));
     expect(registered).not.toContain("readClipWorkspace");
   });
 
@@ -249,9 +253,10 @@ describe("CreatorPage", () => {
     Object.defineProperty(document, "modelContext", {
       configurable: true,
       value: {
-        registerTool: (
-          tool: { name: string; execute: (input: unknown) => Promise<unknown> },
-        ) => {
+        registerTool: (tool: {
+          name: string;
+          execute: (input: unknown) => Promise<unknown>;
+        }) => {
           registrations.set(tool.name, tool);
         },
       },
@@ -358,10 +363,14 @@ describe("CreatorPage", () => {
 
     renderPage(`/?video=${video.id}&libraryProposal=prepared-proposal`);
 
-    expect(await screen.findByRole("heading", { name: "Review clips" })).toBeTruthy();
+    expect(
+      await screen.findByRole("heading", { name: "Review clips" }),
+    ).toBeTruthy();
     expect(screen.getByText("Grounded moment — Library source")).toBeTruthy();
     expect(screen.getByText(/Suggested via Library search/)).toBeTruthy();
-    expect(screen.getByText("Exact transcript match for a grounded moment.")).toBeTruthy();
+    expect(
+      screen.getByText("Exact transcript match for a grounded moment."),
+    ).toBeTruthy();
     expect(api.createClipFromSourceVideo).not.toHaveBeenCalled();
     await waitFor(() =>
       expect(screen.getByTestId("location-search").textContent).not.toContain(
@@ -414,7 +423,7 @@ describe("CreatorPage", () => {
         title: "YouTube video freshThink01",
       }),
     );
-    await waitFor(() => expect(screen.getByText("Ready")).toBeTruthy());
+    await waitFor(() => expect(getAskCarpoStatus().textContent).toBe("Ready"));
     expect(api.createSourceVideo).toHaveBeenCalledTimes(1);
   });
 
@@ -452,11 +461,13 @@ describe("CreatorPage", () => {
 
     activation.resolve(video);
 
-    await waitFor(() => expect(screen.getByText("Ready")).toBeTruthy());
+    await waitFor(() => expect(getAskCarpoStatus().textContent).toBe("Ready"));
     expect(
-      (screen.getByRole("textbox", {
-        name: "Clip instruction",
-      }) as HTMLTextAreaElement).value,
+      (
+        screen.getByRole("textbox", {
+          name: "Clip instruction",
+        }) as HTMLTextAreaElement
+      ).value,
     ).toBe("Find the funniest reaction");
   });
 
@@ -668,7 +679,7 @@ describe("CreatorPage", () => {
     await user.tab();
     finishActivation(video);
 
-    await waitFor(() => expect(screen.getByText("Ready")).toBeTruthy());
+    await waitFor(() => expect(getAskCarpoStatus().textContent).toBe("Ready"));
     expect(api.createSourceVideo).toHaveBeenCalledTimes(1);
   });
 
@@ -713,7 +724,9 @@ describe("CreatorPage", () => {
       name: "Choose another video",
     });
     const title = screen.getByRole("textbox", { name: "Title" });
-    const overlay = screen.getByRole("textbox", { name: "Overlay text (optional)" });
+    const overlay = screen.getByRole("textbox", {
+      name: "Overlay text (optional)",
+    });
     await user.type(title, "Keep this Clip draft");
     await user.type(overlay, "Manual correction stays available");
     await user.click(await screen.findByRole("button", { name: "720p" }));
@@ -721,7 +734,9 @@ describe("CreatorPage", () => {
     await user.click(chooseAnother);
 
     await waitFor(() =>
-      expect(screen.getByTestId("location-search").textContent).toBe("?keep=yes"),
+      expect(screen.getByTestId("location-search").textContent).toBe(
+        "?keep=yes",
+      ),
     );
     expect(screen.queryByRole("region", { name: "Active source" })).toBeNull();
     expect(screen.getByRole("tab", { name: "YouTube URL" })).toBeTruthy();
@@ -731,10 +746,7 @@ describe("CreatorPage", () => {
     );
     await user.click(screen.getByRole("tab", { name: "YouTube URL" }));
     const nextUrl = screen.getByRole("textbox", { name: "YouTube URL" });
-    await user.type(
-      nextUrl,
-      "https://www.youtube.com/watch?v=nextDraftVideo",
-    );
+    await user.type(nextUrl, "https://www.youtube.com/watch?v=nextDraftVideo");
     expect(
       screen.getByRole("button", { name: "720p" }).getAttribute("aria-pressed"),
     ).toBe("true");
@@ -804,7 +816,7 @@ describe("CreatorPage", () => {
         title: "fresh upload",
       }),
     );
-    await waitFor(() => expect(screen.getByText("Ready")).toBeTruthy());
+    await waitFor(() => expect(getAskCarpoStatus().textContent).toBe("Ready"));
     expect(api.createSourceVideo).toHaveBeenCalledTimes(1);
   });
 
@@ -910,9 +922,7 @@ describe("CreatorPage", () => {
     finishUpload();
     await new Promise((resolve) => window.setTimeout(resolve, 0));
 
-    expect(
-      screen.getByRole("textbox", { name: "YouTube URL" }),
-    ).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "YouTube URL" })).toBeTruthy();
     expect(screen.getByText("Waiting")).toBeTruthy();
     expect(api.createSourceVideo).not.toHaveBeenCalled();
   });

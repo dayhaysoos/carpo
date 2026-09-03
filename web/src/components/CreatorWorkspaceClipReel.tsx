@@ -1,7 +1,7 @@
 import * as stylex from "@stylexjs/stylex";
 import type { OwnedUploadClipJourneyView } from "../owned-upload-clip-journey";
 import { statusLabel, statusProgress } from "../status";
-import { creatorWorkspaceTokens } from "../styles/creatorWorkspaceTokens.stylex";
+import { carpoIdentityTokens } from "../styles/carpoIdentityTokens.stylex";
 import type { ClipResponse, ClipStatus } from "../types";
 import { formatTimestamp } from "../youtube";
 import { ClipFailureMessage } from "./ClipFailureMessage";
@@ -52,10 +52,7 @@ export function getCreatorWorkspaceClipItems(
 interface CreatorWorkspaceClipReelProps {
   items: readonly CreatorWorkspaceClipItem[];
   selectedClipId: string | null;
-  onSelect: (
-    clipId: string,
-    trigger: HTMLButtonElement,
-  ) => void;
+  onSelect: (clipId: string, trigger: HTMLButtonElement) => void;
 }
 
 export function CreatorWorkspaceClipReel({
@@ -97,16 +94,25 @@ export function CreatorWorkspaceClipReel({
                   ) : (
                     <span
                       aria-hidden="true"
-                      {...stylex.props(styles.thumbnail, styles.thumbnailFallback)}
+                      {...stylex.props(
+                        styles.thumbnail,
+                        styles.thumbnailFallback,
+                      )}
                     >
-                      <svg viewBox="0 0 24 24" {...stylex.props(styles.filmIcon)}>
+                      <svg
+                        viewBox="0 0 24 24"
+                        {...stylex.props(styles.filmIcon)}
+                      >
                         <rect x="3.5" y="5" width="17" height="14" rx="1.5" />
                         <path d="M7 5v14M17 5v14M3.5 9h3.5M17 9h3.5M3.5 15h3.5M17 15h3.5" />
                       </svg>
                     </span>
                   )}
                   <span {...stylex.props(styles.rowMain)}>
-                    <strong title={item.title} {...stylex.props(styles.rowTitle)}>
+                    <strong
+                      title={item.title}
+                      {...stylex.props(styles.rowTitle)}
+                    >
                       {item.title}
                     </strong>
                     <span {...stylex.props(styles.rowMeta)}>
@@ -125,7 +131,10 @@ export function CreatorWorkspaceClipReel({
                           : styles.statusWorking,
                     )}
                   >
-                    <span aria-hidden="true" {...stylex.props(styles.statusDot)} />
+                    <span
+                      aria-hidden="true"
+                      {...stylex.props(styles.statusDot)}
+                    />
                     {label}
                   </span>
                 </button>
@@ -169,7 +178,11 @@ export function CreatorWorkspaceClipPreview({
           onClick={onClose}
           {...stylex.props(styles.closeButton)}
         >
-          <svg viewBox="0 0 24 24" aria-hidden="true" {...stylex.props(styles.closeIcon)}>
+          <svg
+            viewBox="0 0 24 24"
+            aria-hidden="true"
+            {...stylex.props(styles.closeIcon)}
+          >
             <path d="M6 6l12 12M18 6 6 18" />
           </svg>
         </button>
@@ -188,7 +201,11 @@ export function CreatorWorkspaceClipPreview({
             {...stylex.props(styles.previewVideo)}
           />
         ) : item.thumbnailUrl ? (
-          <img src={item.thumbnailUrl} alt="" {...stylex.props(styles.previewImage)} />
+          <img
+            src={item.thumbnailUrl}
+            alt=""
+            {...stylex.props(styles.previewImage)}
+          />
         ) : (
           <span aria-hidden="true" {...stylex.props(styles.previewFallback)} />
         )}
@@ -242,7 +259,11 @@ export function CreatorWorkspaceClipPreview({
           {duration ? ` · ${duration}` : ""}
         </span>
         {item.clip?.status === "complete" && item.clip.outputs.mp4 ? (
-          <a href={item.clip.outputs.mp4} download {...stylex.props(styles.download)}>
+          <a
+            href={item.clip.outputs.mp4}
+            download
+            {...stylex.props(styles.download)}
+          >
             Download
           </a>
         ) : null}
@@ -261,15 +282,15 @@ const styles = stylex.create({
     paddingInline: "14px",
     borderLeftWidth: "1px",
     borderLeftStyle: "solid",
-    borderLeftColor: creatorWorkspaceTokens.line,
-    backgroundColor: "#1d1e19",
-    color: creatorWorkspaceTokens.ink,
-    scrollbarColor: "#55564c transparent",
+    borderLeftColor: carpoIdentityTokens.lineMuted,
+    backgroundColor: carpoIdentityTokens.navy,
+    color: carpoIdentityTokens.ink,
+    scrollbarColor: "#5c6982 transparent",
     "@media (max-width: 900px)": {
       overflowY: "visible",
       borderTopWidth: "1px",
       borderTopStyle: "solid",
-      borderTopColor: creatorWorkspaceTokens.line,
+      borderTopColor: carpoIdentityTokens.lineMuted,
       borderLeftWidth: 0,
     },
   },
@@ -282,15 +303,28 @@ const styles = stylex.create({
     paddingInline: "7px",
   },
   reelTitle: {
+    position: "relative",
     margin: 0,
-    fontSize: "20px",
+    fontFamily: carpoIdentityTokens.fontDisplay,
+    fontSize: "23px",
     fontWeight: 700,
-    lineHeight: 1.2,
-    letterSpacing: "0.008em",
+    lineHeight: 1.05,
+    letterSpacing: "0.035em",
+    textTransform: "uppercase",
+    "::after": {
+      content: '""',
+      width: "36px",
+      height: "4px",
+      display: "block",
+      marginTop: "7px",
+      backgroundColor: carpoIdentityTokens.vermilion,
+      transform: "skewX(-24deg)",
+      transformOrigin: "left",
+    },
   },
   reelCount: {
-    color: creatorWorkspaceTokens.inkFaint,
-    fontFamily: creatorWorkspaceTokens.fontTime,
+    color: carpoIdentityTokens.inkFaint,
+    fontFamily: carpoIdentityTokens.fontTime,
     fontSize: "12px",
     whiteSpace: "nowrap",
   },
@@ -300,8 +334,8 @@ const styles = stylex.create({
     paddingInline: "7px",
     borderTopWidth: "1px",
     borderTopStyle: "solid",
-    borderTopColor: creatorWorkspaceTokens.line,
-    color: creatorWorkspaceTokens.inkFaint,
+    borderTopColor: carpoIdentityTokens.lineMuted,
+    color: carpoIdentityTokens.inkFaint,
     fontSize: "13px",
     lineHeight: 1.5,
   },
@@ -311,7 +345,7 @@ const styles = stylex.create({
     listStyle: "none",
     borderBottomWidth: "1px",
     borderBottomStyle: "solid",
-    borderBottomColor: creatorWorkspaceTokens.line,
+    borderBottomColor: carpoIdentityTokens.lineMuted,
   },
   listItem: { margin: 0, padding: 0 },
   row: {
@@ -325,19 +359,23 @@ const styles = stylex.create({
     borderWidth: 0,
     borderTopWidth: "1px",
     borderTopStyle: "solid",
-    borderTopColor: creatorWorkspaceTokens.line,
+    borderTopColor: carpoIdentityTokens.lineMuted,
     backgroundColor: {
       default: "transparent",
-      ":hover": creatorWorkspaceTokens.benchHigh,
-      "[aria-pressed='true']": creatorWorkspaceTokens.benchHigh,
+      ":hover": "#20232b",
+      "[aria-pressed='true']": carpoIdentityTokens.vermilionSurface,
     },
-    color: creatorWorkspaceTokens.ink,
+    boxShadow: {
+      default: "none",
+      "[aria-pressed='true']": `inset 0 2px 0 ${carpoIdentityTokens.vermilion}`,
+    },
+    color: carpoIdentityTokens.ink,
     cursor: "pointer",
     textAlign: "left",
     ":focus-visible": {
       outlineWidth: "2px",
       outlineStyle: "solid",
-      outlineColor: creatorWorkspaceTokens.focus,
+      outlineColor: carpoIdentityTokens.focus,
       outlineOffset: "-2px",
     },
   },
@@ -347,14 +385,14 @@ const styles = stylex.create({
     display: "block",
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: "#55564c",
-    backgroundColor: "#0c0d0a",
+    borderColor: "#555b68",
+    backgroundColor: "#090a0c",
     objectFit: "cover",
   },
   thumbnailFallback: {
     display: "grid",
     placeItems: "center",
-    color: creatorWorkspaceTokens.inkFaint,
+    color: carpoIdentityTokens.inkFaint,
   },
   filmIcon: {
     width: "18px",
@@ -369,7 +407,7 @@ const styles = stylex.create({
   rowTitle: {
     display: "block",
     overflow: "hidden",
-    color: creatorWorkspaceTokens.ink,
+    color: carpoIdentityTokens.ink,
     fontSize: "14px",
     fontWeight: 600,
     lineHeight: 1.35,
@@ -379,8 +417,8 @@ const styles = stylex.create({
   rowMeta: {
     display: "block",
     marginTop: "3px",
-    color: creatorWorkspaceTokens.inkFaint,
-    fontFamily: creatorWorkspaceTokens.fontTime,
+    color: carpoIdentityTokens.inkFaint,
+    fontFamily: carpoIdentityTokens.fontTime,
     fontSize: "11px",
     lineHeight: 1.35,
     whiteSpace: "nowrap",
@@ -398,12 +436,13 @@ const styles = stylex.create({
     width: "6px",
     height: "6px",
     flexShrink: 0,
-    borderRadius: "50%",
+    borderRadius: 0,
     backgroundColor: "currentColor",
+    transform: "rotate(45deg)",
   },
-  statusReady: { color: creatorWorkspaceTokens.green },
-  statusWorking: { color: "#ffd47b" },
-  statusFailed: { color: creatorWorkspaceTokens.red },
+  statusReady: { color: carpoIdentityTokens.green },
+  statusWorking: { color: carpoIdentityTokens.yellow },
+  statusFailed: { color: carpoIdentityTokens.red },
   preview: {
     position: "absolute",
     zIndex: 12,
@@ -414,10 +453,12 @@ const styles = stylex.create({
     gap: "12px",
     padding: "14px",
     borderWidth: "1px",
+    borderTopWidth: "3px",
     borderStyle: "solid",
-    borderColor: "#64655b",
-    backgroundColor: creatorWorkspaceTokens.benchRaised,
-    boxShadow: creatorWorkspaceTokens.shadow,
+    borderColor: carpoIdentityTokens.lineStrong,
+    borderTopColor: carpoIdentityTokens.vermilion,
+    backgroundColor: "#121419",
+    boxShadow: carpoIdentityTokens.offsetShadow,
     "@media (max-width: 560px)": {
       top: "10px",
       left: "10px",
@@ -437,21 +478,28 @@ const styles = stylex.create({
     whiteSpace: "nowrap",
   },
   closeButton: {
-    width: "40px",
-    height: "40px",
+    width: "44px",
+    height: "44px",
     flexShrink: 0,
     display: "grid",
     placeItems: "center",
     padding: 0,
-    borderWidth: 0,
-    backgroundColor: "transparent",
-    color: creatorWorkspaceTokens.inkDim,
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: carpoIdentityTokens.lineInteractive,
+    borderRadius: "2px",
+    backgroundColor: carpoIdentityTokens.controlSurface,
+    color: carpoIdentityTokens.inkDim,
     cursor: "pointer",
-    ":hover": { color: creatorWorkspaceTokens.ink },
+    ":hover": {
+      borderColor: "#7d8494",
+      backgroundColor: carpoIdentityTokens.controlHover,
+      color: carpoIdentityTokens.ink,
+    },
     ":focus-visible": {
       outlineWidth: "2px",
       outlineStyle: "solid",
-      outlineColor: creatorWorkspaceTokens.focus,
+      outlineColor: carpoIdentityTokens.focus,
       outlineOffset: "2px",
     },
   },
@@ -468,14 +516,19 @@ const styles = stylex.create({
     width: "100%",
     aspectRatio: "16 / 9",
     overflow: "hidden",
-    backgroundColor: "#080907",
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: "#454a57",
+    backgroundColor: carpoIdentityTokens.mediaSurface,
+    clipPath:
+      "polygon(0 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%)",
   },
   previewVideo: {
     width: "100%",
     height: "100%",
     display: "block",
     objectFit: "contain",
-    backgroundColor: "#080907",
+    backgroundColor: carpoIdentityTokens.mediaSurface,
   },
   previewImage: {
     width: "100%",
@@ -489,7 +542,7 @@ const styles = stylex.create({
     height: "100%",
     display: "block",
     backgroundImage:
-      "linear-gradient(135deg, #161712 25%, #20211c 25%, #20211c 50%, #161712 50%, #161712 75%, #20211c 75%)",
+      "linear-gradient(135deg, #0c0e13 25%, #171a22 25%, #171a22 50%, #0c0e13 50%, #0c0e13 75%, #171a22 75%)",
     backgroundSize: "24px 24px",
   },
   previewState: {
@@ -500,21 +553,21 @@ const styles = stylex.create({
     justifyItems: "center",
     gap: "12px",
     padding: "24px",
-    backgroundColor: "rgba(8, 9, 7, 0.72)",
+    backgroundColor: "rgba(6, 7, 10, 0.74)",
   },
   progressTrack: {
     width: "min(220px, 72%)",
     height: "4px",
     overflow: "hidden",
-    backgroundColor: creatorWorkspaceTokens.line,
+    backgroundColor: carpoIdentityTokens.trackSurface,
   },
   progressFill: {
     height: "100%",
     display: "block",
-    backgroundColor: creatorWorkspaceTokens.amber,
+    backgroundColor: carpoIdentityTokens.vermilion,
   },
   failure: {
-    color: creatorWorkspaceTokens.red,
+    color: carpoIdentityTokens.red,
     fontSize: "13px",
   },
   previewFooter: {
@@ -524,29 +577,32 @@ const styles = stylex.create({
     gap: "12px",
   },
   previewMeta: {
-    color: creatorWorkspaceTokens.inkDim,
-    fontFamily: creatorWorkspaceTokens.fontTime,
+    color: carpoIdentityTokens.inkDim,
+    fontFamily: carpoIdentityTokens.fontTime,
     fontSize: "13px",
   },
   download: {
-    minHeight: "38px",
+    minHeight: "44px",
     display: "inline-flex",
     alignItems: "center",
     paddingInline: "12px",
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: "#585950",
-    borderRadius: "8px",
-    backgroundColor: "#2a2b25",
-    color: creatorWorkspaceTokens.ink,
+    borderColor: carpoIdentityTokens.lineInteractive,
+    borderRadius: "2px",
+    backgroundColor: carpoIdentityTokens.controlSurface,
+    color: carpoIdentityTokens.ink,
     fontSize: "13px",
     fontWeight: 600,
     textDecoration: "none",
-    ":hover": { backgroundColor: "#34352e" },
+    ":hover": {
+      borderColor: "#7d8494",
+      backgroundColor: carpoIdentityTokens.controlHover,
+    },
     ":focus-visible": {
       outlineWidth: "2px",
       outlineStyle: "solid",
-      outlineColor: creatorWorkspaceTokens.focus,
+      outlineColor: carpoIdentityTokens.focus,
       outlineOffset: "2px",
     },
   },

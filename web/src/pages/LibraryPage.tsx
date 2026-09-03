@@ -347,7 +347,7 @@ export function LibraryPage() {
 
   return (
     <main className="library-main">
-      <section className="library-panel card">
+      <section className="library-panel">
         <div className="card-header library-heading">
           <div>
             <h2>{archived ? "Archived videos" : "Library"}</h2>
@@ -399,31 +399,13 @@ export function LibraryPage() {
         </div>
 
         <section className="library-search" aria-labelledby="library-search-title">
-          <div className="library-search-intro">
+          <div className="library-search-intro library-search-copy">
             <div>
               <h3 id="library-search-title">Find a moment</h3>
               <p>
                 Search the private transcripts in this Library view, then review
                 and edit a grounded clip suggestion.
               </p>
-            </div>
-            <div className="library-search-modes" role="radiogroup" aria-label="Search mode">
-              {(["exact", "meaning"] as const).map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  role="radio"
-                  aria-checked={librarySearchMode === mode}
-                  className={librarySearchMode === mode ? "active" : undefined}
-                  onClick={() => {
-                    setLibrarySearchMode(mode);
-                    searchMutation.reset();
-                    prepareMutation.reset();
-                  }}
-                >
-                  {mode === "exact" ? "Exact" : "Meaning"}
-                </button>
-              ))}
             </div>
           </div>
           <form
@@ -433,11 +415,35 @@ export function LibraryPage() {
               if (libraryQuery.trim()) searchMutation.mutate();
             }}
           >
-            <label htmlFor="library-search-query">
-              {librarySearchMode === "exact"
-                ? "Word or phrase"
-                : "Idea or moment"}
-            </label>
+            <div className="library-search-topline">
+              <label htmlFor="library-search-query">
+                {librarySearchMode === "exact"
+                  ? "Word or phrase"
+                  : "Idea or moment"}
+              </label>
+              <div
+                className="library-search-modes"
+                role="radiogroup"
+                aria-label="Search mode"
+              >
+                {(["exact", "meaning"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    role="radio"
+                    aria-checked={librarySearchMode === mode}
+                    className={librarySearchMode === mode ? "active" : undefined}
+                    onClick={() => {
+                      setLibrarySearchMode(mode);
+                      searchMutation.reset();
+                      prepareMutation.reset();
+                    }}
+                  >
+                    {mode === "exact" ? "Exact" : "Meaning"}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="library-search-controls">
               <input
                 id="library-search-query"
@@ -593,7 +599,7 @@ export function LibraryPage() {
           <div className="empty-state">
             <p>{archived ? "No archived videos." : "No videos yet."}</p>
             {!archived && (
-              <Link to="/" className="inline-link">
+              <Link to="/create" className="inline-link">
                 Create your first clip
               </Link>
             )}
@@ -601,7 +607,18 @@ export function LibraryPage() {
         )}
 
         {videos.length > 0 && (
-          <>
+          <section
+            className="library-source-section"
+            aria-labelledby="library-source-section-title"
+          >
+            <div className="library-source-section-heading">
+              <h3 id="library-source-section-title">
+                {archived ? "Archived videos" : "Videos"}
+              </h3>
+              <span>
+                {videos.length} of {total} loaded
+              </span>
+            </div>
             <div className="video-list">
               {videos.map((video) => (
                 <VideoCard
@@ -646,7 +663,7 @@ export function LibraryPage() {
                 </button>
               </div>
             )}
-          </>
+          </section>
         )}
       </section>
 

@@ -235,7 +235,7 @@ export async function installWebMcpReviewFixture({
   let cleaned = false;
   return Object.freeze({
     ...WEBMCP_REVIEW_FIXTURE,
-    path: `/?video=${WEBMCP_REVIEW_FIXTURE.videoId}`,
+    path: `/create?video=${WEBMCP_REVIEW_FIXTURE.videoId}`,
     async cleanup() {
       if (cleaned) return;
       cleaned = true;

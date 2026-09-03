@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { creatorWorkspaceTokens } from "../styles/creatorWorkspaceTokens.stylex";
+import { carpoIdentityTokens } from "../styles/carpoIdentityTokens.stylex";
 
 interface CreatorWorkspaceAskCarpoProps {
   children: ReactNode;
@@ -79,7 +79,11 @@ export function CreatorWorkspaceAskCarpo({
           onClick={close}
           {...stylex.props(styles.close)}
         >
-          <svg aria-hidden="true" viewBox="0 0 24 24" {...stylex.props(styles.closeIcon)}>
+          <svg
+            aria-hidden="true"
+            viewBox="0 0 24 24"
+            {...stylex.props(styles.closeIcon)}
+          >
             <path d="m7 7 10 10M17 7 7 17" />
           </svg>
         </button>
@@ -104,29 +108,31 @@ const styles = stylex.create({
     paddingInline: "14px",
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: "#62635a",
-    borderRadius: "7px",
-    backgroundColor: "#252620",
-    boxShadow: "0 12px 30px rgba(0, 0, 0, 0.34)",
-    color: creatorWorkspaceTokens.inkDim,
+    borderColor: carpoIdentityTokens.roseLine,
+    borderRadius: "2px",
+    backgroundColor: carpoIdentityTokens.roseSurface,
+    boxShadow: "4px 4px 0 rgba(0, 0, 0, 0.55)",
+    color: carpoIdentityTokens.ink,
     cursor: "pointer",
-    fontFamily: creatorWorkspaceTokens.fontUi,
-    fontSize: "13px",
+    fontFamily: carpoIdentityTokens.fontDisplay,
+    fontSize: "16px",
     fontWeight: 600,
+    letterSpacing: "0.035em",
     lineHeight: 1.2,
+    textTransform: "uppercase",
     transitionDuration: "150ms",
     transitionProperty: "background-color, border-color, transform",
     transitionTimingFunction: "ease-out",
     ":hover": {
-      backgroundColor: "#303129",
-      borderColor: "#8b8c82",
-      color: creatorWorkspaceTokens.ink,
+      backgroundColor: "#1b1d24",
+      borderColor: carpoIdentityTokens.vermilion,
+      color: carpoIdentityTokens.ink,
       transform: "translateY(-1px)",
     },
     ":focus-visible": {
       outlineWidth: "3px",
       outlineStyle: "solid",
-      outlineColor: creatorWorkspaceTokens.focus,
+      outlineColor: carpoIdentityTokens.focus,
       outlineOffset: "3px",
     },
     "@media (prefers-reduced-motion: reduce)": {
@@ -141,6 +147,7 @@ const styles = stylex.create({
     width: "18px",
     height: "18px",
     fill: "none",
+    color: carpoIdentityTokens.vermilion,
     stroke: "currentColor",
     strokeWidth: 1.8,
     strokeLinecap: "round",
@@ -161,13 +168,15 @@ const styles = stylex.create({
     minHeight: 0,
     overflow: "hidden",
     borderWidth: "1px",
+    borderTopWidth: "4px",
     borderStyle: "solid",
-    borderColor: creatorWorkspaceTokens.sourceLine,
-    borderRadius: "8px",
-    backgroundColor: creatorWorkspaceTokens.benchRaised,
-    boxShadow: "0 18px 42px rgba(0, 0, 0, 0.46)",
-    color: creatorWorkspaceTokens.ink,
-    fontFamily: creatorWorkspaceTokens.fontUi,
+    borderColor: carpoIdentityTokens.lineStrong,
+    borderTopColor: carpoIdentityTokens.vermilion,
+    borderRadius: "2px",
+    backgroundColor: "#101217",
+    boxShadow: "10px 10px 0 rgba(0, 0, 0, 0.55)",
+    color: carpoIdentityTokens.ink,
+    fontFamily: carpoIdentityTokens.fontUi,
     transformOrigin: "right center",
     transitionDuration: "180ms",
     transitionProperty: "opacity, transform, visibility",
@@ -199,26 +208,27 @@ const styles = stylex.create({
     top: "12px",
     right: "12px",
     zIndex: 2,
-    width: "36px",
-    height: "36px",
+    width: "44px",
+    height: "44px",
     display: "grid",
     placeItems: "center",
     padding: 0,
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: creatorWorkspaceTokens.line,
-    borderRadius: "6px",
-    backgroundColor: creatorWorkspaceTokens.benchHigh,
-    color: creatorWorkspaceTokens.inkDim,
+    borderColor: carpoIdentityTokens.lineInteractive,
+    borderRadius: "2px",
+    backgroundColor: carpoIdentityTokens.navyRaised,
+    color: carpoIdentityTokens.inkDim,
     cursor: "pointer",
     ":hover": {
-      borderColor: creatorWorkspaceTokens.inkFaint,
-      color: creatorWorkspaceTokens.ink,
+      borderColor: "#7d8494",
+      backgroundColor: carpoIdentityTokens.controlHover,
+      color: carpoIdentityTokens.ink,
     },
     ":focus-visible": {
       outlineWidth: "3px",
       outlineStyle: "solid",
-      outlineColor: creatorWorkspaceTokens.focus,
+      outlineColor: carpoIdentityTokens.focus,
       outlineOffset: "2px",
     },
   },

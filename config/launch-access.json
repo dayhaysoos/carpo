@@ -1,0 +1,33 @@
+{
+  "accountId": "c69349b17b216e01346e94a2511004d1",
+  "applicationId": "22c933d3-c74a-4e27-b5a6-9d903f057911",
+  "expectedAudience": "056bf6db9311a93188cf3caf8ca9b4ebec0e3c909037fcdeb1cb136dace07796",
+  "hostname": "carpo.ndejesus1227.workers.dev",
+  "applicationChanges": {
+    "destinations": [
+      { "type": "public", "uri": "carpo.ndejesus1227.workers.dev/auth" },
+      { "type": "public", "uri": "carpo.ndejesus1227.workers.dev/create" },
+      { "type": "public", "uri": "carpo.ndejesus1227.workers.dev/library" },
+      { "type": "public", "uri": "carpo.ndejesus1227.workers.dev/api" },
+      { "type": "public", "uri": "carpo.ndejesus1227.workers.dev/artifacts" },
+      { "type": "public", "uri": "carpo.ndejesus1227.workers.dev/agents" }
+    ],
+    "path_cookie_attribute": false,
+    "http_only_cookie_attribute": true,
+    "same_site_cookie_attribute": "lax"
+  },
+  "preservePolicyIds": [
+    "a61762b3-23eb-49b0-82ea-a83ad4ce4970",
+    "24d1f693-01fc-4e49-b3e4-4c7376f313b6"
+  ],
+  "preserveCallbackApplicationId": "b8118ddd-3c81-4058-a6cd-dce7161031ad",
+  "publicPaths": [
+    "/",
+    "/sign-in",
+    "/assets/*",
+    "/demo/*",
+    "/favicon.svg",
+    "/robots.txt",
+    "/share/*"
+  ]
+}

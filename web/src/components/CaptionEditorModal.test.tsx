@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -68,6 +68,7 @@ function renderEditor(onClose = vi.fn()) {
   });
   return {
     onClose,
+    queryClient,
     ...render(
       <QueryClientProvider client={queryClient}>
         <CaptionEditorModal clip={clip} onClose={onClose} />
@@ -83,6 +84,7 @@ describe("CaptionEditorModal", () => {
       ...draft,
       saved: true,
       cues,
+      revision: "saved-revision",
       updatedAt: "2026-08-28T12:05:00Z",
     }));
     vi.mocked(renderCaptionTrack).mockResolvedValue({
@@ -96,6 +98,31 @@ describe("CaptionEditorModal", () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+  });
+
+  it("refreshes a clean track while preserving subsequent unsaved corrections", async () => {
+    const { queryClient } = renderEditor();
+    await screen.findByDisplayValue("First idea");
+    const refreshed = {
+      ...draft, saved: true, revision: "other-tab-1",
+      cues: [{ ...draft.cues[0], text: "Saved in another tab" }],
+    };
+    await act(async () => {
+      queryClient.setQueryData(["caption-track", clip.id], refreshed);
+    });
+    expect(await screen.findByDisplayValue("Saved in another tab")).toBeTruthy();
+    expect(screen.getByText("All changes saved")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Cue 1 text"), {
+      target: { value: "My unsaved correction" },
+    });
+    await act(async () => {
+      queryClient.setQueryData(["caption-track", clip.id], {
+        ...refreshed, revision: "other-tab-2",
+        cues: [{ ...draft.cues[0], text: "Another remote edit" }],
+      });
+    });
+    expect(screen.getByDisplayValue("My unsaved correction")).toBeTruthy();
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
   });
 
   it("previews the active cue and saves manual corrections", async () => {
@@ -224,15 +251,21 @@ describe("CaptionEditorModal", () => {
       screen.getByRole("button", { name: "Render captioned MP4" }),
     ).toHaveProperty("disabled", true);
 
+    await user.clear(screen.getByLabelText("Cue 1 text"));
+    await user.type(screen.getByLabelText("Cue 1 text"), "Human correction");
+
     await user.click(screen.getByRole("button", { name: "Save captions" }));
     await waitFor(() =>
       expect(saveCaptionTrack).toHaveBeenCalledWith(
         clip.id,
         expect.arrayContaining([
-          expect.objectContaining({ text: "Suggested by Think" }),
+          expect.objectContaining({ text: "Human correction" }),
         ]),
         { theme: "bold-yellow", proposalSource: "think" },
       ),
     );
+    expect(await screen.findByText("All changes saved")).toBeTruthy();
+    expect(screen.getByDisplayValue("Human correction")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Render captioned MP4" })).toHaveProperty("disabled", false);
   });
 });

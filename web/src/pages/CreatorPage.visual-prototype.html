@@ -1,0 +1,2134 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Carpo creator workspace — visual prototype</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Mono:wght@400;600&amp;family=Atkinson+Hyperlegible+Next:wght@400;500;600;700&amp;family=Saira+Condensed:wght@500;600;700;800&amp;display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        color-scheme: dark;
+        --ink: #efefef;
+        --ink-dim: #c8b5b3;
+        --ink-faint: #af8d89;
+        --bench: #08090c;
+        --bench-raised: #131517;
+        --bench-high: #1d212c;
+        --line: #434755;
+        --paper: #efefef;
+        --paper-ink: #131517;
+        --amber: #ff412c;
+        --amber-soft: #791f16;
+        --blue: #248fd2;
+        --blue-deep: #3a37a8;
+        --violet: #bc2caf;
+        --green: #6bd487;
+        --green-deep: #193c28;
+        --red: #ff9b8f;
+        --red-deep: #45181a;
+        --focus: #62b8ef;
+        --shadow: 0 20px 46px rgba(0, 0, 0, 0.48);
+        --font-ui: "Atkinson Hyperlegible Next", "Segoe UI", system-ui, -apple-system, sans-serif;
+        --font-time: "Atkinson Hyperlegible Mono", "SFMono-Regular", Consolas, ui-monospace, monospace;
+        --font-display: "Saira Condensed", "Arial Narrow", sans-serif;
+      }
+
+      * { box-sizing: border-box; }
+
+      html { min-width: 320px; background: var(--bench); }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        color: var(--ink);
+        background: var(--bench);
+        font-family: var(--font-ui);
+        font-size: 16px;
+        line-height: 1.55;
+        letter-spacing: 0.006em;
+        font-synthesis: none;
+        text-rendering: optimizeLegibility;
+        padding-bottom: 104px;
+      }
+
+      button,
+      input,
+      textarea,
+      select { font: inherit; }
+
+      button { color: inherit; }
+
+      button,
+      a,
+      input,
+      textarea,
+      select { outline: none; }
+
+      button:focus-visible,
+      a:focus-visible,
+      input:focus-visible,
+      textarea:focus-visible,
+      select:focus-visible {
+        box-shadow: 0 0 0 3px var(--bench), 0 0 0 5px var(--focus);
+      }
+
+      button { cursor: pointer; }
+      button:disabled { cursor: not-allowed; opacity: 0.48; }
+
+      .icon {
+        width: 18px;
+        height: 18px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.8;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        flex: 0 0 auto;
+      }
+
+      .prototype-note {
+        position: fixed;
+        z-index: 100;
+        top: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        border: 1px solid #68685f;
+        background: #292a25;
+        color: var(--ink-dim);
+        padding: 5px 12px;
+        border-radius: 4px;
+        font-size: 11px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        box-shadow: 0 8px 18px rgba(0, 0, 0, 0.28);
+      }
+
+      .app-shell { min-height: 100vh; }
+
+      .app-bar {
+        height: 70px;
+        display: grid;
+        grid-template-columns: minmax(180px, 1fr) auto minmax(180px, 1fr);
+        align-items: center;
+        gap: 18px;
+        padding: 0 26px;
+        border-bottom: 1px solid var(--line);
+        background: #1c1d19;
+      }
+
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 11px;
+        min-width: 0;
+      }
+
+      .brand-mark {
+        width: 30px;
+        height: 30px;
+        position: relative;
+        background: var(--amber);
+        color: var(--paper-ink);
+        display: grid;
+        place-items: center;
+        font-weight: 800;
+        border-radius: 4px 9px 4px 9px;
+      }
+
+      .brand-mark::after {
+        content: "";
+        position: absolute;
+        inset: 5px;
+        border: 1px solid currentColor;
+        border-radius: 2px 5px 2px 5px;
+      }
+
+      .brand strong { display: block; font-size: 19px; line-height: 1.15; font-weight: 700; letter-spacing: 0.01em; }
+      .brand span { display: block; color: var(--ink-faint); font-size: 12px; line-height: 1.3; }
+
+      .main-nav {
+        display: inline-flex;
+        align-items: center;
+        gap: 18px;
+      }
+
+      .main-nav button {
+        min-height: 42px;
+        padding: 0 2px;
+        border: 0;
+        border-bottom: 2px solid transparent;
+        background: transparent;
+        color: var(--ink-dim);
+      }
+
+      .main-nav button.active { border-bottom-color: var(--amber); color: var(--ink); font-weight: 700; }
+
+      .account {
+        justify-self: end;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+        color: var(--ink-dim);
+        font-size: 13px;
+      }
+
+      .avatar {
+        width: 32px;
+        height: 32px;
+        display: grid;
+        place-items: center;
+        border: 1px solid #55564c;
+        background: #2d2e28;
+        border-radius: 50%;
+        color: var(--ink);
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .workspace { width: 100%; }
+
+      .source-ribbon {
+        min-height: 76px;
+        position: relative;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 18px;
+        padding: 12px 46px;
+        border-bottom: 1px solid #575748;
+        background: #323329;
+        overflow: hidden;
+      }
+
+      .source-ribbon::before,
+      .source-ribbon::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        width: 18px;
+        background-image: radial-gradient(circle, #12130f 0 3px, transparent 3.5px);
+        background-size: 12px 16px;
+        background-position: center 4px;
+        opacity: 0.8;
+      }
+
+      .source-ribbon::before { left: 10px; }
+      .source-ribbon::after { right: 10px; }
+
+      .source-ident {
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+
+      .source-thumb {
+        width: 86px;
+        aspect-ratio: 16 / 9;
+        object-fit: cover;
+        background: #0c0d0a;
+        border: 1px solid #656554;
+      }
+
+      .source-copy { min-width: 0; }
+      .source-copy strong { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .source-copy strong { font-weight: 600; letter-spacing: 0.008em; }
+      .source-copy span { display: block; margin-top: 3px; color: var(--ink-dim); font-size: 13px; line-height: 1.35; }
+
+      .source-actions { display: flex; align-items: center; }
+
+      .button {
+        min-height: 40px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        border: 1px solid #585950;
+        padding: 0 15px;
+        border-radius: 8px;
+        background: #2a2b25;
+        color: var(--ink);
+        font-weight: 600;
+      }
+
+      .button:hover:not(:disabled) { background: #34352e; }
+      .button.primary { border-color: #f1b84b; background: var(--amber); color: #1f1c13; }
+      .button.primary:hover:not(:disabled) { background: #ffd071; }
+      .button.danger { border-color: #ad534b; background: #6a302b; color: #fff4f0; }
+      .button.quiet { border-color: transparent; background: transparent; color: var(--ink-dim); }
+      .button.small { min-height: 34px; padding: 0 11px; font-size: 13px; }
+      .button.source-change { min-height: 38px; border-color: #838477; background: #272820; padding-inline: 14px 11px; }
+      .button.source-change:hover { border-color: #b0b1a5; background: #393a32; }
+
+      .timecode { font-family: var(--font-time); font-variant-numeric: tabular-nums; }
+
+      .video-stage {
+        position: relative;
+        min-height: 280px;
+        background: #080907;
+        overflow: hidden;
+        box-shadow: var(--shadow);
+      }
+
+      .video-stage img {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        opacity: 0.86;
+      }
+
+      .video-stage::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.14);
+        pointer-events: none;
+      }
+
+      .play-control {
+        position: absolute;
+        z-index: 2;
+        left: 50%;
+        top: 50%;
+        width: 62px;
+        height: 62px;
+        transform: translate(-50%, -50%);
+        display: grid;
+        place-items: center;
+        border: 1px solid rgba(255, 255, 255, 0.68);
+        border-radius: 50%;
+        background: rgba(20, 21, 17, 0.82);
+        color: #fff;
+      }
+
+      .play-control .icon { width: 24px; height: 24px; margin-left: 3px; }
+
+      .video-meta {
+        position: absolute;
+        z-index: 2;
+        left: 14px;
+        right: 14px;
+        bottom: 12px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        color: #fff;
+        font-family: var(--font-time);
+        font-size: 13px;
+        text-shadow: 0 1px 5px #000;
+      }
+
+      .timeline {
+        position: relative;
+        min-height: 112px;
+        background: #11120f;
+        border-top: 1px solid #3d3e36;
+        border-bottom: 1px solid #3d3e36;
+        padding: 22px 18px 14px;
+      }
+
+      .timeline-ruler {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        color: var(--ink-faint);
+        font-family: var(--font-time);
+        font-size: 11px;
+        line-height: 1.35;
+      }
+
+      .timeline-ruler span:last-child { text-align: right; }
+
+      .film-track {
+        position: relative;
+        height: 42px;
+        margin-top: 9px;
+        background: #303129;
+        border: 1px solid #505146;
+        overflow: hidden;
+      }
+
+      .film-track::before {
+        content: "";
+        position: absolute;
+        inset: 4px 0;
+        background-image: var(--frame-image);
+        background-size: 92px auto;
+        background-repeat: repeat-x;
+        background-position: center;
+        opacity: 0.5;
+      }
+
+      .selection-range {
+        position: absolute;
+        z-index: 2;
+        left: 29%;
+        width: 24%;
+        top: 0;
+        bottom: 0;
+        border: 2px solid var(--amber);
+        background: rgba(241, 184, 75, 0.17);
+      }
+
+      .selection-range::before,
+      .selection-range::after {
+        content: "";
+        position: absolute;
+        top: 7px;
+        bottom: 7px;
+        width: 5px;
+        background: var(--amber);
+      }
+
+      .selection-range::before { left: -4px; }
+      .selection-range::after { right: -4px; }
+
+      .playhead {
+        position: absolute;
+        z-index: 3;
+        left: 42%;
+        top: 14px;
+        bottom: 10px;
+        width: 1px;
+        background: var(--blue);
+      }
+
+      .playhead::before {
+        content: "";
+        position: absolute;
+        left: -4px;
+        top: 0;
+        border-left: 4px solid transparent;
+        border-right: 4px solid transparent;
+        border-top: 6px solid var(--blue);
+      }
+
+      .trim-readout {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        margin-top: 8px;
+        color: var(--ink-dim);
+        font-size: 13px;
+        line-height: 1.4;
+      }
+
+      .trim-readout strong { color: var(--ink); font-weight: 700; }
+
+      .field { display: grid; gap: 6px; }
+      .field + .field { margin-top: 14px; }
+      .field label,
+      .field-label { color: var(--ink-dim); font-size: 13px; line-height: 1.4; font-weight: 600; }
+
+      .field input,
+      .field textarea,
+      .field select {
+        width: 100%;
+        min-height: 42px;
+        border: 1px solid #55564c;
+        border-radius: 7px;
+        padding: 9px 11px;
+        background: #171814;
+        color: var(--ink);
+      }
+
+      .field textarea { resize: vertical; min-height: 78px; }
+
+      .quality-row { display: flex; gap: 8px; margin-top: 7px; }
+      .quality-row button { min-height: 34px; }
+      .quality-row button.selected { background: var(--paper); border-color: var(--paper); color: var(--paper-ink); }
+
+      .action-stack { display: grid; gap: 10px; margin-top: 18px; }
+      .action-stack .button { width: 100%; min-height: 48px; }
+
+      .think-trigger {
+        position: fixed;
+        z-index: 42;
+        right: 18px;
+        bottom: 104px;
+        min-height: 42px;
+        border: 1px solid #62635a;
+        border-radius: 8px;
+        background: #252620;
+        padding: 0 15px;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
+      }
+
+      .think-trigger span { color: var(--ink-dim); font-size: 13px; }
+
+      .think-drawer {
+        position: fixed;
+        z-index: 45;
+        top: 82px;
+        right: 18px;
+        bottom: 104px;
+        width: min(390px, calc(100vw - 36px));
+        display: none;
+        grid-template-rows: auto 1fr auto;
+        border: 1px solid #5f6056;
+        background: #20211c;
+        box-shadow: var(--shadow);
+      }
+
+      .think-drawer.open { display: grid; }
+      .think-drawer header { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 16px; border-bottom: 1px solid var(--line); }
+      .think-drawer header strong { display: block; }
+      .think-drawer header span { display: block; color: var(--ink-faint); font-size: 13px; line-height: 1.4; }
+      .think-copy { padding: 18px; color: var(--ink-dim); }
+      .think-copy p { margin: 0 0 12px; }
+      .think-copy .example { padding: 10px 12px; border: 1px solid #45463f; color: var(--ink); }
+      .think-composer { padding: 14px; border-top: 1px solid var(--line); }
+      .think-composer textarea { width: 100%; min-height: 86px; padding: 10px; border: 1px solid #56574e; background: #151612; color: var(--ink); resize: none; }
+      .think-composer footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 9px; }
+      .think-composer footer span { color: var(--ink-faint); font-size: 12px; line-height: 1.4; }
+
+      /* Variant A: a compact production line for repeated clips from one source. */
+      .rundown-layout {
+        display: grid;
+        grid-template-columns: minmax(286px, 310px) minmax(440px, 1fr) minmax(238px, 276px);
+        grid-template-areas: "builder stage reel";
+        height: calc(100vh - 146px);
+        min-height: 620px;
+      }
+
+      .clip-builder,
+      .rundown-stage,
+      .clip-reel {
+        min-width: 0;
+        min-height: 0;
+        overflow-y: auto;
+        scrollbar-color: #55564c transparent;
+      }
+
+      .clip-builder {
+        grid-area: builder;
+        padding: 22px 18px 126px;
+        border-right: 1px solid var(--line);
+        background: #25261f;
+      }
+
+      .clip-builder h1 { margin: 0 0 20px; font-size: 24px; line-height: 1.2; font-weight: 700; letter-spacing: 0.008em; }
+
+      .rundown-stage { position: relative; grid-area: stage; padding: 22px 22px 126px; background: #151612; }
+      .stage-heading { display: flex; justify-content: space-between; align-items: end; gap: 18px; margin-bottom: 14px; }
+      .stage-heading h2 { margin: 0; font-size: clamp(24px, 2.2vw, 32px); line-height: 1.18; font-weight: 700; letter-spacing: 0.006em; }
+      .stage-heading p { margin: 5px 0 0; color: var(--ink-dim); line-height: 1.45; }
+      .stage-heading .timecode { color: var(--amber); }
+      .rundown-stage .video-stage { width: min(100%, calc(56vh * 16 / 9)); aspect-ratio: 16 / 9; min-height: 0; margin-inline: auto; }
+
+      .transcript-peek { display: grid; grid-template-columns: auto 1fr auto; gap: 14px; align-items: start; padding: 16px 0; border-bottom: 1px solid var(--line); }
+      .transcript-peek .timecode { color: var(--blue); font-size: 13px; }
+      .transcript-peek p { margin: 0; color: var(--ink-dim); max-width: 68ch; line-height: 1.58; }
+
+      .clip-reel {
+        grid-area: reel;
+        padding: 22px 14px 126px;
+        border-left: 1px solid var(--line);
+        background: #1d1e19;
+      }
+
+      .reel-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 0 7px 14px; }
+      .reel-heading h2 { margin: 0; font-size: 20px; line-height: 1.2; font-weight: 700; letter-spacing: 0.008em; }
+      .reel-heading span { color: var(--ink-faint); font-family: var(--font-time); font-size: 12px; white-space: nowrap; }
+      .clip-output-list { list-style: none; margin: 0; padding: 0; border-bottom: 1px solid #3b3c34; }
+      .clip-output-item { margin: 0; padding: 0; }
+      .clip-output-row {
+        width: 100%;
+        min-height: 56px;
+        display: grid;
+        grid-template-columns: 42px minmax(0, 1fr) auto;
+        gap: 8px;
+        align-items: center;
+        padding: 7px;
+        border: 0;
+        border-top: 1px solid #3b3c34;
+        background: transparent;
+        color: inherit;
+        text-align: left;
+      }
+
+      .clip-output-row:hover,
+      .clip-output-row[aria-pressed="true"] {
+        background: #292a23;
+      }
+
+      .clip-output-row:focus-visible { box-shadow: inset 0 0 0 2px var(--focus); }
+
+      .clip-output-thumb {
+        width: 42px;
+        height: 24px;
+        border: 1px solid #55564c;
+        background: #0c0d0a;
+        object-fit: cover;
+      }
+
+      .clip-output-main { min-width: 0; }
+      .clip-output strong { display: block; overflow: hidden; color: var(--ink); font-size: 14px; line-height: 1.35; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+      .clip-output-meta { display: block; margin-top: 3px; color: var(--ink-faint); font-family: var(--font-time); font-size: 11px; line-height: 1.35; white-space: nowrap; }
+      .clip-output-status { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; line-height: 1.35; font-weight: 600; white-space: nowrap; }
+      .clip-output-status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+      .clip-output-status.ready { color: var(--green); }
+      .clip-output-status.rendering { color: #ffd47b; }
+      .clip-output-status.failed { color: var(--red); }
+
+      .clip-peek {
+        position: absolute;
+        z-index: 12;
+        top: 18px;
+        left: 18px;
+        right: 18px;
+        display: grid;
+        gap: 12px;
+        padding: 14px;
+        border: 1px solid #64655b;
+        background: #20211c;
+        box-shadow: var(--shadow);
+      }
+
+      .clip-peek header,
+      .clip-peek footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .clip-peek header strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .clip-peek .video-stage { width: 100%; min-height: 0; aspect-ratio: 16 / 9; }
+      .clip-peek-state {
+        position: absolute;
+        z-index: 3;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        background: rgba(8, 9, 7, 0.7);
+      }
+
+      .clip-peek footer .timecode { color: var(--ink-dim); font-size: 13px; }
+      .clip-peek-actions { display: flex; gap: 8px; }
+
+      .prototype-switcher {
+        position: fixed;
+        z-index: 90;
+        left: 50%;
+        bottom: 14px;
+        transform: translateX(-50%);
+        width: min(820px, calc(100vw - 28px));
+        min-height: 68px;
+        display: grid;
+        grid-template-columns: auto minmax(180px, 1fr) auto 1px minmax(260px, auto);
+        align-items: center;
+        gap: 10px;
+        padding: 9px 12px;
+        border: 1px solid #767265;
+        border-radius: 16px;
+        background: #eee8d9;
+        color: #1b1c18;
+        box-shadow: 0 16px 36px rgba(0, 0, 0, 0.42);
+      }
+
+      .switch-arrow {
+        width: 40px;
+        height: 40px;
+        display: grid;
+        place-items: center;
+        border: 1px solid #a8a291;
+        border-radius: 50%;
+        background: #f9f5ea;
+        color: #22231e;
+      }
+
+      .variant-name { min-width: 0; text-align: center; }
+      .variant-name strong { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .variant-name span { display: block; color: #706d63; font-size: 11px; }
+      .switch-divider { width: 1px; height: 34px; background: #b9b3a2; }
+      .state-switches { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 5px; }
+      .state-switches button { min-height: 30px; border: 1px solid transparent; border-radius: 4px; padding: 0 9px; background: transparent; color: #5f5d54; font-size: 11px; }
+      .state-switches button.active { border-color: #8e8878; background: #262720; color: #fff9ea; }
+
+      .mobile-state-label { display: none; }
+
+      @media (max-width: 1080px) {
+        .rundown-layout { grid-template-columns: 260px minmax(360px, 1fr) 260px; }
+        .source-ribbon { padding-left: 40px; padding-right: 40px; }
+      }
+
+      @media (max-width: 900px) {
+        .app-bar { grid-template-columns: 1fr auto; padding: 0 16px; }
+        .main-nav { display: none; }
+        .account span { display: none; }
+        .source-ribbon { grid-template-columns: 1fr; gap: 10px; padding-top: 12px; padding-bottom: 12px; }
+        .source-actions { justify-content: flex-end; }
+        .rundown-layout { display: block; min-height: auto; }
+        .rundown-layout { height: auto; grid-template-areas: none; }
+        .clip-builder,
+        .rundown-stage,
+        .clip-reel { overflow: visible; padding-bottom: 36px; }
+        .clip-builder { border-right: 0; border-bottom: 1px solid var(--line); }
+        .clip-reel { border-top: 1px solid var(--line); border-left: 0; }
+        .prototype-switcher { grid-template-columns: auto 1fr auto; }
+        .prototype-switcher .switch-divider,
+        .state-switches { display: none; }
+        .mobile-state-label { display: block; margin-top: 2px; color: #706d63; font-size: 11px; line-height: 1.35; }
+      }
+
+      @media (max-width: 560px) {
+        body { padding-bottom: 96px; }
+        .prototype-note { display: none; }
+        .app-bar { height: 62px; }
+        .brand span { display: none; }
+        .source-thumb { width: 66px; }
+        .source-copy strong { font-size: 13px; }
+        .rundown-stage,
+        .clip-builder,
+        .clip-reel { padding-left: 14px; padding-right: 14px; }
+        .stage-heading { align-items: start; }
+        .stage-heading .timecode { display: none; }
+        .transcript-peek { grid-template-columns: auto 1fr; }
+        .transcript-peek .button { display: none; }
+        .think-trigger { right: 10px; bottom: 96px; }
+        .think-drawer { top: 10px; right: 10px; bottom: 96px; width: calc(100vw - 20px); }
+        .prototype-switcher { bottom: 10px; min-height: 62px; padding: 7px 9px; border-radius: 14px; }
+        .switch-arrow { width: 38px; height: 38px; }
+      }
+
+      /* Identity pass: aesthetic only. The production-line layout and controls stay unchanged. */
+      body { background: var(--bench); }
+
+      .prototype-note {
+        display: none;
+      }
+
+      .app-bar {
+        height: 70px;
+        border-bottom: 2px solid var(--amber);
+        background: #0e0f10;
+        box-shadow: 0 8px 0 rgba(0, 0, 0, 0.18);
+      }
+
+      .brand { gap: 12px; }
+      .brand-mark {
+        width: 34px;
+        height: 28px;
+        border-radius: 0;
+        background: var(--amber);
+        color: var(--paper-ink);
+        font-family: var(--font-display);
+        font-size: 22px;
+        font-style: italic;
+        line-height: 1;
+        transform: skewX(-10deg);
+        clip-path: polygon(7px 0, 100% 0, calc(100% - 7px) 100%, 0 100%);
+      }
+
+      .brand-mark::after { display: none; }
+      .brand-mark + div { min-width: 0; }
+      .brand strong,
+      .clip-builder h1,
+      .stage-heading h2,
+      .reel-heading h2,
+      .think-drawer header strong,
+      .think-copy > strong {
+        font-family: var(--font-display);
+        font-weight: 700;
+        letter-spacing: 0.035em;
+      }
+
+      .brand strong {
+        font-size: 22px;
+        line-height: 0.95;
+        text-transform: uppercase;
+      }
+
+      .brand span {
+        margin-top: 4px;
+        color: var(--ink-faint);
+        font-family: var(--font-time);
+        font-size: 10px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .main-nav { align-self: stretch; gap: 24px; }
+      .main-nav button {
+        min-height: 100%;
+        border-bottom-width: 4px;
+        color: var(--ink-faint);
+        font-family: var(--font-display);
+        font-size: 17px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+
+      .main-nav button.active { color: var(--ink); }
+      .account { font-family: var(--font-time); font-size: 12px; }
+      .account a {
+        color: var(--ink);
+        text-decoration-color: var(--amber);
+        text-decoration-thickness: 2px;
+        text-underline-offset: 4px;
+      }
+
+      .source-ribbon {
+        isolation: isolate;
+        min-height: 82px;
+        padding: 12px 38px;
+        border-bottom: 1px solid #6b2730;
+        background: #131517;
+      }
+
+      .source-ribbon::before {
+        z-index: -1;
+        inset: 0 42% 0 0;
+        width: auto;
+        background-image: radial-gradient(circle, rgba(239, 239, 239, 0.18) 0 1px, transparent 1.3px);
+        background-size: 7px 7px;
+        opacity: 0.3;
+        mask-image: linear-gradient(90deg, #000, transparent);
+      }
+
+      .source-ribbon::after {
+        display: none;
+      }
+
+      .source-ident { gap: 15px; }
+      .source-thumb {
+        width: 92px;
+        border: 1px solid #666b78;
+        box-shadow: 5px 5px 0 #08090c;
+        clip-path: polygon(0 0, 100% 0, calc(100% - 8px) 100%, 0 100%);
+      }
+
+      .source-copy strong {
+        max-width: min(58vw, 760px);
+        font-family: var(--font-display);
+        font-size: clamp(17px, 1.6vw, 23px);
+        font-weight: 700;
+        letter-spacing: 0.025em;
+        line-height: 1.08;
+      }
+
+      .source-copy span {
+        margin-top: 5px;
+        color: var(--ink-dim);
+        font-family: var(--font-time);
+        font-size: 11px;
+        letter-spacing: 0.035em;
+      }
+
+      .button {
+        border-color: #555a67;
+        border-radius: 2px;
+        background: #1a1c22;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      }
+
+      .button:hover:not(:disabled) { border-color: #7d8494; background: #242730; }
+      .button.primary {
+        border-color: #ff6c5c;
+        background: var(--amber);
+        color: var(--paper-ink);
+        box-shadow: 4px 4px 0 #791f16;
+        font-family: var(--font-display);
+        font-size: 19px;
+        font-weight: 700;
+        letter-spacing: 0.035em;
+        text-transform: uppercase;
+      }
+
+      .button.primary:hover:not(:disabled) { background: #ff6858; transform: translate(-1px, -1px); }
+      .button.danger { border-color: #ff7a6a; background: var(--amber-soft); color: var(--ink); }
+      .button.source-change {
+        border-color: #858a96;
+        background: #101116;
+        box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.45);
+        color: var(--ink);
+        font-family: var(--font-display);
+        font-size: 15px;
+        letter-spacing: 0.025em;
+      }
+
+      .button.source-change:hover { border-color: var(--amber); background: #1b1d24; }
+      .rundown-layout { height: calc(100vh - 152px); }
+      .clip-builder { border-right-color: #343945; background: #19181c; }
+      .rundown-stage { background: #0e0f10; }
+      .clip-reel { border-left-color: #343945; background: #131517; }
+
+      .clip-builder h1,
+      .stage-heading h2,
+      .reel-heading h2 {
+        position: relative;
+        text-transform: uppercase;
+      }
+
+      .clip-builder h1::after,
+      .stage-heading h2::after,
+      .reel-heading h2::after {
+        content: "";
+        display: block;
+        width: 36px;
+        height: 4px;
+        margin-top: 7px;
+        background: var(--amber);
+        transform: skewX(-24deg);
+        transform-origin: left;
+      }
+
+      .clip-builder h1 { margin-bottom: 22px; font-size: 27px; }
+      .stage-heading h2 { font-size: clamp(27px, 2.4vw, 36px); }
+      .stage-heading p { margin-top: 7px; color: var(--ink-dim); }
+      .stage-heading .timecode { color: #7ec9ff; }
+      .reel-heading h2 { font-size: 23px; }
+      .reel-heading span { color: var(--ink-faint); }
+
+      .field label,
+      .field-label {
+        color: var(--ink-dim);
+        font-family: var(--font-display);
+        font-size: 16px;
+        font-weight: 600;
+        letter-spacing: 0.025em;
+      }
+
+      .field input,
+      .field textarea,
+      .field select {
+        border-color: #505563;
+        border-radius: 2px;
+        background: #0e0f10;
+      }
+
+      .field input:hover,
+      .field textarea:hover,
+      .field select:hover { border-color: #777d8b; }
+
+      .quality-row button.selected {
+        border-color: var(--amber);
+        background: var(--amber);
+        color: var(--paper-ink);
+        font-weight: 700;
+      }
+
+      .action-stack .button { min-height: 52px; }
+      .video-stage {
+        border: 1px solid #454a57;
+        background: #050608;
+        box-shadow: 9px 9px 0 #08090c;
+        clip-path: polygon(0 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%);
+      }
+
+      .video-stage img { opacity: 0.9; }
+      .video-stage::after { background: rgba(6, 7, 10, 0.08); }
+      .play-control {
+        width: 58px;
+        height: 58px;
+        border: 2px solid var(--ink);
+        border-radius: 2px;
+        background: rgba(14, 15, 16, 0.88);
+        box-shadow: 4px 4px 0 var(--amber-soft);
+        transform: translate(-50%, -50%) rotate(45deg);
+      }
+
+      .play-control .icon { transform: rotate(-45deg); }
+      .timeline { border-color: #343945; background: #10131b; }
+      .film-track { border-color: #4b5160; background: #252935; }
+      .selection-range { border-color: var(--amber); background: rgba(255, 65, 44, 0.2); }
+      .selection-range::before,
+      .selection-range::after { background: var(--amber); }
+      .playhead { background: #62b8ef; }
+      .playhead::before { border-top-color: #62b8ef; }
+      .trim-readout strong { color: var(--ink); }
+
+      .transcript-peek { border-bottom-color: #343945; }
+      .transcript-peek .timecode { color: #7ec9ff; }
+      .transcript-peek strong { color: var(--ink); font-weight: 600; }
+      .clip-output-list,
+      .clip-output-row { border-color: #343945; }
+      .clip-output-row:hover { background: #20232b; }
+      .clip-output-row[aria-pressed="true"] { background: #2b171a; box-shadow: inset 0 2px 0 var(--amber); }
+      .clip-output-thumb { border-color: #555b68; background: #090a0c; }
+      .clip-output strong { font-weight: 600; }
+      .clip-output-meta { color: var(--ink-faint); }
+      .clip-output-status::before { border-radius: 0; transform: rotate(45deg); }
+      .clip-output-status.rendering { color: #ffd166; }
+      .clip-output-status.failed { color: #ff887a; }
+      .clip-output-status.ready { color: #82dc9a; }
+
+      .clip-peek {
+        border-color: #5b6170;
+        border-top: 3px solid var(--amber);
+        background: #121419;
+        box-shadow: 8px 8px 0 rgba(0, 0, 0, 0.6);
+      }
+
+      .think-trigger {
+        bottom: 102px;
+        border-color: #8d3340;
+        border-radius: 2px;
+        background: #171218;
+        box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.55);
+      }
+
+      .think-trigger .icon { color: var(--amber); }
+      .think-trigger strong {
+        font-family: var(--font-display);
+        font-size: 16px;
+        letter-spacing: 0.035em;
+        text-transform: uppercase;
+      }
+
+      .think-drawer {
+        border-color: #575d6b;
+        border-top: 4px solid var(--amber);
+        background: #101217;
+        box-shadow: 10px 10px 0 rgba(0, 0, 0, 0.55);
+      }
+
+      .think-drawer header { border-bottom-color: #343945; }
+      .think-drawer header strong { font-size: 22px; text-transform: uppercase; }
+      .think-connection { color: #82dc9a !important; font-family: var(--font-time); text-transform: uppercase; }
+      .think-copy .example,
+      .think-composer textarea { border-color: #4b5160; background: #0b0c10; }
+      .think-composer { border-top-color: #343945; }
+
+      .prototype-switcher {
+        left: 14px;
+        bottom: 14px;
+        width: auto;
+        min-height: 0;
+        display: block;
+        transform: none;
+        padding: 0;
+        border: 1px solid #515765;
+        border-top: 3px solid var(--amber);
+        border-radius: 2px;
+        background: #121419;
+        color: var(--ink);
+        box-shadow: 7px 7px 0 rgba(0, 0, 0, 0.58);
+      }
+
+      .prototype-switcher[open] {
+        width: min(640px, calc(100vw - 28px));
+        padding-bottom: 9px;
+      }
+
+      .variant-name {
+        min-height: 40px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 7px 11px;
+        text-align: left;
+        cursor: pointer;
+        list-style: none;
+      }
+
+      .variant-name::-webkit-details-marker { display: none; }
+      .variant-name::before {
+        content: "+";
+        color: var(--amber);
+        font-family: var(--font-time);
+        font-size: 17px;
+        line-height: 1;
+      }
+
+      .prototype-switcher[open] .variant-name::before { content: "−"; }
+      .variant-name strong {
+        font-family: var(--font-display);
+        font-size: 16px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .variant-name span { color: var(--ink-faint); font-family: var(--font-time); }
+      .mobile-state-label { display: inline; margin-left: auto; font-size: 11px; line-height: 1.2; }
+      .state-switches { justify-content: flex-start; padding: 3px 10px 0; }
+      .state-switches button {
+        border-radius: 1px;
+        color: var(--ink-dim);
+        font-family: var(--font-time);
+      }
+
+      .state-switches button:hover { border-color: #565c69; color: var(--ink); }
+      .state-switches button.active { border-color: var(--amber); background: var(--amber); color: var(--paper-ink); }
+      .prototype-switcher-note {
+        display: block;
+        padding: 5px 11px 0;
+        color: var(--ink-faint);
+        font-family: var(--font-time);
+        font-size: 10px;
+        letter-spacing: 0.03em;
+      }
+
+      @media (max-width: 900px) {
+        html,
+        body { overflow-x: hidden; }
+        body { padding-bottom: 68px; }
+        .source-ribbon { padding-inline: 20px; }
+        .source-copy strong { max-width: 64vw; }
+        .source-ident { width: 100%; max-width: 100%; }
+        .source-copy { min-width: 0; flex: 1; }
+        .rundown-stage {
+          width: 100%;
+          max-width: 100vw;
+          padding-top: 24px;
+          overflow-x: hidden;
+        }
+        .rundown-stage .video-stage { width: 100%; min-height: 0; }
+        .timeline { width: 100%; padding-inline: 12px; }
+        .trim-readout { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; font-size: 11px; }
+        .trim-readout span { min-width: 0; }
+        .trim-readout span:nth-child(2) { text-align: center; }
+        .trim-readout span:last-child { text-align: right; }
+        .trim-readout strong { display: block; }
+        .prototype-switcher {
+          left: 10px;
+          bottom: 10px;
+        }
+        .state-switches {
+          display: flex;
+          justify-content: flex-start;
+          flex-wrap: nowrap;
+          overflow-x: auto;
+          padding-bottom: 2px;
+        }
+        .mobile-state-label { display: inline; }
+        .think-trigger { bottom: 10px; }
+        .think-drawer { bottom: 10px; }
+      }
+
+      @media (max-width: 560px) {
+        body { padding-bottom: 66px; }
+        .source-ribbon { padding: 12px 16px; }
+        .source-copy strong { max-width: calc(100vw - 126px); }
+        .button.source-change { width: 100%; }
+        .prototype-switcher { width: auto; min-height: 0; border-radius: 2px; }
+        .prototype-switcher[open] { width: calc(100vw - 20px); }
+        .prototype-switcher[open] .state-switches { padding-bottom: 2px; }
+        .think-trigger { right: 10px; bottom: 10px; }
+        .think-drawer { bottom: 10px; }
+      }
+
+      /* Cross-surface prototype: current authenticated routes in the approved identity. */
+      .is-hidden { display: none !important; }
+
+      .page-switches {
+        display: flex;
+        gap: 5px;
+        padding: 3px 10px 7px;
+        overflow-x: auto;
+      }
+
+      .page-switches button,
+      .state-switches button {
+        flex: none;
+        min-height: 30px;
+        border: 1px solid transparent;
+        border-radius: 1px;
+        padding: 0 9px;
+        background: transparent;
+        color: var(--ink-dim);
+        font-family: var(--font-time);
+        font-size: 11px;
+      }
+
+      .page-switches button:hover,
+      .page-switches button.active { border-color: #565c69; color: var(--ink); }
+      .page-switches button.active { border-color: var(--amber); background: var(--amber); color: var(--paper-ink); }
+
+      .creator-state-controls {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        align-items: center;
+        gap: 8px;
+        margin: 0 10px;
+        padding-top: 7px;
+        border-top: 1px solid #343945;
+      }
+
+      .creator-state-controls > span {
+        color: var(--ink-faint);
+        font-family: var(--font-time);
+        font-size: 10px;
+        text-transform: uppercase;
+      }
+
+      .creator-state-controls .state-switches { padding: 0; overflow-x: auto; }
+
+      .start-layout { height: calc(100vh - 70px); }
+      .start-builder { background: #19181c; }
+      .source-tabs {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        margin-bottom: 18px;
+        border-bottom: 1px solid #434755;
+      }
+
+      .source-tabs button {
+        min-height: 42px;
+        border: 0;
+        border-bottom: 3px solid transparent;
+        background: transparent;
+        color: var(--ink-faint);
+        font-family: var(--font-display);
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: 0.025em;
+      }
+
+      .source-tabs button.active { border-bottom-color: var(--amber); color: var(--ink); }
+      .source-validity { min-height: 18px; color: var(--ink-faint); font-family: var(--font-time); font-size: 11px; }
+      .start-builder .action-stack { margin-top: 18px; }
+
+      .empty-media-bay {
+        min-height: 420px;
+        display: grid;
+        place-items: center;
+        border: 1px solid #454a57;
+        background: #08090c;
+        clip-path: polygon(0 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%);
+      }
+
+      .empty-media-bay > div { display: grid; justify-items: center; gap: 12px; color: var(--ink-faint); }
+      .empty-media-bay svg { width: 62px; height: 62px; fill: none; stroke: #677087; stroke-width: 1.5; }
+      .empty-media-bay span { font-family: var(--font-display); font-size: 18px; letter-spacing: 0.025em; }
+      .empty-reel {
+        margin: 0 7px;
+        padding: 18px 0;
+        border-top: 1px solid #343945;
+        border-bottom: 1px solid #343945;
+        color: var(--ink-faint);
+        font-size: 13px;
+      }
+
+      .surface-page {
+        min-height: calc(100vh - 70px);
+        padding: 28px clamp(20px, 3.5vw, 52px) 88px;
+        background: #090b10;
+      }
+
+      .surface-wrap { width: min(1280px, 100%); margin-inline: auto; }
+      .page-mast {
+        position: relative;
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 24px;
+        padding: 14px 0 18px;
+        border-bottom: 1px solid #434755;
+      }
+
+      .page-mast::after {
+        content: "";
+        position: absolute;
+        right: 0;
+        bottom: -1px;
+        width: min(28vw, 330px);
+        height: 3px;
+        background: var(--amber);
+        transform: skewX(-24deg);
+        transform-origin: right;
+      }
+
+      .page-mast h1,
+      .moment-search h2,
+      .source-section-heading h2,
+      .video-source-copy h1,
+      .video-clips-title h2,
+      .preview-heading h2 {
+        margin: 0;
+        font-family: var(--font-display);
+        font-weight: 700;
+        letter-spacing: 0.035em;
+        line-height: 1.02;
+        text-transform: uppercase;
+      }
+
+      .page-mast h1 { font-size: clamp(34px, 4.2vw, 58px); }
+      .page-mast p { max-width: 62ch; margin: 8px 0 0; color: var(--ink-dim); }
+      .page-mast-actions { display: flex; align-items: center; gap: 14px; }
+      .surface-count { color: var(--ink-faint); font-family: var(--font-time); font-size: 12px; white-space: nowrap; }
+
+      .library-tabs {
+        display: flex;
+        gap: 22px;
+        border-bottom: 1px solid #343945;
+      }
+
+      .library-tabs button {
+        min-height: 48px;
+        border: 0;
+        border-bottom: 3px solid transparent;
+        background: transparent;
+        color: var(--ink-faint);
+        font-family: var(--font-display);
+        font-size: 17px;
+        font-weight: 600;
+        letter-spacing: 0.035em;
+        text-transform: uppercase;
+      }
+
+      .library-tabs button.active { border-bottom-color: var(--amber); color: var(--ink); }
+
+      .moment-search {
+        display: grid;
+        grid-template-columns: minmax(230px, 0.7fr) minmax(420px, 1.3fr);
+        gap: clamp(22px, 4vw, 64px);
+        margin-top: 24px;
+        padding: 20px;
+        border: 1px solid #434755;
+        border-top: 3px solid #6d2630;
+        background: #11151f;
+      }
+
+      .moment-search h2 { font-size: 26px; }
+      .moment-search-copy p { margin: 7px 0 0; color: var(--ink-dim); font-size: 14px; line-height: 1.5; }
+      .search-instrument { min-width: 0; }
+      .search-topline { display: flex; justify-content: space-between; align-items: end; gap: 16px; margin-bottom: 10px; }
+      .search-topline label { color: var(--ink-dim); font-family: var(--font-display); font-size: 15px; font-weight: 600; }
+      .search-modes { display: flex; gap: 4px; }
+      .search-modes button {
+        min-height: 30px;
+        border: 1px solid #4d5361;
+        border-radius: 1px;
+        padding: 0 10px;
+        background: #0b0d12;
+        color: var(--ink-dim);
+        font-size: 12px;
+      }
+      .search-modes button.active { border-color: #7ec9ff; color: #cceaff; }
+      .search-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+      .search-controls input {
+        min-width: 0;
+        min-height: 44px;
+        border: 1px solid #505563;
+        border-radius: 1px;
+        padding: 9px 12px;
+        background: #08090c;
+        color: var(--ink);
+      }
+      .search-help { margin: 7px 0 0; color: var(--ink-faint); font-size: 12px; }
+
+      .source-section-heading,
+      .video-clips-title {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 16px;
+        margin: 30px 0 13px;
+      }
+
+      .source-section-heading h2,
+      .video-clips-title h2 { font-size: 26px; }
+      .source-section-heading span { color: var(--ink-faint); font-family: var(--font-time); font-size: 11px; }
+
+      .source-contact-sheet {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .source-card {
+        min-width: 0;
+        position: relative;
+        border: 1px solid #3f4552;
+        background: #11151f;
+      }
+
+      .source-card-link {
+        width: 100%;
+        height: 100%;
+        display: block;
+        border: 0;
+        padding: 0;
+        background: transparent;
+        color: inherit;
+        text-align: left;
+      }
+
+      .source-card-link:hover { background: #171c28; }
+      .source-card-link:focus-visible { box-shadow: inset 0 0 0 2px var(--focus); }
+      .source-card-media { position: relative; aspect-ratio: 16 / 9; overflow: hidden; background: #050608; }
+      .source-card-media img { width: 100%; height: 100%; display: block; object-fit: cover; }
+      .source-card-processing {
+        position: absolute;
+        top: 8px;
+        left: 8px;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 7px;
+        background: #2f2818;
+        color: #ffd166;
+        font-family: var(--font-time);
+        font-size: 10px;
+      }
+
+      .source-card-processing::before,
+      .clip-status::before { content: ""; width: 6px; height: 6px; background: currentColor; transform: rotate(45deg); }
+      .source-card-body { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; padding: 13px 14px 15px; }
+      .source-card-copy { min-width: 0; }
+      .source-card-copy h3 { margin: 0; overflow: hidden; font-size: 15px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+      .source-card-copy p { margin: 4px 0 0; color: var(--ink-faint); font-family: var(--font-time); font-size: 10px; }
+      .source-card-count { display: grid; align-content: start; justify-items: end; min-width: 45px; }
+      .source-card-count strong { font-family: var(--font-display); font-size: 27px; line-height: 0.9; }
+      .source-card-count span { color: var(--ink-faint); font-size: 11px; }
+      .source-card-menu {
+        position: absolute;
+        z-index: 2;
+        top: calc(56.25% + 8px);
+        right: 8px;
+        width: 30px;
+        height: 30px;
+        display: grid;
+        place-items: center;
+        border: 1px solid transparent;
+        background: #11151f;
+        color: var(--ink-dim);
+      }
+
+      .source-card-menu:hover { border-color: #555b68; color: var(--ink); }
+
+      .video-prototype { padding-top: 20px; }
+      .back-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        min-height: 34px;
+        border: 0;
+        padding: 0;
+        background: transparent;
+        color: #9dcfff;
+        font-weight: 600;
+      }
+
+      .video-source-mast {
+        position: relative;
+        display: grid;
+        grid-template-columns: 220px minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 24px;
+        margin-top: 12px;
+        padding: 18px;
+        border: 1px solid #434755;
+        background: #11151f;
+        overflow: hidden;
+      }
+
+      .video-source-thumb { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border: 1px solid #5b6271; }
+      .video-source-copy { min-width: 0; position: relative; z-index: 1; }
+      .video-source-label { margin: 0 0 7px; color: #9dcfff; font-family: var(--font-time); font-size: 11px; text-transform: uppercase; }
+      .video-source-copy h1 {
+        max-width: 26ch;
+        font-size: clamp(28px, 3vw, 42px);
+        line-height: 0.96;
+        text-wrap: balance;
+      }
+      .video-source-copy > p:last-child { margin: 7px 0 0; color: var(--ink-faint); }
+      .video-proto-actions { position: relative; z-index: 1; display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; max-width: 340px; }
+      .video-delete-action { color: #ff9b8f; }
+
+      .clip-grid-prototype {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .clip-card-prototype {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        border: 1px solid #3f4552;
+        background: #11151f;
+      }
+
+      .clip-card-media { position: relative; aspect-ratio: 16 / 9; overflow: hidden; background: #050608; }
+      .clip-card-media img { width: 100%; height: 100%; display: block; object-fit: cover; }
+      .clip-card-play {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        border: 0;
+        background: transparent;
+      }
+      .clip-card-play span { width: 42px; height: 42px; display: grid; place-items: center; border: 2px solid #f5efeb; background: rgba(9, 11, 16, 0.78); transform: rotate(45deg); }
+      .clip-card-play .icon { transform: rotate(-45deg); }
+      .clip-status {
+        position: absolute;
+        top: 8px;
+        left: 8px;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 7px;
+        background: #121419;
+        font-family: var(--font-time);
+        font-size: 10px;
+      }
+      .clip-status.ready { color: #82dc9a; }
+      .clip-status.rendering { color: #ffd166; }
+      .clip-status.failed { color: #ff887a; }
+      .clip-card-body { min-height: 156px; display: flex; flex-direction: column; gap: 5px; padding: 13px; }
+      .clip-card-body h3 { margin: 0; font-size: 15px; line-height: 1.35; }
+      .clip-card-meta { margin: 0; color: var(--ink-faint); font-family: var(--font-time); font-size: 10px; }
+      .clip-failure-copy { margin: 5px 0 0; color: #ffb0a8; font-size: 12px; line-height: 1.4; }
+      .clip-recovery { color: #cceaff; text-decoration-color: #248fd2; text-underline-offset: 3px; }
+      .clip-card-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-top: auto; padding-top: 9px; border-top: 1px solid #343945; }
+      .clip-card-actions .button { min-height: 30px; padding-inline: 8px; font-size: 11px; }
+      .clip-card-actions .delete { margin-left: auto; border-color: transparent; color: #ff9b8f; }
+
+      .preview-backdrop {
+        position: fixed;
+        z-index: 80;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        padding: 20px;
+        background: rgba(3, 4, 7, 0.88);
+      }
+
+      .preview-dialog {
+        width: min(860px, 100%);
+        max-height: calc(100vh - 40px);
+        overflow: auto;
+        border: 1px solid #596171;
+        border-top: 4px solid var(--amber);
+        background: #0d1017;
+        box-shadow: 0 24px 70px rgba(0, 0, 0, 0.62);
+      }
+
+      .preview-heading { display: flex; justify-content: space-between; gap: 18px; align-items: start; padding: 16px 18px; border-bottom: 1px solid #343945; }
+      .preview-heading h2 { font-size: clamp(24px, 3vw, 34px); }
+      .preview-heading span { display: block; margin-top: 4px; color: var(--ink-faint); font-family: var(--font-time); font-size: 11px; }
+      .preview-media { position: relative; aspect-ratio: 16 / 9; overflow: hidden; background: #030407; }
+      .preview-media img { width: 100%; height: 100%; display: block; object-fit: cover; }
+      .preview-media .play-control { width: 58px; height: 58px; }
+      .preview-media-controls {
+        position: absolute;
+        left: 16px;
+        right: 16px;
+        bottom: 13px;
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 10px;
+        color: #fff;
+        font-family: var(--font-time);
+        font-size: 11px;
+        text-shadow: 0 1px 3px #000;
+      }
+      .preview-scrub { height: 4px; background: rgba(255, 255, 255, 0.28); }
+      .preview-scrub span { display: block; width: 38%; height: 100%; background: var(--amber); }
+      .preview-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 18px; padding: 14px 18px 10px; }
+      .preview-nav,
+      .preview-downloads { display: flex; gap: 8px; }
+      .preview-keyboard-hint { margin: 0; padding: 0 18px 16px; color: var(--ink-faint); font-size: 12px; }
+
+      @media (max-width: 980px) {
+        .source-contact-sheet,
+        .clip-grid-prototype { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .video-source-mast { grid-template-columns: 180px minmax(0, 1fr); }
+        .video-proto-actions { grid-column: 1 / -1; justify-content: flex-start; max-width: none; }
+      }
+
+      @media (max-width: 900px) {
+        .app-bar {
+          grid-template-columns: auto minmax(0, 1fr) auto;
+          gap: 12px;
+        }
+        .brand span { display: none; }
+        .main-nav {
+          display: inline-flex;
+          justify-self: center;
+          gap: 14px;
+        }
+        .main-nav button { font-size: 14px; }
+      }
+
+      @media (max-width: 700px) {
+        .surface-page { padding: 20px 14px 76px; }
+        .page-mast { align-items: start; flex-direction: column; gap: 12px; }
+        .page-mast::after { width: 42vw; }
+        .page-mast-actions { width: 100%; justify-content: space-between; }
+        .moment-search { grid-template-columns: 1fr; gap: 16px; padding: 16px; }
+        .search-controls { grid-template-columns: 1fr; }
+        .search-controls .button { width: 100%; }
+        .source-contact-sheet { grid-template-columns: 1fr; }
+        .source-card { display: grid; grid-template-columns: minmax(112px, 40%) minmax(0, 1fr); }
+        .source-card-link { display: contents; }
+        .source-card-media { height: 100%; min-height: 118px; aspect-ratio: auto; }
+        .source-card-body { align-content: center; }
+        .source-card-count { display: none; }
+        .source-card-menu { top: 8px; right: 8px; }
+        .video-source-mast { grid-template-columns: 1fr; gap: 14px; }
+        .video-source-thumb { width: min(100%, 360px); }
+        .video-source-copy h1 { white-space: normal; }
+        .clip-grid-prototype { grid-template-columns: 1fr; }
+        .clip-card-prototype { display: grid; grid-template-columns: minmax(126px, 40%) minmax(0, 1fr); }
+        .clip-card-media { height: 100%; min-height: 156px; aspect-ratio: auto; }
+        .preview-backdrop { padding: 10px; }
+        .preview-dialog { max-height: calc(100vh - 20px); }
+        .preview-toolbar { align-items: stretch; flex-direction: column; }
+        .preview-nav { display: grid; grid-template-columns: 1fr 1fr; }
+        .preview-nav .button { width: 100%; }
+        .creator-state-controls { grid-template-columns: 1fr; }
+      }
+
+      @media (max-width: 480px) {
+        .source-card,
+        .clip-card-prototype { grid-template-columns: minmax(108px, 36%) minmax(0, 1fr); }
+        .source-card-body { padding: 10px; }
+        .clip-card-body { min-height: 0; padding: 10px; }
+        .clip-card-actions .button:nth-child(n + 4) { display: none; }
+        .preview-heading { padding: 13px; }
+        .preview-toolbar { padding: 12px 13px 8px; }
+        .preview-downloads { display: grid; grid-template-columns: 1fr 1fr; }
+        .preview-keyboard-hint { display: none; }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+      }
+    </style>
+  </head>
+  <body>
+    <!--
+      THESIS: Carpo is the same fast clip-production line in a sharper inherited visual identity; it refuses generic olive SaaS styling and borrowed game mechanics.
+      OWN-WORLD: Carbon-black and ink-navy fields, restrained vermilion action marks, dusty-rose data, cobalt time marks, condensed headings, flat rules, unobstructed media, and restrained halftone atmosphere.
+      STORY: Keep one source visible, mark a moment, create repeatedly, and scan accumulating clips without relearning the workflow.
+      FIRST VIEWPORT: The existing builder, dominant source stage, and compact clip reel remain fixed beneath a vivid source identity strip; Create clip stays the primary action.
+      FORM: User-pinned aesthetic-only translation of the approved production-line layout, seed 934d701d.
+      FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
+    -->
+    <svg width="0" height="0" aria-hidden="true" style="position:absolute">
+      <symbol id="icon-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7Z" /></symbol>
+      <symbol id="icon-pause" viewBox="0 0 24 24"><path d="M9 5v14M15 5v14" /></symbol>
+      <symbol id="icon-chevron-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" /></symbol>
+      <symbol id="icon-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></symbol>
+      <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7" /></symbol>
+      <symbol id="icon-alert" viewBox="0 0 24 24"><path d="M12 9v4m0 4h.01M10.3 4.9 2.7 18a2 2 0 0 0 1.7 3h15.2a2 2 0 0 0 1.7-3L13.7 4.9a2 2 0 0 0-3.4 0Z" /></symbol>
+      <symbol id="icon-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6" /></symbol>
+      <symbol id="icon-spark" viewBox="0 0 24 24"><path d="m12 3 1.4 4.6L18 9l-4.6 1.4L12 15l-1.4-4.6L6 9l4.6-1.4Z" /></symbol>
+      <symbol id="icon-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" /></symbol>
+      <symbol id="icon-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.3" fill="currentColor" stroke="none" /><circle cx="12" cy="12" r="1.3" fill="currentColor" stroke="none" /><circle cx="19" cy="12" r="1.3" fill="currentColor" stroke="none" /></symbol>
+      <symbol id="icon-film" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="1.5" /><path d="M7 5v14M17 5v14M3.5 9h3.5M17 9h3.5M3.5 15h3.5M17 15h3.5" /></symbol>
+      <symbol id="icon-skip-back" viewBox="0 0 24 24"><path d="M6 5v14m13-12-9 5 9 5Z" /></symbol>
+      <symbol id="icon-skip-forward" viewBox="0 0 24 24"><path d="M18 5v14M5 7l9 5-9 5Z" /></symbol>
+      <symbol id="icon-download" viewBox="0 0 24 24"><path d="M12 3v12m0 0 5-5m-5 5-5-5M5 21h14" /></symbol>
+    </svg>
+
+    <div class="prototype-note">Aesthetic prototype · illustrative data · no real actions</div>
+    <div id="surface" aria-live="polite"></div>
+
+    <aside class="think-drawer" id="think-drawer" aria-label="Ask Carpo" aria-hidden="true">
+      <header>
+        <div><strong>Ask Carpo</strong><span>Describe clips by timestamp, spoken phrase, or idea. You approve them before creation.</span></div>
+        <span class="think-connection">Ready</span>
+        <button class="button quiet small" type="button" data-action="close-think" aria-label="Close Carpo"><svg class="icon"><use href="#icon-close"></use></svg></button>
+      </header>
+      <div class="think-copy">
+        <strong>Try an instruction</strong>
+        <p>“Clip every time ‘code’ is said.”</p>
+        <p>“Find the strongest explanation of the main idea.”</p>
+        <p>“Clip from 2:10 to 2:28 and call it PO tokens explained.”</p>
+      </div>
+      <div class="think-composer">
+        <textarea aria-label="Clip instruction" placeholder="Clip by time, phrase, or idea…"></textarea>
+        <footer><button class="button small" type="button">Send</button></footer>
+      </div>
+    </aside>
+
+    <button class="think-trigger" id="think-trigger" type="button" data-action="open-think">
+      <svg class="icon"><use href="#icon-spark"></use></svg>
+      <strong>Ask Carpo</strong>
+    </button>
+
+    <details class="prototype-switcher">
+      <summary class="variant-name"><strong>Demo pages</strong><span class="mobile-state-label" id="mobile-state-label"></span></summary>
+      <div class="page-switches" id="page-switches"></div>
+      <div class="creator-state-controls" id="creator-state-controls">
+        <span>Active source state</span>
+        <div class="state-switches" id="state-switches"></div>
+      </div>
+      <span class="prototype-switcher-note">Aesthetic only · illustrative data · no real actions</span>
+    </details>
+
+    <script>
+      const makeSourceFrame = (headline, index, shift = 0) => `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(`
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720">
+          <rect width="1280" height="720" fill="#090b10" />
+          <rect x="42" y="42" width="1196" height="636" fill="#182235" stroke="#5c6982" stroke-width="3" />
+          <polygon points="0,0 ${430 + shift},0 ${700 + shift},720 0,720" fill="#791f16" />
+          <polygon points="${352 + shift},0 ${396 + shift},0 ${668 + shift},720 ${624 + shift},720" fill="#ff412c" />
+          <g fill="#70a0ff" opacity="0.9">
+            <rect x="820" y="142" width="330" height="20" />
+            <rect x="880" y="190" width="270" height="20" />
+            <rect x="760" y="238" width="390" height="20" />
+          </g>
+          <g fill="#f5efeb" font-family="Arial, sans-serif">
+            <text x="86" y="140" font-size="34" font-weight="700" letter-spacing="8">CREATOR WORKFLOW</text>
+            <text x="86" y="310" font-size="86" font-weight="800" letter-spacing="2">${headline}</text>
+            <text x="88" y="382" font-size="26" letter-spacing="4" fill="#ccbfc3">HOW ONE SOURCE BECOMES A REPEATABLE SERIES</text>
+          </g>
+          <g transform="translate(760 430)">
+            <rect width="390" height="126" fill="#0d111b" stroke="#5c6982" stroke-width="3" />
+            <path d="M28 84 70 52l40 18 54-42 46 44 62-32 42 44 48-24" fill="none" stroke="#70a0ff" stroke-width="10" />
+            <rect x="28" y="96" width="334" height="7" fill="#343c4f" />
+            <rect x="118" y="96" width="104" height="7" fill="#ff412c" />
+          </g>
+          <text x="1128" y="632" fill="#f5efeb" font-family="Arial, sans-serif" font-size="38" font-weight="700">0${index}</text>
+        </svg>`)}`;
+      const THUMBNAIL = makeSourceFrame("ONE SOURCE", 1);
+      const CLIP_FRAMES = [
+        makeSourceFrame("START CLEAR", 2, -55),
+        makeSourceFrame("REVIEW ONCE", 3, 48),
+        makeSourceFrame("REPEAT FAST", 4, -20),
+      ];
+      const completedClips = [
+        { id: "repeat-the-workflow", title: "Repeat the workflow", range: "03:44–04:12", duration: "00:28", frame: CLIP_FRAMES[2], status: "Ready", statusClass: "ready" },
+        { id: "review-before-rendering", title: "Review before rendering", range: "02:42–03:18", duration: "00:36", frame: CLIP_FRAMES[1], status: "Ready", statusClass: "ready" },
+        { id: "start-with-a-source", title: "Start with a clear source", range: "01:08–01:26", duration: "00:18", frame: CLIP_FRAMES[0], status: "Ready", statusClass: "ready" },
+      ];
+      const states = [
+        { key: "ready", label: "Ready" },
+        { key: "importing", label: "Importing" },
+        { key: "blocked", label: "Blocked" },
+        { key: "rendering", label: "Rendering" },
+        { key: "complete", label: "Complete" },
+      ];
+      const views = [
+        { key: "start", label: "Create — no source" },
+        { key: "create", label: "Create — active" },
+        { key: "library", label: "Library" },
+        { key: "video", label: "Video clips" },
+        { key: "preview", label: "Clip viewer" },
+      ];
+      const sourceVideos = [
+        { id: "workflow", title: "How to build a repeatable creator workflow", source: "YouTube", updated: "Aug 31, 2026", clips: 6, frame: THUMBNAIL },
+        { id: "release-loop", title: "Designing a repeatable release loop", source: "Upload", updated: "Aug 30, 2026", clips: 12, frame: makeSourceFrame("RELEASE LOOP", 5, 34) },
+        { id: "clear-explanations", title: "A field guide to clear explanations", source: "YouTube", updated: "Aug 29, 2026", clips: 8, frame: makeSourceFrame("EXPLAIN CLEARLY", 6, -72), processing: 2 },
+        { id: "workshop", title: "Turning one workshop into short lessons", source: "Upload", updated: "Aug 28, 2026", clips: 17, frame: makeSourceFrame("ONE WORKSHOP", 7, 76) },
+        { id: "useful-system", title: "Shipping the smallest useful system", source: "YouTube", updated: "Aug 27, 2026", clips: 4, frame: makeSourceFrame("SHIP THE CORE", 8, -26) },
+        { id: "creative-review", title: "Reviewing creative work without slowing down", source: "Upload", updated: "Aug 25, 2026", clips: 9, frame: makeSourceFrame("REVIEW FASTER", 9, 52) },
+      ];
+      const videoClips = [
+        { id: "repeat", title: "Repeat the workflow", date: "Aug 31, 2026", quality: "1080p", status: "Ready", statusClass: "ready", frame: CLIP_FRAMES[2], complete: true },
+        { id: "review", title: "Review before rendering", date: "Aug 31, 2026", quality: "1080p", status: "Ready", statusClass: "ready", frame: CLIP_FRAMES[1], complete: true },
+        { id: "source", title: "Start with a clear source", date: "Aug 31, 2026", quality: "720p", status: "Ready", statusClass: "ready", frame: CLIP_FRAMES[0], complete: true },
+        { id: "loop", title: "Build the reusable loop", date: "Aug 31, 2026", quality: "1080p", status: "Encoding", statusClass: "rendering", frame: makeSourceFrame("BUILD THE LOOP", 4, 18), complete: false },
+        { id: "handoff", title: "Make the handoff obvious", date: "Aug 31, 2026", quality: "1080p", status: "Failed", statusClass: "failed", frame: makeSourceFrame("CLEAR HANDOFF", 5, -42), complete: false, error: "The retained source could not be read. Switch to Upload file or retry the import later." },
+        { id: "next", title: "Move directly to the next moment", date: "Aug 30, 2026", quality: "720p", status: "Ready", statusClass: "ready", frame: makeSourceFrame("NEXT MOMENT", 6, 62), complete: true },
+      ];
+
+      const params = new URLSearchParams(location.search);
+      let currentState = states.some((item) => item.key === params.get("state")) ? params.get("state") : "blocked";
+      let currentView = views.some((item) => item.key === params.get("view")) ? params.get("view") : "create";
+      let playing = false;
+      let previewClipIndex = 1;
+      let selectedClipId = null;
+      let retryTimer = null;
+
+      const icon = (name) => `<svg class="icon" aria-hidden="true"><use href="#icon-${name}"></use></svg>`;
+
+      function setParam(name, value) {
+        const next = new URLSearchParams(location.search);
+        next.set(name, value);
+        history.replaceState(null, "", `${location.pathname}?${next.toString()}`);
+      }
+
+      function sourceRibbon() {
+        return `
+          <section class="source-ribbon" aria-label="Active source">
+            <div class="source-ident">
+              <img class="source-thumb" src="${THUMBNAIL}" alt="Thumbnail for the active YouTube video" />
+              <div class="source-copy">
+                <strong>HOW TO BUILD A REPEATABLE CREATOR WORKFLOW</strong>
+                <span>YouTube source · 12:48 · private workspace</span>
+              </div>
+            </div>
+            <div class="source-actions">
+              <button class="button source-change" type="button">Choose another video ${icon("chevron-right")}</button>
+            </div>
+          </section>`;
+      }
+
+      function appBar() {
+        const createActive = currentView === "start" || currentView === "create";
+        const libraryActive = currentView === "library" || currentView === "video" || currentView === "preview";
+        return `
+          <header class="app-bar">
+            <div class="brand"><div class="brand-mark">C</div><div><strong>Carpo</strong><span>Seize the moment.</span></div></div>
+            <nav class="main-nav" aria-label="Primary"><button class="${createActive ? "active" : ""}" type="button" data-view="start">Create</button><button class="${libraryActive ? "active" : ""}" type="button" data-view="library">Library</button></nav>
+            <div class="account"><span>nick@example.com</span><a href="#sign-out">Sign out</a></div>
+          </header>`;
+      }
+
+      function videoStage() {
+        return `
+          <div class="video-stage">
+            <img src="${THUMBNAIL}" alt="Preview frame for the selected source" />
+            <button class="play-control" type="button" data-action="toggle-play" aria-label="${playing ? "Pause" : "Play"}">${icon(playing ? "pause" : "play")}</button>
+            <div class="video-meta"><span>${playing ? "Playing" : "Paused"}</span><span>05:12 / 12:48</span></div>
+          </div>`;
+      }
+
+      function timeline() {
+        return `
+          <div class="timeline" aria-label="Selected clip range">
+            <div class="playhead"></div>
+            <div class="timeline-ruler"><span>00:00</span><span>02:34</span><span>05:07</span><span>07:41</span><span>10:14</span><span>12:48</span></div>
+            <div class="film-track" style="--frame-image: url('${CLIP_FRAMES[0]}')"><div class="selection-range" title="Selected clip"></div></div>
+            <div class="trim-readout"><span>Start <strong class="timecode">04:51.20</strong></span><span>Selected <strong class="timecode">00:42.00</strong></span><span>End <strong class="timecode">05:33.20</strong></span></div>
+          </div>`;
+      }
+
+      function createButton() {
+        if (currentState === "importing" || currentState === "blocked") return `<button class="button" type="button" disabled>Create clip</button>`;
+        return `<button class="button primary" type="button">Create clip</button>`;
+      }
+
+      function commonFields() {
+        return `
+          <div class="field"><label for="clip-title">Title</label><input id="clip-title" value="Build the reusable loop" /></div>
+          <div class="field"><label for="overlay">Overlay text (optional)</label><input id="overlay" placeholder="Show static text throughout" /></div>
+          <div class="field"><span class="field-label">Quality</span><div class="quality-row"><button class="button small selected" type="button">1080p</button><button class="button small" type="button">720p</button></div></div>`;
+      }
+
+      function currentClipJob() {
+        if (currentState === "ready") return null;
+        const state = {
+          importing: { status: "Waiting", statusClass: "rendering" },
+          blocked: { status: "Needs retry", statusClass: "failed" },
+          rendering: { status: "62%", statusClass: "rendering" },
+          complete: { status: "Ready", statusClass: "ready" },
+        }[currentState];
+        return {
+          id: "build-reusable-loop",
+          title: "Build the reusable loop",
+          range: "04:51–05:33",
+          duration: "00:42",
+          frame: CLIP_FRAMES[1],
+          ...state,
+        };
+      }
+
+      function clipItems() {
+        const current = currentClipJob();
+        return current ? [current, ...completedClips] : completedClips;
+      }
+
+      function clipOutputRow(clip) {
+        const selected = selectedClipId === clip.id;
+        return `<li class="clip-output-item">
+          <button class="clip-output-row clip-output" type="button" data-action="preview-clip" data-clip-id="${clip.id}" aria-pressed="${selected}" aria-label="Preview ${clip.title}, ${clip.status}">
+            <img class="clip-output-thumb" src="${clip.frame}" alt="" />
+            <span class="clip-output-main"><strong>${clip.title}</strong><span class="clip-output-meta">${clip.duration}</span></span>
+            <span class="clip-output-status ${clip.statusClass}">${clip.status}</span>
+          </button>
+        </li>`;
+      }
+
+      function clipPreview() {
+        const clip = clipItems().find((item) => item.id === selectedClipId);
+        if (!clip) return "";
+        const isReady = clip.statusClass === "ready";
+        const isBlocked = clip.statusClass === "failed";
+        return `<section class="clip-peek" role="region" aria-live="polite" aria-label="Preview ${clip.title}">
+          <header>
+            <strong>${clip.title}</strong>
+            <button class="button quiet small" type="button" data-action="close-clip-preview" aria-label="Close clip preview">${icon("close")}</button>
+          </header>
+          <div class="video-stage">
+            <img src="${THUMBNAIL}" alt="Preview frame for ${clip.title}" />
+            ${isReady
+              ? `<button class="play-control" type="button" data-action="toggle-play" aria-label="${playing ? "Pause" : "Play"}">${icon(playing ? "pause" : "play")}</button>`
+              : `<div class="clip-peek-state"><span class="clip-output-status ${clip.statusClass}">${clip.status}</span></div>`}
+          </div>
+          <footer>
+            <span class="timecode">${clip.range} · ${clip.duration}</span>
+            ${isBlocked ? `<span class="clip-peek-actions"><button class="button danger small" type="button" data-action="retry-import">${icon("refresh")} Retry</button><button class="button small" type="button">Use your file</button></span>` : ""}
+          </footer>
+        </section>`;
+      }
+
+      function clipReel() {
+        const clips = clipItems();
+        return `
+          <aside class="clip-reel" aria-label="Clips from this video">
+            <div class="reel-heading"><h2>Clips</h2><span>${clips.length} clips</span></div>
+            <ol class="clip-output-list" aria-live="polite">${clips.map(clipOutputRow).join("")}</ol>
+          </aside>`;
+      }
+
+      function rundownVariant() {
+        return `
+          <main class="workspace">
+            ${sourceRibbon()}
+            <div class="rundown-layout">
+              <section class="rundown-stage">
+                <div class="stage-heading"><div><h2>Mark a moment</h2><p>Drag the handles or select words below.</p></div><span class="timecode">00:42.00 selected</span></div>
+                ${videoStage()}
+                ${timeline()}
+                <div class="transcript-peek"><span class="timecode">05:04</span><p>…the important part is making the repeatable decision once. <strong>Keep the source in view, approve the cut, and move directly to the next moment.</strong></p><button class="button quiet small" type="button">Open transcript</button></div>
+                ${clipPreview()}
+              </section>
+              <aside class="clip-builder">
+                <h1>New clip</h1>
+                ${commonFields()}
+                <div class="action-stack">${createButton()}</div>
+              </aside>
+              ${clipReel()}
+            </div>
+          </main>`;
+      }
+
+      function emptyCreatorView() {
+        return `
+          <main class="workspace">
+            <div class="rundown-layout start-layout">
+              <section class="rundown-stage">
+                <div class="stage-heading"><div><h2>Mark a moment</h2><p>Drag the handles or select words below.</p></div></div>
+                <div class="empty-media-bay">
+                  <div>${icon("film")}<span>Choose a source to begin.</span></div>
+                </div>
+              </section>
+              <aside class="clip-builder start-builder">
+                <h1>New clip</h1>
+                <div class="source-tabs" role="tablist" aria-label="Source type"><button class="active" type="button" role="tab" aria-selected="true">YouTube URL</button><button type="button" role="tab" aria-selected="false">Upload file</button></div>
+                <div class="field"><label for="start-youtube-url">YouTube URL</label><input id="start-youtube-url" type="url" placeholder="https://youtube.com/watch?v=…" /><span class="source-validity"></span></div>
+                <div class="field"><label for="start-title">Title</label><input id="start-title" placeholder="Name this clip" /></div>
+                <div class="field"><label for="start-overlay">Overlay text (optional)</label><input id="start-overlay" placeholder="Show static text throughout" /></div>
+                <div class="field"><span class="field-label">Quality</span><div class="quality-row"><button class="button small selected" type="button">1080p</button><button class="button small" type="button">720p</button></div></div>
+                <div class="action-stack"><button class="button" type="button" disabled>Create clip</button></div>
+              </aside>
+              <aside class="clip-reel" aria-label="Clips from this video">
+                <div class="reel-heading"><h2>Clips</h2><span>0 clips</span></div>
+                <p class="empty-reel">Clips from this source will appear here.</p>
+              </aside>
+            </div>
+          </main>`;
+      }
+
+      function sourceCard(video) {
+        return `<article class="source-card">
+          <button class="source-card-link" type="button" data-view="video" aria-label="Open ${video.title}, ${video.clips} clips">
+            <div class="source-card-media">
+              <img src="${video.frame}" alt="" />
+              ${video.processing ? `<span class="source-card-processing">${video.processing} processing</span>` : ""}
+            </div>
+            <div class="source-card-body">
+              <div class="source-card-copy"><h3>${video.title}</h3><p>${video.source} · Updated ${video.updated}</p></div>
+              <div class="source-card-count"><strong>${video.clips}</strong><span>clips</span></div>
+            </div>
+          </button>
+          <button class="source-card-menu" type="button" aria-label="More actions for ${video.title}">${icon("more")}</button>
+        </article>`;
+      }
+
+      function libraryView() {
+        return `<main class="surface-page library-prototype">
+          <div class="surface-wrap">
+            <header class="page-mast">
+              <div><h1>Library</h1><p>Your source videos and the clips created from each one.</p></div>
+              <div class="page-mast-actions"><span class="surface-count">6 videos</span><button class="button small" type="button">Select</button></div>
+            </header>
+            <nav class="library-tabs" aria-label="Library views"><button class="active" type="button">Videos</button><button type="button">Archived</button></nav>
+            <section class="moment-search" aria-labelledby="moment-search-title">
+              <div class="moment-search-copy"><h2 id="moment-search-title">Find a moment</h2><p>Search the private transcripts in this Library view, then review and edit a grounded clip suggestion.</p></div>
+              <div class="search-instrument">
+                <div class="search-topline"><label for="library-search">Word or phrase</label><div class="search-modes" role="radiogroup" aria-label="Search mode"><button class="active" type="button" role="radio" aria-checked="true">Exact</button><button type="button" role="radio" aria-checked="false">Meaning</button></div></div>
+                <div class="search-controls"><input id="library-search" type="search" placeholder="Try a phrase someone said" /><button class="button primary small" type="button">Search</button></div>
+                <p class="search-help">Exact search is deterministic and does not require an AI provider.</p>
+              </div>
+            </section>
+            <div class="source-section-heading"><h2>Videos</h2><span>Illustrative private library</span></div>
+            <section class="source-contact-sheet" aria-label="Source videos">${sourceVideos.map(sourceCard).join("")}</section>
+          </div>
+        </main>`;
+      }
+
+      function clipCard(clip) {
+        const completeActions = clip.complete ? `
+          <button class="button small" type="button" data-view="preview">Play</button>
+          <button class="button small" type="button">Captions</button>
+          <button class="button small" type="button">Share &amp; export</button>
+          <button class="button small" type="button">Download</button>
+          <button class="button small" type="button">GIF</button>
+        ` : "";
+        return `<article class="clip-card-prototype">
+          <div class="clip-card-media">
+            <img src="${clip.frame}" alt="" />
+            ${clip.complete ? `<button class="clip-card-play" type="button" data-view="preview" aria-label="Play ${clip.title}"><span>${icon("play")}</span></button>` : `<span class="clip-status ${clip.statusClass}">${clip.status}</span>`}
+          </div>
+          <div class="clip-card-body">
+            <h3>${clip.title}</h3>
+            <p class="clip-card-meta">${clip.date} · ${clip.quality}</p>
+            ${clip.error ? `<p class="clip-failure-copy">${clip.error} <a class="clip-recovery" href="#upload">Switch to Upload file</a>.</p>` : ""}
+            <div class="clip-card-actions">${completeActions}<button class="button quiet small delete" type="button">Delete</button></div>
+          </div>
+        </article>`;
+      }
+
+      function videoView() {
+        return `<main class="surface-page video-prototype">
+          <div class="surface-wrap">
+            <button class="back-link" type="button" data-view="library">${icon("chevron-left")} All videos</button>
+            <section class="video-source-mast" aria-label="Source video">
+              <img class="video-source-thumb" src="${THUMBNAIL}" alt="" />
+              <div class="video-source-copy"><p class="video-source-label">YouTube video</p><h1>How to build a repeatable creator workflow</h1><p>6 clips</p></div>
+              <div class="video-proto-actions"><button class="button primary small" type="button" data-view="create">Create clip</button><button class="button small" type="button">Archive</button><button class="button quiet small video-delete-action" type="button">Delete video</button></div>
+            </section>
+            <div class="video-clips-title"><h2>Clips</h2><button class="button small" type="button">Select</button></div>
+            <section class="clip-grid-prototype" aria-label="Clips">${videoClips.map(clipCard).join("")}</section>
+          </div>
+        </main>`;
+      }
+
+      function clipViewer() {
+        const playable = videoClips.filter((clip) => clip.complete);
+        const clip = playable[previewClipIndex] ?? playable[0];
+        return `<div class="preview-backdrop" role="presentation">
+          <section class="preview-dialog" role="dialog" aria-modal="true" aria-labelledby="preview-title">
+            <header class="preview-heading"><div><h2 id="preview-title">${clip.title}</h2><span>${previewClipIndex + 1} of ${playable.length}</span></div><button class="button quiet small" type="button" data-view="video">Close</button></header>
+            <div class="preview-media">
+              <img src="${clip.frame}" alt="Preview frame for ${clip.title}" />
+              <button class="play-control" type="button" data-action="toggle-play" aria-label="${playing ? "Pause" : "Play"}">${icon(playing ? "pause" : "play")}</button>
+              <div class="preview-media-controls"><span>${playing ? "Playing" : "Paused"}</span><div class="preview-scrub"><span></span></div><span>00:12 / 00:36</span></div>
+            </div>
+            <div class="preview-toolbar">
+              <div class="preview-nav" aria-label="Clip previews"><button class="button small" type="button" data-action="previous-preview" ${previewClipIndex === 0 ? "disabled" : ""}>${icon("chevron-left")} Previous</button><button class="button small" type="button" data-action="next-preview" ${previewClipIndex === playable.length - 1 ? "disabled" : ""}>Next ${icon("chevron-right")}</button></div>
+              <div class="preview-downloads"><button class="button small" type="button">Download MP4</button><button class="button small" type="button">Download GIF</button></div>
+            </div>
+            <p class="preview-keyboard-hint">Use left and right arrows to move between clips.</p>
+          </section>
+        </div>`;
+      }
+
+      function previewView() {
+        return `${videoView()}${clipViewer()}`;
+      }
+
+      function render() {
+        document.body.dataset.state = currentState;
+        document.body.dataset.view = currentView;
+        const view = {
+          start: emptyCreatorView,
+          create: rundownVariant,
+          library: libraryView,
+          video: videoView,
+          preview: previewView,
+        }[currentView] ?? rundownVariant;
+        document.getElementById("surface").innerHTML = `<div class="app-shell">${appBar()}${view()}</div>`;
+        const viewLabel = views.find((item) => item.key === currentView)?.label ?? "Create — active";
+        const stateLabel = states.find((state) => state.key === currentState)?.label ?? "Ready";
+        document.getElementById("mobile-state-label").textContent = currentView === "create" ? `${viewLabel} · ${stateLabel}` : viewLabel;
+        document.getElementById("page-switches").innerHTML = views.map((item) => `<button type="button" class="${item.key === currentView ? "active" : ""}" data-view="${item.key}">${item.label}</button>`).join("");
+        document.getElementById("state-switches").innerHTML = states.map((state) => `<button type="button" class="${state.key === currentState ? "active" : ""}" data-state="${state.key}">${state.label}</button>`).join("");
+        document.getElementById("creator-state-controls").classList.toggle("is-hidden", currentView !== "create");
+        const creatorSurface = currentView === "start" || currentView === "create";
+        document.getElementById("think-trigger").classList.toggle("is-hidden", !creatorSurface);
+        if (!creatorSurface) {
+          const drawer = document.getElementById("think-drawer");
+          drawer.classList.remove("open");
+          drawer.setAttribute("aria-hidden", "true");
+        }
+      }
+
+      function chooseView(nextView) {
+        currentView = nextView;
+        selectedClipId = null;
+        setParam("view", currentView);
+        render();
+      }
+
+      function chooseState(nextState) {
+        currentState = nextState;
+        selectedClipId = null;
+        setParam("state", currentState);
+        render();
+      }
+
+      document.addEventListener("click", (event) => {
+        const target = event.target.closest("[data-action], [data-state], [data-view]");
+        if (!target) return;
+        if (target.dataset.view) chooseView(target.dataset.view);
+        if (target.dataset.state) chooseState(target.dataset.state);
+        if (target.dataset.action === "toggle-play") { playing = !playing; render(); }
+        if (target.dataset.action === "previous-preview") {
+          previewClipIndex = Math.max(0, previewClipIndex - 1);
+          render();
+        }
+        if (target.dataset.action === "next-preview") {
+          const playableCount = videoClips.filter((clip) => clip.complete).length;
+          previewClipIndex = Math.min(playableCount - 1, previewClipIndex + 1);
+          render();
+        }
+        if (target.dataset.action === "preview-clip") {
+          selectedClipId = target.dataset.clipId;
+          render();
+          requestAnimationFrame(() => {
+            document.querySelector(`[data-clip-id='${selectedClipId}']`)?.focus({ preventScroll: true });
+            if (matchMedia("(max-width: 900px)").matches) document.querySelector(".clip-peek")?.scrollIntoView({ block: "start", behavior: "smooth" });
+          });
+        }
+        if (target.dataset.action === "close-clip-preview") {
+          const previousClipId = selectedClipId;
+          selectedClipId = null;
+          render();
+          requestAnimationFrame(() => document.querySelector(`[data-clip-id='${previousClipId}']`)?.focus());
+        }
+        if (target.dataset.action === "open-think") {
+          const drawer = document.getElementById("think-drawer");
+          drawer.classList.add("open");
+          drawer.setAttribute("aria-hidden", "false");
+          drawer.querySelector("textarea").focus();
+        }
+        if (target.dataset.action === "close-think") {
+          const drawer = document.getElementById("think-drawer");
+          drawer.classList.remove("open");
+          drawer.setAttribute("aria-hidden", "true");
+        }
+        if (target.dataset.action === "retry-import") {
+          chooseState("importing");
+          clearTimeout(retryTimer);
+          retryTimer = setTimeout(() => chooseState("ready"), 1200);
+        }
+      });
+
+      document.addEventListener("keydown", (event) => {
+        const tag = event.target.tagName;
+        if (["INPUT", "TEXTAREA", "SELECT"].includes(tag) || event.target.isContentEditable) return;
+        if (currentView === "preview" && event.key === "Escape") {
+          event.preventDefault();
+          chooseView("video");
+        } else if (currentView === "preview" && event.key === "ArrowLeft" && previewClipIndex > 0) {
+          event.preventDefault();
+          previewClipIndex -= 1;
+          render();
+        } else if (currentView === "preview" && event.key === "ArrowRight" && previewClipIndex < videoClips.filter((clip) => clip.complete).length - 1) {
+          event.preventDefault();
+          previewClipIndex += 1;
+          render();
+        } else if (event.key === "Escape" && selectedClipId) {
+          event.preventDefault();
+          document.querySelector("[data-action='close-clip-preview']")?.click();
+        } else if (event.key === "Escape") {
+          document.querySelector("[data-action='close-think']").click();
+        }
+      });
+
+      render();
+    </script>
+  </body>
+</html>

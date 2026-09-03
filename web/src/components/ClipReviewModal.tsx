@@ -380,6 +380,9 @@ export function ClipReviewModal({
             {approval.provenance ? (
               <span>
                 Suggested via {approval.provenance.label}
+                {approval.provenance.basis === "timestamps"
+                  ? " · timestamp selection — preview before approval"
+                  : ""}
                 {approval.provenance.sourceBlockIds?.length
                   ? ` · grounded in ${approval.provenance.sourceBlockIds.length} transcript passage${
                       approval.provenance.sourceBlockIds.length === 1 ? "" : "s"

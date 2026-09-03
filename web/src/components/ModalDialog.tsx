@@ -1,5 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useSessionActive } from "../session-activity";
 
 interface ModalDialogProps {
   children: ReactNode;
@@ -26,6 +27,7 @@ export function ModalDialog({
   role = "dialog",
   className = "",
 }: ModalDialogProps) {
+  const sessionActive = useSessionActive();
   const dialogRef = useRef<HTMLDivElement>(null);
   const dismissRef = useRef(onDismiss);
 
@@ -37,6 +39,12 @@ export function ModalDialog({
     const dialog = dialogRef.current;
     const previouslyFocused = document.activeElement as HTMLElement | null;
     if (!dialog) return;
+    if (!sessionActive) {
+      dialog.querySelectorAll<HTMLMediaElement>("video, audio").forEach((media) => {
+        if (!media.paused) media.pause();
+      });
+      return;
+    }
 
     const focusable = () =>
       Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
@@ -72,11 +80,14 @@ export function ModalDialog({
       dialog.removeEventListener("keydown", handleKeyDown);
       previouslyFocused?.focus();
     };
-  }, []);
+  }, [sessionActive]);
 
   return createPortal(
     <div
       className="modal-backdrop"
+      hidden={!sessionActive}
+      inert={!sessionActive}
+      style={sessionActive ? undefined : { display: "none" }}
       role="presentation"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onDismiss?.();

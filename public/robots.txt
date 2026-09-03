@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+Disallow: /create
+Disallow: /library
+Disallow: /api/
+Disallow: /agents/
+Disallow: /artifacts/
+Disallow: /auth/
+Disallow: /share/

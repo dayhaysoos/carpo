@@ -53,33 +53,42 @@ export function ClipModal({
     <ModalDialog
       labelledBy="clip-modal-title"
       onDismiss={onClose}
-      className="clip-library-modal"
+      className="clip-library-modal clip-viewer-dialog"
     >
-      <div onKeyDown={handleKeyDown}>
-        <div className="modal-header">
-          <div className="clip-modal-heading">
+      <div className="clip-viewer-shell" onKeyDown={handleKeyDown}>
+        <div className="modal-header clip-viewer-heading">
+          <div className="clip-modal-heading clip-viewer-title">
             <h2 id="clip-modal-title">{clip.title}</h2>
             <span aria-live="polite">
               {position} of {total}
             </span>
           </div>
-          <button type="button" className="btn-ghost" onClick={onClose}>
+          <button
+            type="button"
+            className="btn-ghost clip-viewer-close"
+            onClick={onClose}
+          >
             Close
           </button>
         </div>
-        <video
-          key={clip.id}
-          src={clip.outputs.mp4}
-          poster={clip.outputs.thumbnail ?? undefined}
-          aria-label={`${clip.title} video`}
-          controls
-          autoPlay
-          loop
-          playsInline
-          className="clip-preview"
-        />
-        <div className="clip-modal-toolbar">
-          <div className="clip-modal-navigation" aria-label="Clip previews">
+        <div className="clip-viewer-media">
+          <video
+            key={clip.id}
+            src={clip.outputs.mp4}
+            poster={clip.outputs.thumbnail ?? undefined}
+            aria-label={`${clip.title} video`}
+            controls
+            autoPlay
+            loop
+            playsInline
+            className="clip-preview clip-viewer-video"
+          />
+        </div>
+        <div className="clip-modal-toolbar clip-viewer-toolbar">
+          <div
+            className="clip-modal-navigation clip-viewer-navigation"
+            aria-label="Clip previews"
+          >
             <button
               type="button"
               className="btn-secondary"
@@ -99,7 +108,7 @@ export function ClipModal({
               Next <span aria-hidden="true">→</span>
             </button>
           </div>
-          <div className="modal-actions">
+          <div className="modal-actions clip-viewer-downloads">
             <a href={clip.outputs.mp4} download className="btn-secondary">
               Download MP4
             </a>
@@ -110,7 +119,7 @@ export function ClipModal({
             )}
           </div>
         </div>
-        <p className="clip-modal-keyboard-hint">
+        <p className="clip-modal-keyboard-hint clip-viewer-keyboard-hint">
           Use left and right arrows to move between clips.
         </p>
       </div>
@@ -150,7 +159,7 @@ export function ClipLibraryCard({
 
   return (
     <article
-      className={`library-card status-${clip.status}${selected ? " selected" : ""}`}
+      className={`library-card clip-sheet-card clip-card-prototype status-${clip.status}${selected ? " selected" : ""}`}
     >
       {selecting && (
         <button
@@ -162,11 +171,15 @@ export function ClipLibraryCard({
         />
       )}
       {selecting ? (
-        <div className="library-thumb-btn">
+        <div className="library-thumb-btn clip-card-media">
           {clip.outputs.thumbnail ? (
-            <img src={clip.outputs.thumbnail} alt="" className="library-thumb" />
+            <img
+              src={clip.outputs.thumbnail}
+              alt=""
+              className="library-thumb clip-card-image"
+            />
           ) : (
-            <div className="library-thumb placeholder">
+            <div className="library-thumb placeholder clip-card-placeholder">
               {showStatus ? statusLabel(clip.status) : "No preview"}
             </div>
           )}
@@ -174,7 +187,9 @@ export function ClipLibraryCard({
             {selected ? "✓" : ""}
           </span>
           {showStatus && (
-            <span className={`status-badge status-${clip.status}`}>
+            <span
+              className={`status-badge clip-status status-${clip.status}`}
+            >
               {statusLabel(clip.status)}
             </span>
           )}
@@ -182,29 +197,42 @@ export function ClipLibraryCard({
       ) : (
         <button
           type="button"
-          className="library-thumb-btn"
+          className={`library-thumb-btn clip-card-media${isComplete ? " clip-card-play" : ""}`}
           onClick={() => isComplete && onPlay(clip)}
           disabled={!isComplete}
           aria-label={isComplete ? `Play ${clip.title}` : clip.title}
         >
           {clip.outputs.thumbnail ? (
-            <img src={clip.outputs.thumbnail} alt="" className="library-thumb" />
+            <img
+              src={clip.outputs.thumbnail}
+              alt=""
+              className="library-thumb clip-card-image"
+            />
           ) : (
-            <div className="library-thumb placeholder">
+            <div className="library-thumb placeholder clip-card-placeholder">
               {showStatus ? statusLabel(clip.status) : "No preview"}
             </div>
           )}
+          {isComplete && (
+            <span className="clip-card-play-mark" aria-hidden="true">
+              <svg viewBox="0 0 24 24" focusable="false">
+                <path d="m8 5 11 7-11 7Z" />
+              </svg>
+            </span>
+          )}
           {showStatus && (
-            <span className={`status-badge status-${clip.status}`}>
+            <span
+              className={`status-badge clip-status status-${clip.status}`}
+            >
               {statusLabel(clip.status)}
             </span>
           )}
         </button>
       )}
 
-      <div className="library-card-body">
-        <h3 className="library-card-title">{clip.title}</h3>
-        <p className="library-card-meta">
+      <div className="library-card-body clip-card-body">
+        <h3 className="library-card-title clip-card-title">{clip.title}</h3>
+        <p className="library-card-meta clip-card-meta">
           {formatDate(clip.createdAt)}
           <span className="library-meta-sep">·</span>
           {clip.quality}
@@ -222,7 +250,7 @@ export function ClipLibraryCard({
         )}
 
         {!selecting && (
-          <div className="library-card-actions">
+          <div className="library-card-actions clip-card-actions">
             {isComplete && clip.outputs.mp4 && (
               <>
                 <button

@@ -161,7 +161,10 @@ export function TranscriptPanel({
       {error && (
         <div className="transcript-state transcript-error" role="alert">
           <strong>Transcript unavailable</strong>
-          <span>{error.message}</span>
+          <span>
+            We couldn’t prepare a transcript for this video. You can still create
+            clips by setting the start and end times manually.
+          </span>
           <button
             type="button"
             className="btn-secondary"

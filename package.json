@@ -44,7 +44,9 @@
     "test:encoder": "node --experimental-strip-types scripts/test-encoder-contract.ts",
     "test:helper": "python3 -m unittest discover helper",
     "test:perf": "python3 scripts/perf-test.py",
-    "db:migrate:local": "wrangler d1 migrations apply carpo --local"
+    "db:migrate:local": "wrangler d1 migrations apply carpo --local",
+    "check:launch-access": "node scripts/check-launch-access.mjs",
+    "test:launch-access": "node --test scripts/check-launch-access.test.mjs"
   },
   "dependencies": {
     "@carpo/review-contract": "0.1.0",

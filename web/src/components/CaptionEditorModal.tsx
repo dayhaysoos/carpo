@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useReducer, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   captionTrackSrtUrl,
   captionTrackVttUrl,
@@ -35,6 +35,7 @@ type CaptionDraftAction =
   | { type: "remove-cue"; index: number }
   | { type: "update-cue"; index: number; update: Partial<CaptionCue> }
   | { type: "select-theme"; theme: CaptionThemeId }
+  | { type: "refreshed"; track: CaptionTrackAvailable }
   | { type: "saved"; track: CaptionTrackAvailable };
 
 const CAPTION_THEME_OPTIONS: Array<{ value: CaptionThemeId; label: string }> = [
@@ -102,6 +103,8 @@ function captionDraftReducer(
       };
     case "select-theme":
       return { ...state, theme: action.theme, dirty: true };
+    case "refreshed":
+      return state.dirty ? state : createDraft(action.track, null);
     case "saved":
       return createDraft(action.track, null);
   }
@@ -446,6 +449,9 @@ function CaptionEditorWorkspace({
     captionDraftReducer,
     createDraft(track, initialProposal),
   );
+  useEffect(() => {
+    dispatch({ type: "refreshed", track });
+  }, [track]);
   const dismiss = () => {
     if (draft.dirty && !window.confirm("Discard unsaved caption changes?")) return;
     onClose();
@@ -567,10 +573,11 @@ export function CaptionEditorModal({
     (trackQuery.data?.captionStatus === "available" ? trackQuery.data : null);
 
   if (available && clip.outputs.mp4) {
+    // Saving changes the server revision, not the identity of the editable draft.
     const proposalKey = initialProposal ? JSON.stringify(initialProposal) : "saved";
     return (
       <CaptionEditorWorkspace
-        key={`${available.clipId}:${available.revision ?? "draft"}:${proposalKey}`}
+        key={`${available.clipId}:${proposalKey}`}
         clip={clip}
         track={available}
         initialProposal={initialProposal}
@@ -593,7 +600,7 @@ export function CaptionEditorModal({
             className="btn-secondary"
             onClick={() => setManualTrack(blankTrack(clip))}
           >
-            Start with a blank track
+            {initialProposal ? "Review proposed captions" : "Start with a blank track"}
           </button>
         </div>
       )}
@@ -605,7 +612,7 @@ export function CaptionEditorModal({
             className="btn-secondary"
             onClick={() => setManualTrack(blankTrack(clip))}
           >
-            Start with a blank track
+            {initialProposal ? "Review proposed captions" : "Start with a blank track"}
           </button>
         </div>
       )}

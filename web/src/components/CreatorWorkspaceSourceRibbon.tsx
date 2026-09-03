@@ -1,5 +1,5 @@
 import * as stylex from "@stylexjs/stylex";
-import { creatorWorkspaceTokens } from "../styles/creatorWorkspaceTokens.stylex";
+import { carpoIdentityTokens } from "../styles/carpoIdentityTokens.stylex";
 
 export interface CreatorWorkspaceSourceSummary {
   title: string;
@@ -46,10 +46,7 @@ export function CreatorWorkspaceSourceRibbon({
   onChooseAnother,
 }: CreatorWorkspaceSourceRibbonProps) {
   return (
-    <section
-      aria-label="Active source"
-      {...stylex.props(styles.ribbon)}
-    >
+    <section aria-label="Active source" {...stylex.props(styles.ribbon)}>
       <span
         aria-hidden="true"
         {...stylex.props(styles.perforations, styles.perforationsLeft)}
@@ -76,7 +73,9 @@ export function CreatorWorkspaceSourceRibbon({
           <strong title={source.title} {...stylex.props(styles.title)}>
             {source.title}
           </strong>
-          <span {...stylex.props(styles.metadata)}>{sourceMetadata(source)}</span>
+          <span {...stylex.props(styles.metadata)}>
+            {sourceMetadata(source)}
+          </span>
         </div>
       </div>
       <button
@@ -93,10 +92,6 @@ export function CreatorWorkspaceSourceRibbon({
           <path d="m9 18 6-6-6-6" />
         </svg>
       </button>
-      <span
-        aria-hidden="true"
-        {...stylex.props(styles.perforations, styles.perforationsRight)}
-      />
     </section>
   );
 }
@@ -105,65 +100,65 @@ const styles = stylex.create({
   ribbon: {
     gridColumn: "1 / -1",
     width: "100%",
-    minHeight: "76px",
+    minHeight: "82px",
     position: "relative",
+    isolation: "isolate",
     display: "grid",
     gridTemplateColumns: "minmax(0, 1fr) auto",
     alignItems: "center",
     gap: "18px",
     paddingBlock: "12px",
-    paddingInline: "46px",
+    paddingInline: "38px",
     overflow: "hidden",
     borderWidth: 0,
     borderBottomWidth: "1px",
     borderBottomStyle: "solid",
-    borderBottomColor: creatorWorkspaceTokens.sourceLine,
-    backgroundColor: creatorWorkspaceTokens.sourceSurface,
-    color: creatorWorkspaceTokens.ink,
-    fontFamily: creatorWorkspaceTokens.fontUi,
+    borderBottomColor: "#6b2730",
+    backgroundColor: carpoIdentityTokens.navy,
+    color: carpoIdentityTokens.ink,
+    fontFamily: carpoIdentityTokens.fontUi,
     textAlign: "left",
     "@media (max-width: 900px)": {
       gridTemplateColumns: "minmax(0, 1fr)",
       gap: "10px",
-      paddingInline: "40px",
+      paddingInline: "20px",
     },
     "@media (max-width: 560px)": {
-      paddingInline: "34px",
+      paddingInline: "16px",
     },
   },
   perforations: {
-    width: "18px",
     position: "absolute",
-    top: 0,
-    bottom: 0,
-    opacity: 0.8,
     pointerEvents: "none",
-    backgroundImage:
-      "radial-gradient(circle, #12130f 0 3px, transparent 3.5px)",
-    backgroundPosition: "center 4px",
-    backgroundSize: "12px 16px",
   },
   perforationsLeft: {
-    left: "10px",
-  },
-  perforationsRight: {
-    right: "10px",
+    zIndex: -1,
+    insetBlock: 0,
+    left: 0,
+    right: "42%",
+    backgroundImage:
+      "radial-gradient(circle, rgba(239, 239, 239, 0.18) 0 1px, transparent 1.3px)",
+    backgroundSize: "7px 7px",
+    opacity: 0.3,
+    maskImage: "linear-gradient(90deg, #000, transparent)",
   },
   identity: {
     minWidth: 0,
     display: "flex",
     alignItems: "center",
-    gap: "14px",
+    gap: "15px",
   },
   thumbnail: {
-    width: "86px",
+    width: "92px",
     aspectRatio: "16 / 9",
     flexShrink: 0,
     display: "block",
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: "#656554",
-    backgroundColor: creatorWorkspaceTokens.bench,
+    borderColor: "#666b78",
+    backgroundColor: carpoIdentityTokens.carbon,
+    boxShadow: "5px 5px 0 #08090c",
+    clipPath: "polygon(0 0, 100% 0, calc(100% - 8px) 100%, 0 100%)",
     objectFit: "cover",
     "@media (max-width: 560px)": {
       width: "66px",
@@ -172,7 +167,7 @@ const styles = stylex.create({
   thumbnailFallback: {
     display: "grid",
     placeItems: "center",
-    color: creatorWorkspaceTokens.inkFaint,
+    color: carpoIdentityTokens.inkFaint,
   },
   placeholderIcon: {
     width: "24px",
@@ -188,30 +183,31 @@ const styles = stylex.create({
   },
   title: {
     display: "block",
+    maxWidth: "min(58vw, 760px)",
     overflow: "hidden",
-    color: creatorWorkspaceTokens.ink,
-    fontSize: "15px",
-    fontWeight: 600,
-    lineHeight: 1.3,
-    letterSpacing: "0.01em",
+    color: carpoIdentityTokens.ink,
+    fontFamily: carpoIdentityTokens.fontDisplay,
+    fontSize: "clamp(17px, 1.6vw, 23px)",
+    fontWeight: 700,
+    lineHeight: 1.08,
+    letterSpacing: "0.025em",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
-    "@media (max-width: 560px)": {
-      fontSize: "13px",
-    },
   },
   metadata: {
     display: "block",
-    marginTop: "3px",
+    marginTop: "5px",
     overflow: "hidden",
-    color: creatorWorkspaceTokens.inkDim,
-    fontSize: "13px",
+    color: carpoIdentityTokens.inkDim,
+    fontFamily: carpoIdentityTokens.fontTime,
+    fontSize: "11px",
     lineHeight: 1.35,
+    letterSpacing: "0.035em",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
   chooseAnother: {
-    minHeight: "42px",
+    minHeight: "44px",
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
@@ -221,25 +217,29 @@ const styles = stylex.create({
     paddingInline: "14px",
     borderWidth: "1px",
     borderStyle: "solid",
-    borderColor: "#838477",
-    borderRadius: "8px",
-    backgroundColor: "#272820",
-    color: creatorWorkspaceTokens.ink,
+    borderColor: "#858a96",
+    borderRadius: "2px",
+    backgroundColor: "#101116",
+    boxShadow: "3px 3px 0 rgba(0, 0, 0, 0.45)",
+    color: carpoIdentityTokens.ink,
     cursor: "pointer",
+    fontFamily: carpoIdentityTokens.fontDisplay,
+    fontSize: "15px",
     fontWeight: 600,
+    letterSpacing: "0.025em",
     lineHeight: 1.2,
     whiteSpace: "nowrap",
     transitionDuration: "150ms",
     transitionProperty: "background-color, border-color",
     transitionTimingFunction: "ease-out",
     ":hover": {
-      borderColor: creatorWorkspaceTokens.inkDim,
-      backgroundColor: creatorWorkspaceTokens.benchHigh,
+      borderColor: carpoIdentityTokens.vermilion,
+      backgroundColor: "#1b1d24",
     },
     ":focus-visible": {
       outlineWidth: "2px",
       outlineStyle: "solid",
-      outlineColor: creatorWorkspaceTokens.focus,
+      outlineColor: carpoIdentityTokens.focus,
       outlineOffset: "3px",
     },
     "@media (max-width: 900px)": {

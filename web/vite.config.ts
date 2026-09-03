@@ -10,6 +10,8 @@ export default defineConfig({
   },
   server: {
     proxy: {
+      "/auth/login": "http://localhost:8787",
+      "/share": "http://localhost:8787",
       "/api": "http://localhost:8787",
       "/artifacts": "http://localhost:8787",
       "/agents": {

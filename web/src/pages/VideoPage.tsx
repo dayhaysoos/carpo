@@ -188,9 +188,9 @@ export function VideoPage() {
   const deleteCount = pendingDelete.length;
 
   return (
-    <main className="library-main">
-      <section className="library-panel card">
-        <Link to="/library" className="library-back-link">
+    <main className="library-main surface-page video-prototype">
+      <section className="library-panel surface-wrap video-page-panel">
+        <Link to="/library" className="library-back-link back-link">
           <span aria-hidden="true">←</span> All videos
         </Link>
 
@@ -208,24 +208,33 @@ export function VideoPage() {
 
         {data && (
           <>
-            <div className="video-header">
+            <section
+              className="video-header video-source-mast"
+              aria-label="Source video"
+            >
               {data.video.thumbnail ? (
-                <img src={data.video.thumbnail} alt="" />
+                <img
+                  src={data.video.thumbnail}
+                  alt=""
+                  className="video-source-thumb"
+                />
               ) : (
-                <div className="video-header-placeholder">No preview</div>
+                <div className="video-header-placeholder video-source-thumb">
+                  No preview
+                </div>
               )}
-              <div className="video-header-copy">
-                <p className="video-source">
+              <div className="video-header-copy video-source-copy">
+                <p className="video-source video-source-label">
                   {data.video.source.type === "youtube" ? "YouTube video" : "Uploaded video"}
                 </p>
-                <h2>{data.video.title}</h2>
-                <p>
+                <h2 className="video-source-title">{data.video.title}</h2>
+                <p className="video-source-count">
                   {data.video.clipCount} clip{data.video.clipCount === 1 ? "" : "s"}
                 </p>
               </div>
-              <div className="video-actions">
+              <div className="video-actions video-proto-actions">
                 <Link
-                  to={`/?video=${encodeURIComponent(videoId)}`}
+                  to={`/create?video=${encodeURIComponent(videoId)}`}
                   className="btn-primary video-create-clip"
                 >
                   Create clip
@@ -252,13 +261,13 @@ export function VideoPage() {
                   Delete video
                 </button>
               </div>
-            </div>
+            </section>
 
             {archiveMutation.error && (
               <p className="form-error">{archiveMutation.error.message}</p>
             )}
 
-            <div className="video-clips-heading">
+            <div className="video-clips-heading video-clips-title">
               <h3>Clips</h3>
               <button
                 type="button"
@@ -330,7 +339,10 @@ export function VideoPage() {
                 No clips yet — create one from this video.
               </div>
             ) : (
-              <div className="library-grid">
+              <section
+                className="library-grid clip-sheet clip-grid-prototype"
+                aria-label="Clips"
+              >
                 {data.clips.map((clip) => (
                   <ClipLibraryCard
                     key={clip.id}
@@ -360,7 +372,7 @@ export function VideoPage() {
                     onToggle={() => toggleSelectedClip(clip.id)}
                   />
                 ))}
-              </div>
+              </section>
             )}
 
             {gifMutation.error && (
