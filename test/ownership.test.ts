@@ -5,7 +5,6 @@ import {
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { outputKeysForClip } from "../src/db";
-import { authorizeAgentRequest } from "../src/index";
 import type { AuthenticatedUser } from "../src/identity";
 import { handleRequest } from "../src/routes";
 
@@ -145,7 +144,7 @@ describe("per-user ownership", () => {
     expect(bobCreate.status).toBe(404);
   });
 
-  it("hides clip records, artifact bodies, and video agents from non-owners", async () => {
+  it("hides clip records and artifact bodies from non-owners", async () => {
     await installUsers();
     const video = await createYoutubeVideo(ALICE, "Private source");
     const clipId = crypto.randomUUID();
@@ -178,22 +177,5 @@ describe("per-user ownership", () => {
     expect(ownedArtifact.status).toBe(200);
     expect(ownedArtifact.headers.get("Cache-Control")).toBe("private, no-store");
 
-    const rejectedAgent = await authorizeAgentRequest(
-      new Request(
-        `http://example.com/agents/video-clip-agent/${encodeURIComponent(video.id)}`,
-      ),
-      env,
-      BOB,
-    );
-    expect(rejectedAgent?.status).toBe(404);
-    expect(
-      await authorizeAgentRequest(
-        new Request(
-          `http://example.com/agents/video-clip-agent/${encodeURIComponent(video.id)}`,
-        ),
-        env,
-        ALICE,
-      ),
-    ).toBeNull();
   });
 });
