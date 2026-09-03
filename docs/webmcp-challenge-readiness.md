@@ -1,8 +1,10 @@
 # WebMCP Challenge verification
 
-Verified September 2, 2026 (America/New_York). This is a working-tree report for
-`feature/launch-ready-entry-flow`, based on `66a6293330f52ede8b6eab19533c48673b623f00`.
-Changes remain unstaged. This report is not a deployment or submission claim.
+Historical local verification from September 2, 2026 (America/New_York), recorded
+before the release commits on `feature/launch-ready-entry-flow`, based on
+`66a6293330f52ede8b6eab19533c48673b623f00`. The observations and outstanding items
+below describe that earlier snapshot. See [release verification](launch-release-verification.md)
+for subsequent production evidence and current approval boundaries. This is not a submission claim.
 
 ## What works on the launch candidate
 

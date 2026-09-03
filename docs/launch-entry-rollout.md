@@ -4,6 +4,9 @@ The review candidate adds a public homepage, `/sign-in`, the private editor at `
 
 The dashboard enforces five destinations per application. Login therefore lives under the protected `/api` destination; old `/auth/login` links redirect to that endpoint with a validated return destination. `/auth/refresh` serves only the session recovery shell.
 
+For the release progress and hosted evidence captured after implementation, see
+[release verification](launch-release-verification.md).
+
 ## Production change
 
 `config/launch-access.json` is the reviewable desired configuration, not evidence of deployment. Save the current destination and cookie settings before changing them. Apply it to the **existing** Carpo Access application after deploying this candidate. Preserve its ID, audience, Google identity provider, instant authentication, 24-hour session duration, Google Allow policy, and Mac helper Service Auth policy. Replace the Worker-wide destination with the five public-hostname paths in the configuration. Do not retain the Worker destination: it protects the whole Worker, including the homepage and `/share/*`. Do not create a second identity application with a different audience.
