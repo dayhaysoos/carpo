@@ -99,16 +99,17 @@ describe("clip distribution HTTP adapters", () => {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ expiration: "week" }),
+        body: JSON.stringify({}),
       },
     );
     expect(create.status).toBe(201);
     expect(create.headers.get("Cache-Control")).toBe("no-store");
     const created = (await create.json()) as {
-      share: { id: string; status: string };
+      share: { id: string; status: string; expiresAt: string | null };
       url: string;
     };
     expect(created.share.status).toBe("active");
+    expect(created.share.expiresAt).toBeNull();
     expect(created.url).toMatch(/^http:\/\/example\.com\/share\//);
 
     const view = await apiAs(

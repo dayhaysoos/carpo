@@ -355,7 +355,30 @@ describe("caption track API", () => {
 
     const artifact = await routeFetch(complete.outputCaptionedMp4);
     expect(artifact.status).toBe(200);
+    const downloaded = await routeFetch(`${complete.outputCaptionedMp4}?download=1`);
+    expect(downloaded.headers.get("Content-Disposition")).toContain("attachment;");
+    const detail = await routeFetch(`/api/clips/${clipId}`);
+    expect(await detail.json()).toMatchObject({ outputs: { captionedMp4: complete.outputCaptionedMp4 } });
+
     expect(artifact.headers.get("cache-control")).toBe("private, no-store");
+  });
+
+  it("serves private clip downloads as attachments and supports playback ranges", async () => {
+    const { clipId } = await createCaptionFixture();
+    const path = `/artifacts/clips/${clipId}/clip.mp4`;
+    const download = await routeFetch(`${path}?download=1`);
+    expect(download.headers.get("Content-Disposition")).toBe('attachment; filename="clip.mp4"');
+    expect(download.headers.get("Content-Length")).toBe("4");
+    const range = await routeFetch(path, { headers: { Range: "bytes=0-1" } });
+    expect(range.status).toBe(206);
+    expect(range.headers.get("Content-Range")).toBe("bytes 0-1/4");
+    expect((await range.arrayBuffer()).byteLength).toBe(2);
+    const head = await routeFetch(path, { method: "HEAD" });
+    expect(head.status).toBe(200);
+    expect(head.headers.get("Content-Length")).toBe("4");
+    expect(await head.text()).toBe("");
+    const forbidden = await routeFetch(`${path}?download=1`, undefined, { id: "other", email: "other@example.com" });
+    expect(forbidden.status).toBe(404);
   });
 
   it("rejects invalid edits without replacing the saved track", async () => {

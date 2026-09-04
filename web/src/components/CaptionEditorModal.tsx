@@ -15,6 +15,8 @@ import type {
   CaptionTrackProposal,
   ClipResponse,
 } from "../types";
+import { clipDownloadUrl } from "../clip-media";
+import { CLIPS_QUERY_KEY, sourceVideoQueryKey } from "../queries";
 import { ModalDialog } from "./ModalDialog";
 
 interface CaptionEditorModalProps {
@@ -156,6 +158,8 @@ function CaptionPreview({
   onTimeUpdate: (time: number) => void;
   onThemeChange: (theme: CaptionThemeId) => void;
 }) {
+  const renderedUrl = !draft.dirty && track.renderStatus === "complete"
+    ? track.outputCaptionedMp4 : null;
   const activeCue = useMemo(
     () =>
       draft.cues.find(
@@ -170,14 +174,14 @@ function CaptionPreview({
       <div className="caption-preview-shell">
         <video
           ref={videoRef}
-          src={clip.outputs.mp4 ?? undefined}
+          src={renderedUrl ?? clip.outputs.mp4 ?? undefined}
           poster={clip.outputs.thumbnail ?? undefined}
           aria-label={`${clip.title} caption preview`}
           controls
           playsInline
           onTimeUpdate={(event) => onTimeUpdate(event.currentTarget.currentTime)}
         />
-        {activeCue && (
+        {activeCue && !renderedUrl && (
           <div
             className={`caption-preview-text caption-theme-${draft.theme}`}
             aria-live="polite"
@@ -186,6 +190,9 @@ function CaptionPreview({
           </div>
         )}
       </div>
+      <p className="caption-track-origin" role="status">
+        {renderedUrl ? "Captioned video — this is the MP4 you download." : "Live caption preview — play or select a cue to check timing."}
+      </p>
       {draft.source && (
         <div className="caption-proposal-notice" role="status">
           <strong>
@@ -393,7 +400,7 @@ function CaptionEditorFooter({
           </button>
         )}
         {track.outputCaptionedMp4 && !draft.dirty && (
-          <a href={track.outputCaptionedMp4} download className="btn-secondary">
+          <a href={clipDownloadUrl(track.outputCaptionedMp4)} className="btn-secondary">
             Download captioned MP4
           </a>
         )}
@@ -419,7 +426,7 @@ function CaptionEditorFooter({
         <button
           type="button"
           className="btn-primary"
-          disabled={!draft.dirty || isSaving}
+          disabled={(!draft.dirty && track.saved) || isSaving}
           onClick={onSave}
         >
           {isSaving ? "Saving…" : "Save captions"}
@@ -452,6 +459,10 @@ function CaptionEditorWorkspace({
   useEffect(() => {
     dispatch({ type: "refreshed", track });
   }, [track]);
+  useEffect(() => {
+    void queryClient.invalidateQueries({ queryKey: CLIPS_QUERY_KEY });
+    void queryClient.invalidateQueries({ queryKey: sourceVideoQueryKey(clip.videoId) });
+  }, [queryClient, clip.videoId, track.revision, track.renderStatus, track.outputCaptionedMp4]);
   const dismiss = () => {
     if (draft.dirty && !window.confirm("Discard unsaved caption changes?")) return;
     onClose();

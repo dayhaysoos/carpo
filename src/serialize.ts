@@ -49,6 +49,9 @@ export function recordToResponse(
         ? matchRemoteSourceFailure("youtube", record.error_message)
         : null,
     outputs: {
+      ...(record.output_captioned_mp4_key ? {
+        captionedMp4: `${artifactPrefix}/${record.output_captioned_mp4_key}`,
+      } : {}),
       mp4: record.output_mp4_key
         ? `${artifactPrefix}/${record.output_mp4_key}`
         : null,

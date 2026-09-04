@@ -18,6 +18,12 @@ import {
   transcriptObjectKey,
 } from "./source-videos";
 
+// The current caption render belongs to the clip's outputs; stale renders are excluded.
+const CLIP_SELECT = `SELECT clips.*,
+  (SELECT output_captioned_mp4_key FROM caption_tracks
+   WHERE caption_tracks.clip_id = clips.id AND render_status = 'complete')
+  AS output_captioned_mp4_key FROM clips`;
+
 export interface InsertClipOptions {
   helperState?: HelperState;
   videoId?: string;
@@ -135,7 +141,7 @@ export async function getClipById(
   id: string,
 ): Promise<ClipRecord | null> {
   return db
-    .prepare("SELECT * FROM clips WHERE id = ?")
+    .prepare(`${CLIP_SELECT} WHERE id = ?`)
     .bind(id)
     .first<ClipRecord>();
 }
@@ -146,7 +152,7 @@ export async function getClipByIdForOwner(
   ownerId: string,
 ): Promise<ClipRecord | null> {
   return db
-    .prepare("SELECT * FROM clips WHERE id = ? AND owner_id = ?")
+    .prepare(`${CLIP_SELECT} WHERE id = ? AND owner_id = ?`)
     .bind(id, ownerId)
     .first<ClipRecord>();
 }
@@ -308,7 +314,7 @@ export async function listClips(
 
   const result = await db
     .prepare(
-      "SELECT * FROM clips WHERE owner_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+      `${CLIP_SELECT} WHERE owner_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
     )
     .bind(ownerId, limit, offset)
     .all<ClipRecord>();
@@ -687,7 +693,7 @@ export async function listClipsByVideoId(
 ): Promise<ClipRecord[]> {
   const result = await db
     .prepare(
-      `SELECT * FROM clips
+      `${CLIP_SELECT}
        WHERE video_id = ?
        ORDER BY created_at DESC`,
     )
@@ -703,7 +709,7 @@ export async function listClipsByVideoIdForOwner(
 ): Promise<ClipRecord[]> {
   const result = await db
     .prepare(
-      `SELECT * FROM clips
+      `${CLIP_SELECT}
        WHERE video_id = ? AND owner_id = ?
        ORDER BY created_at DESC`,
     )

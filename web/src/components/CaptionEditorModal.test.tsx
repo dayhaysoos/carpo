@@ -163,6 +163,19 @@ describe("CaptionEditorModal", () => {
     expect(captionTrackSrtUrl).toHaveBeenCalledWith(clip.id);
   });
 
+  it("shows the rendered captioned video and switches back to a draft preview after an edit", async () => {
+    const output = "/artifacts/clips/clip-1/captioned-render.mp4";
+    vi.mocked(getCaptionTrack).mockResolvedValue({ ...draft, saved: true, renderStatus: "complete", outputCaptionedMp4: output });
+    renderEditor();
+    const video = await screen.findByLabelText("Launch moment caption preview");
+    expect(video.getAttribute("src")).toBe(output);
+    expect(document.querySelector(".caption-preview-text")).toBeNull();
+    expect(screen.getByRole("link", { name: "Download captioned MP4" }).getAttribute("href")).toBe(`${output}?download=1`);
+    fireEvent.change(screen.getByLabelText("Cue 1 text"), { target: { value: "New wording" } });
+    expect(video.getAttribute("src")).toBe(clip.outputs.mp4);
+    expect(document.querySelector(".caption-preview-text")?.textContent).toBe("New wording");
+  });
+
   it("protects unsaved manual corrections when the modal closes", async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();

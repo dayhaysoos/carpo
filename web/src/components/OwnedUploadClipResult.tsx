@@ -1,3 +1,4 @@
+import { clipDownloadUrl, preferredClipMp4 } from "../clip-media";
 import { Link } from "react-router-dom";
 import type { OwnedUploadClipJourneyView } from "../owned-upload-clip-journey";
 import { statusLabel, statusProgress } from "../status";
@@ -56,7 +57,7 @@ export function OwnedUploadClipResult({
       {journey.phase === "complete" && clip?.outputs.mp4 && (
         <video
           className="owned-clip-preview"
-          src={clip.outputs.mp4}
+          src={preferredClipMp4(clip.outputs) ?? undefined}
           poster={clip.outputs.thumbnail ?? undefined}
           aria-label={`${clip.title} video`}
           controls
@@ -66,7 +67,7 @@ export function OwnedUploadClipResult({
 
       <div className="owned-clip-actions">
         {journey.phase === "complete" && clip?.outputs.mp4 && (
-          <a href={clip.outputs.mp4} download className="btn-secondary">
+          <a href={clipDownloadUrl(preferredClipMp4(clip.outputs)!)} className="btn-secondary">
             Download MP4
           </a>
         )}

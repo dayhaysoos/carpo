@@ -1,3 +1,4 @@
+import { clipDownloadUrl, preferredClipMp4 } from "../clip-media";
 import * as stylex from "@stylexjs/stylex";
 import type { OwnedUploadClipJourneyView } from "../owned-upload-clip-journey";
 import { statusLabel, statusProgress } from "../status";
@@ -191,7 +192,7 @@ export function CreatorWorkspaceClipPreview({
       <div {...stylex.props(styles.previewMedia)}>
         {item.clip?.status === "complete" && item.clip.outputs.mp4 ? (
           <video
-            src={item.clip.outputs.mp4}
+            src={preferredClipMp4(item.clip.outputs) ?? undefined}
             poster={item.thumbnailUrl ?? undefined}
             aria-label={`${item.title} video`}
             controls
@@ -260,8 +261,7 @@ export function CreatorWorkspaceClipPreview({
         </span>
         {item.clip?.status === "complete" && item.clip.outputs.mp4 ? (
           <a
-            href={item.clip.outputs.mp4}
-            download
+            href={clipDownloadUrl(preferredClipMp4(item.clip.outputs)!)}
             {...stylex.props(styles.download)}
           >
             Download

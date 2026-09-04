@@ -396,8 +396,9 @@ export async function handleRequest(
     return handleInternalSourceFetch(request, clipId, env);
   }
 
-  if (request.method === "GET" && url.pathname.startsWith("/artifacts/")) {
+  if ((request.method === "GET" || request.method === "HEAD") && url.pathname.startsWith("/artifacts/")) {
     return handleArtifactRequest(
+      request,
       url.pathname.slice("/artifacts/".length),
       env,
       user!,
@@ -1873,6 +1874,7 @@ async function handleInternalStatusUpdate(
 }
 
 async function handleArtifactRequest(
+  request: Request,
   key: string,
   env: Env,
   user: AuthenticatedUser,
@@ -1886,17 +1888,21 @@ async function handleArtifactRequest(
   if (!clipId || !ownsArtifact) {
     return new Response("Not found", { status: 404 });
   }
-  const object = await env.CLIPS_BUCKET.get(key);
-  if (!object) {
-    return new Response("Not found", { status: 404 });
+  const outcome = await new R2MediaDelivery(env.CLIPS_BUCKET).deliver({
+    key,
+    method: request.method === "HEAD" ? "HEAD" : "GET",
+    range: request.headers.get("Range"),
+  });
+  if (outcome.type === "missing") return new Response("Not found", { status: 404 });
+  if (outcome.type === "range-not-satisfiable") {
+    return new Response(null, { status: 416, headers: outcome.headers });
   }
-
-  const headers = new Headers();
-  object.writeHttpMetadata(headers);
-  headers.set("etag", object.httpEtag);
-  headers.set("cache-control", "private, no-store");
-
-  return new Response(object.body, { headers });
+  const response = outcome.response;
+  if (new URL(request.url).searchParams.get("download") === "1") {
+    response.headers.set("Content-Disposition", `attachment; filename="${key.split("/").at(-1)}"`);
+  }
+  response.headers.set("X-Content-Type-Options", "nosniff");
+  return response;
 }
 
 function validHelperRequest(request: Request, env: Env): boolean {

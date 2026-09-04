@@ -128,24 +128,38 @@ describe("ClipDistributionModal", () => {
     vi.clearAllMocks();
   });
 
-  it("creates a seven-day link by default and leaves it manually copyable", async () => {
+  it("creates a permanent public link by default and leaves it manually copyable", async () => {
     const user = userEvent.setup();
     renderModal();
-    await screen.findByRole("heading", { name: "Private share links" });
+    await screen.findByRole("heading", { name: "Public share links" });
 
-    expect((screen.getByLabelText("Share expiration") as HTMLSelectElement).value).toBe("week");
+    expect((screen.getByLabelText("Share expiration") as HTMLSelectElement).value).toBe("never");
     await user.click(screen.getByRole("button", { name: "Create share link" }));
-    await waitFor(() => expect(createClipShare).toHaveBeenCalledWith(clip.id, "week"));
-    const link = await screen.findByLabelText("New share link");
+    await waitFor(() => expect(createClipShare).toHaveBeenCalledWith(clip.id, "never"));
+    const link = await screen.findByLabelText("Share link share-2");
     expect((link as HTMLInputElement).readOnly).toBe(true);
     expect((link as HTMLInputElement).value).toContain("/share/");
-    expect(screen.getByText(/stores only its secure hash/i)).toBeTruthy();
+    expect(screen.queryByText(/stores only its secure hash/i)).toBeNull();
+  });
+
+  it("keeps existing share links visible, openable and copyable after reopening", async () => {
+    const user = userEvent.setup();
+    const first = renderModal();
+    const link = await screen.findByRole("link", { name: "Open link" });
+    const href = link.getAttribute("href");
+    expect(href).toContain("/share/share-1");
+    first.unmount();
+    renderModal();
+    expect((await screen.findByRole("link", { name: "Open link" })).getAttribute("href")).toBe(href);
+    await user.click(screen.getByRole("button", { name: "Copy link" }));
+    expect(await navigator.clipboard.readText()).toBe(href);
+    expect(createClipShare).not.toHaveBeenCalled();
   });
 
   it("revokes an active share and starts the GIF preset", async () => {
     const user = userEvent.setup();
     renderModal();
-    await screen.findByRole("heading", { name: "Private share links" });
+    await screen.findByRole("heading", { name: "Public share links" });
 
     await user.click(screen.getByRole("button", { name: "Revoke" }));
     await waitFor(() => expect(revokeClipShare).toHaveBeenCalledWith(clip.id, "share-1"));

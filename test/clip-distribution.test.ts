@@ -98,6 +98,9 @@ describe("ClipDistribution", () => {
     expect(created.url).toBe(`https://carpo.example/share/${created.token}`);
     expect(created.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(created.share.expiresAt).toBe("2026-09-06T12:00:00.000Z");
+    const reopened = await distribution().view({ ownerId: OWNER.id, clipId: CLIP_ID });
+    expect(reopened.shares[0].url).toBe(new URL(created.url).pathname);
+    expect(await module.resolve({ token: reopened.shares[0].url.split("/").at(-1)! })).toMatchObject({ artifactKey: keys.mp4Key });
     const stored = await env.DB.prepare(
       "SELECT token_hash, created_by_user_id FROM clip_shares WHERE id = ?",
     )
@@ -113,6 +116,17 @@ describe("ClipDistribution", () => {
       artifactKey: keys.mp4Key,
       expiresAt: "2026-09-06T12:00:00.000Z",
     });
+  });
+
+  it("recovers an existing share by its public id without breaking its old URL", async () => {
+    await installFixture();
+    const module = distribution();
+    const created = await module.perform({ type: "create-share", ownerId: OWNER.id, clipId: CLIP_ID, expiration: "never", origin: "https://carpo.example" });
+    if (created.type !== "share-created") throw new Error("Expected share");
+    const oldId = crypto.randomUUID();
+    await env.DB.prepare("UPDATE clip_shares SET id = ? WHERE id = ?").bind(oldId, created.share.id).run();
+    expect(await module.resolve({ token: oldId })).toMatchObject({ shareId: oldId });
+    expect(await module.resolve({ token: created.token })).toMatchObject({ shareId: oldId });
   });
 
   it("fails closed after revocation while preserving the owner's exports", async () => {
@@ -212,6 +226,10 @@ describe("ClipDistribution", () => {
       .bind(keys.gifKey, CLIP_ID)
       .run();
 
+    const module = distribution();
+    const shared = await module.perform({ type: "create-share", ownerId: OWNER.id, clipId: CLIP_ID, expiration: "never", origin: "https://carpo.example" });
+    if (shared.type !== "share-created") throw new Error("Expected share");
+    expect(await module.resolve({ token: shared.token })).toMatchObject({ artifactKey: `clips/${CLIP_ID}/captioned-render.mp4` });
     const view = await distribution().view({ ownerId: OWNER.id, clipId: CLIP_ID });
     expect(view.exports).toEqual([
       expect.objectContaining({ id: "original-mp4", status: "ready" }),

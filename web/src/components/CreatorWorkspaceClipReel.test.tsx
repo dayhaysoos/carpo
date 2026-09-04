@@ -183,7 +183,7 @@ describe("CreatorWorkspaceClipPreview", () => {
       screen.getByLabelText("Finished cut video").getAttribute("src"),
     ).toBe("/clips/complete.mp4");
     expect(screen.getByRole("link", { name: "Download" }).getAttribute("href"))
-      .toBe("/clips/complete.mp4");
+      .toBe("/clips/complete.mp4?download=1");
 
     await user.click(screen.getByRole("button", { name: "Close clip preview" }));
 

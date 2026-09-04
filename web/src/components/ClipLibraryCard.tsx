@@ -1,4 +1,5 @@
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
+import { clipDownloadUrl, preferredClipMp4 } from "../clip-media";
 import { statusLabel } from "../status";
 import type { ClipResponse } from "../types";
 import { ClipFailureMessage } from "./ClipFailureMessage";
@@ -71,10 +72,11 @@ export function ClipModal({
             Close
           </button>
         </div>
+        {clip.outputs.captionedMp4 && <p className="clip-modal-keyboard-hint">Playing captioned version</p>}
         <div className="clip-viewer-media">
           <video
-            key={clip.id}
-            src={clip.outputs.mp4}
+            key={`${clip.id}:${preferredClipMp4(clip.outputs)}`}
+            src={preferredClipMp4(clip.outputs) ?? undefined}
             poster={clip.outputs.thumbnail ?? undefined}
             aria-label={`${clip.title} video`}
             controls
@@ -109,11 +111,11 @@ export function ClipModal({
             </button>
           </div>
           <div className="modal-actions clip-viewer-downloads">
-            <a href={clip.outputs.mp4} download className="btn-secondary">
-              Download MP4
+            <a href={clipDownloadUrl(preferredClipMp4(clip.outputs)!)} className="btn-secondary">
+              {clip.outputs.captionedMp4 ? "Download captioned MP4" : "Download MP4"}
             </a>
             {clip.outputs.gif && (
-              <a href={clip.outputs.gif} download className="btn-secondary">
+              <a href={clipDownloadUrl(clip.outputs.gif)} className="btn-secondary">
                 Download GIF
               </a>
             )}
@@ -274,11 +276,11 @@ export function ClipLibraryCard({
                 >
                   Share &amp; export
                 </button>
-                <a href={clip.outputs.mp4} download className="btn-secondary">
-                  Download
+                <a href={clipDownloadUrl(preferredClipMp4(clip.outputs)!)} className="btn-secondary">
+                  {clip.outputs.captionedMp4 ? "Download captioned MP4" : "Download"}
                 </a>
                 {clip.outputs.gif ? (
-                  <a href={clip.outputs.gif} download className="btn-secondary">
+                  <a href={clipDownloadUrl(clip.outputs.gif)} className="btn-secondary">
                     GIF
                   </a>
                 ) : clip.gifStatus === "encoding" || gifExporting ? (
