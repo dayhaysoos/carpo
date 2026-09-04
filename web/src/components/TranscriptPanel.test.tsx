@@ -2,12 +2,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getVideoTranscript } from "../api";
+import { getVideoTranscript, retryVideoTranscript } from "../api";
 import { useTrimRange } from "../hooks/useTrimRange";
 import { TranscriptPanel } from "./TranscriptPanel";
 
 vi.mock("../api", () => ({
   getVideoTranscript: vi.fn(),
+  retryVideoTranscript: vi.fn(),
 }));
 
 const transcript = {
@@ -133,6 +134,24 @@ describe("TranscriptPanel", () => {
     expect(screen.queryByText("simulated transcript preparation failure")).toBeNull();
     expect(screen.queryByText("Preparing transcript…")).toBeNull();
     await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(getVideoTranscript).toHaveBeenCalledTimes(2);
+  });
+
+  it("requests a real retry and resumes polling after a failed transcript", async () => {
+    vi.mocked(getVideoTranscript)
+      .mockRejectedValueOnce(new Error("Container suddenly disconnected, try again"))
+      .mockResolvedValue(transcript);
+    vi.mocked(retryVideoTranscript).mockResolvedValue({
+      transcriptStatus: "checking",
+      retryAfterMs: 10,
+    });
+    const user = userEvent.setup();
+    renderPanel();
+
+    await user.click(await screen.findByRole("button", { name: "Try again" }));
+
+    expect(retryVideoTranscript).toHaveBeenCalledWith("video-1");
+    expect(await screen.findByRole("status", { name: "Transcript ready" })).toBeTruthy();
     expect(getVideoTranscript).toHaveBeenCalledTimes(2);
   });
 

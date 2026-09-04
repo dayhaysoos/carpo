@@ -95,6 +95,15 @@ describe("per-user ownership", () => {
     ).toBe(404);
   });
 
+  it("does not let non-owners retry a video's transcript", async () => {
+    await installUsers();
+    const video = await createYoutubeVideo(ALICE, "Private transcript source");
+    const response = await requestAs(BOB, `/api/videos/${video.id}/transcript/retry`, {
+      method: "POST",
+    });
+    expect(response.status).toBe(404);
+  });
+
   it("namespaces new uploads and refuses another user's upload key", async () => {
     await installUsers();
     const slotResponse = await requestAs(ALICE, "/api/upload-url", {

@@ -245,6 +245,15 @@ export async function handleRequest(
     );
   }
 
+  const transcriptRetryMatch = url.pathname.match(
+    /^\/api\/videos\/([^/]+)\/transcript\/retry$/,
+  );
+  if (request.method === "POST" && transcriptRetryMatch) {
+    return handleTranscriptRead(transcriptRetryMatch[1], env, user!, {
+      retryFailed: true,
+    });
+  }
+
   const transcriptReadMatch = url.pathname.match(
     /^\/api\/videos\/([^/]+)\/transcript$/,
   );
@@ -828,6 +837,7 @@ async function handleTranscriptRead(
   videoId: string,
   env: Env,
   user: AuthenticatedUser,
+  options: { retryFailed?: boolean } = {},
 ): Promise<Response> {
   const existing = await getSourceVideoByIdForOwner(env.DB, videoId, user.id);
   if (!existing) {
@@ -835,7 +845,7 @@ async function handleTranscriptRead(
   }
 
   try {
-    const transcript = await requestVideoTranscript(env, videoId);
+    const transcript = await requestVideoTranscript(env, videoId, options);
     return json(
       transcript,
       transcript.transcriptStatus === "checking" ? 202 : 200,

@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   type MouseEvent,
   useEffect,
@@ -6,7 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { getVideoTranscript } from "../api";
+import { getVideoTranscript, retryVideoTranscript } from "../api";
 import { type TranscriptBlock } from "../types";
 import { formatTimestamp } from "../youtube";
 
@@ -34,7 +34,15 @@ export function TranscriptPanel({
     new Set(),
   );
   const activeElement = useRef<HTMLButtonElement | null>(null);
-  const { data, error, isLoading, refetch } = useQuery({
+  const queryClient = useQueryClient();
+  const retry = useMutation({
+    mutationFn: (requestedVideoId: string) => retryVideoTranscript(requestedVideoId),
+    onSuccess: (result, requestedVideoId) => {
+      queryClient.setQueryData(["video-transcript", requestedVideoId], result);
+    },
+  });
+  const retrying = retry.isPending && retry.variables === videoId;
+  const { data, error, isLoading } = useQuery({
     queryKey: ["video-transcript", videoId],
     queryFn: () => getVideoTranscript(videoId),
     enabled: Boolean(videoId),
@@ -49,7 +57,7 @@ export function TranscriptPanel({
   });
   const transcript = data && "blocks" in data ? data : undefined;
   const preparing =
-    !error && (isLoading || data?.transcriptStatus === "checking");
+    retrying || (!error && (isLoading || data?.transcriptStatus === "checking"));
   const blocks = transcript?.blocks ?? [];
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const visibleBlocks = useMemo(
@@ -148,7 +156,7 @@ export function TranscriptPanel({
         </div>
       )}
 
-      {error && (
+      {error && !retrying && (
         <div className="transcript-state transcript-error" role="alert">
           <strong>Transcript unavailable</strong>
           <span>
@@ -158,7 +166,7 @@ export function TranscriptPanel({
           <button
             type="button"
             className="btn-secondary"
-            onClick={() => void refetch()}
+            onClick={() => retry.mutate(videoId)}
           >
             Try again
           </button>

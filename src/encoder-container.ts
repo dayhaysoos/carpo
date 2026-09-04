@@ -717,6 +717,7 @@ export class EncoderContainer extends Container<Env> {
     try {
       return await this.enqueueJob(async () => {
         const stopKeepalive = this.startJobKeepalive();
+        let phase = "load-video";
         try {
           await this.ctx.storage.put("jobStartedAt", Date.now());
           const video = await getSourceVideoById(this.env.DB, videoId);
@@ -727,17 +728,20 @@ export class EncoderContainer extends Container<Env> {
             );
           }
 
+          phase = "stage-source";
           const staged = await this.retainedVideoSourceAcquisition().stage(
             video,
             jobId,
           );
           if (!staged.ok) {
+            console.error("Source transcription failed", { videoId, phase });
             return Response.json(
               { errorMessage: staged.error },
               { status: 502 },
             );
           }
 
+          phase = "extract-audio";
           const extractionResponse = await super.fetch(
             new Request(
               `http://encoder/audio-chunks?job=${encodeURIComponent(jobId)}`,
@@ -745,6 +749,7 @@ export class EncoderContainer extends Container<Env> {
             ),
           );
           if (!extractionResponse.ok) {
+            console.error("Source transcription failed", { videoId, phase });
             return Response.json(
               {
                 errorMessage: await this.readEncoderError(
@@ -766,12 +771,14 @@ export class EncoderContainer extends Container<Env> {
             );
           }
 
+          phase = "speech-recognition";
           const transcript = await this.transcribeAudioChunks(
             jobId,
             extraction.chunks,
           );
           return Response.json(transcript);
         } catch (error) {
+          console.error("Source transcription failed", { videoId, phase });
           return Response.json(
             {
               errorMessage:
