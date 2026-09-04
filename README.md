@@ -117,3 +117,7 @@ generate, correct, configure, preview, and export the applicable caption forms.
 ## Status
 
 Planning. See the issue tracker for the PRD and build slices.
+
+## License
+
+Licensed under the [MIT License](LICENSE).
