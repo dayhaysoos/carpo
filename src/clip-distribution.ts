@@ -35,6 +35,7 @@ export interface ClipDistributionExport {
 }
 
 export interface ClipShareSummary {
+  url: string;
   id: string;
   status: ClipShareStatus;
   createdAt: string;
@@ -135,6 +136,7 @@ interface ResolvedShareRecord extends ShareRecord {
   title: string;
   status: string;
   output_mp4_key: string | null;
+  output_captioned_mp4_key: string | null;
 }
 
 interface CaptionExportRecord {
@@ -152,7 +154,7 @@ const EXPIRATION_MILLISECONDS: Record<
   month: 30 * 24 * 60 * 60 * 1000,
 };
 
-const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+const TOKEN_PATTERN = /^(?:[A-Za-z0-9_-]{43}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})$/;
 
 export class ClipDistribution {
   constructor(private readonly dependencies: ClipDistributionDependencies) {}
@@ -219,13 +221,16 @@ export class ClipDistribution {
                 clip_shares.created_by_user_id, app_users.email AS created_by_email,
                 clip_shares.token_hash, clip_shares.expires_at,
                 clip_shares.revoked_at, clip_shares.created_at,
-                clips.title, clips.status, clips.output_mp4_key
+                clips.title, clips.status, clips.output_mp4_key,
+                CASE WHEN caption_tracks.render_status = 'complete'
+                  THEN caption_tracks.output_captioned_mp4_key END AS output_captioned_mp4_key
          FROM clip_shares
          INNER JOIN clips ON clips.id = clip_shares.clip_id
+         LEFT JOIN caption_tracks ON caption_tracks.clip_id = clips.id
          INNER JOIN app_users ON app_users.id = clip_shares.created_by_user_id
-         WHERE clip_shares.token_hash = ?`,
+         WHERE clip_shares.token_hash = ? OR clip_shares.id = ?`,
       )
-      .bind(tokenHash)
+      .bind(tokenHash, input.token)
       .first<ResolvedShareRecord>();
     if (!record) {
       throw new ClipDistributionError("not_found", "Share not found");
@@ -245,7 +250,7 @@ export class ClipDistribution {
     return {
       shareId: record.id,
       title: record.title,
-      artifactKey: record.output_mp4_key,
+      artifactKey: record.output_captioned_mp4_key ?? record.output_mp4_key,
       createdAt: record.created_at,
       expiresAt: record.expires_at,
     };
@@ -277,7 +282,9 @@ export class ClipDistribution {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const token = tokenFromBytes(this.randomBytes());
       const tokenHash = await hashToken(token);
-      const shareId = crypto.randomUUID();
+      // Public handles are retained as share IDs so the owner can retrieve the
+      // same URL later. Hash lookup also keeps previously issued links working.
+      const shareId = token;
       try {
         await this.dependencies.db
           .prepare(
@@ -436,6 +443,7 @@ export class ClipDistribution {
   private shareSummary(record: ShareRecord): ClipShareSummary {
     return {
       id: record.id,
+      url: `/share/${record.id}`,
       status: shareStatus(record, this.now()),
       createdAt: record.created_at,
       expiresAt: record.expires_at,

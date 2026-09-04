@@ -69,6 +69,6 @@ describe("OwnedUploadClipResult", () => {
     ).toBe(clip.outputs.mp4);
     expect(
       screen.getByRole("link", { name: "Download MP4" }).getAttribute("href"),
-    ).toBe(clip.outputs.mp4);
+    ).toBe(`${clip.outputs.mp4}?download=1`);
   });
 });

@@ -147,6 +147,15 @@ describe("VideoPage clip actions", () => {
     vi.clearAllMocks();
   });
 
+  it("plays and downloads the captioned version directly from the clip card", async () => {
+    const captioned = { ...detail.clips[0], outputs: { ...detail.clips[0].outputs, captionedMp4: "/artifacts/captioned-render.mp4" } };
+    vi.mocked(getSourceVideo).mockResolvedValue({ ...detail, clips: [captioned] });
+    renderVideoPage();
+    expect((await screen.findByRole("link", { name: "Download captioned MP4" })).getAttribute("href")).toBe("/artifacts/captioned-render.mp4?download=1");
+    await userEvent.setup().click(screen.getByRole("button", { name: "Play" }));
+    expect(screen.getByLabelText("First clip video").getAttribute("src")).toBe("/artifacts/captioned-render.mp4");
+  });
+
   it("selects every clip and deletes them after one confirmation", async () => {
     const user = userEvent.setup();
     renderVideoPage();
@@ -246,7 +255,7 @@ describe("VideoPage clip actions", () => {
     await user.click(distributionButtons[0]);
 
     expect(
-      await screen.findByRole("heading", { name: "Private share links" }),
+      await screen.findByRole("heading", { name: "Public share links" }),
     ).toBeTruthy();
     expect(getClipDistribution).toHaveBeenCalledWith("clip-1");
   });

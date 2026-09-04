@@ -12,7 +12,7 @@ import type { AuthenticatedUser } from "./identity";
 import { R2MediaDelivery } from "./r2-media-delivery";
 
 const PUBLIC_SHARE_PREFIX = "/share";
-const TOKEN_PATTERN = "[A-Za-z0-9_-]{43}";
+const TOKEN_PATTERN = "(?:[A-Za-z0-9_-]{43}|[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})";
 const PUBLIC_SHARE_ROUTE = new RegExp(
   `^${PUBLIC_SHARE_PREFIX}/(${TOKEN_PATTERN})(?:/(media|download))?/?$`,
 );
@@ -107,7 +107,7 @@ export async function handleClipDistributionApi(
     if (request.method === "POST" && createShareMatch) {
       const body = await readJsonObject(request);
       if (body instanceof Response) return body;
-      const expiration = body.expiration;
+      const expiration = body.expiration ?? "never";
       if (
         typeof expiration !== "string" ||
         !SHARE_EXPIRATION_PRESETS.includes(

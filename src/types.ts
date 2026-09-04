@@ -126,6 +126,7 @@ export interface ClipRecord {
   error_message: string | null;
   failure_mode: FailureMode | null;
   output_mp4_key: string | null;
+  output_captioned_mp4_key?: string | null;
   output_thumbnail_key: string | null;
   output_gif_key: string | null;
   gif_status: GifStatus;
@@ -140,6 +141,7 @@ export interface ClipRecord {
 }
 
 export interface ClipOutputs {
+  captionedMp4?: string | null;
   mp4: string | null;
   thumbnail: string | null;
   gif: string | null;

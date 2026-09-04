@@ -474,6 +474,20 @@ export async function getVideoTranscript(
   return response.json() as Promise<TranscriptResponse>;
 }
 
+export async function retryVideoTranscript(
+  videoId: string,
+): Promise<TranscriptResponse> {
+  const response = await sessionFetch(
+    `/api/videos/${encodeURIComponent(videoId)}/transcript/retry`,
+    { method: "POST" },
+  );
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as ApiError;
+    throw new Error(body.error || `Request failed (${response.status})`);
+  }
+  return response.json() as Promise<TranscriptResponse>;
+}
+
 export async function deleteClip(id: string): Promise<void> {
   const response = await sessionFetch(`/api/clips/${id}`, { method: "DELETE" });
   if (!response.ok) {

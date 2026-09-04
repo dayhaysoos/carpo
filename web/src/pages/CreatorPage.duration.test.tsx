@@ -332,6 +332,6 @@ describe("CreatorPage upload metadata", () => {
     ).toBeTruthy();
     expect(
       screen.getByRole("link", { name: "Download" }).getAttribute("href"),
-    ).toBe("/api/clips/first-clip.mp4");
+    ).toBe("/api/clips/first-clip.mp4?download=1");
   });
 });

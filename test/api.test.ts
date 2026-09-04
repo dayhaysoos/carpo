@@ -3180,6 +3180,48 @@ describe("source video library", () => {
     expect(await getSourceTranscriptAttempts(videoId)).toBe(1);
   });
 
+  it("explicitly retries a failed transcript during its automatic retry cooldown", async () => {
+    const videoId = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO source_videos
+       (id, source_type, source_ref, title, transcript_status,
+        transcript_check_error, transcript_retry_at)
+       VALUES (?, 'upload', ?, ?, 'failed', ?, ?)`,
+    )
+      .bind(
+        videoId,
+        `uploads/${videoId}.mp4`,
+        "Retry transcript video",
+        "Container suddenly disconnected, try again",
+        new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      )
+      .run();
+
+    const cachedFailure = await workerFetch(
+      `http://example.com/api/videos/${videoId}/transcript`,
+    );
+    expect(cachedFailure.status).toBe(502);
+    expect(await getSourceTranscriptAttempts(videoId)).toBe(0);
+
+    const retry = await workerFetchWithoutWaitingForBackground(
+      `http://example.com/api/videos/${videoId}/transcript/retry`,
+      { method: "POST" },
+    );
+    expect(retry.response.status).toBe(202);
+    expect(await retry.response.json()).toEqual({
+      transcriptStatus: "checking",
+      retryAfterMs: 1_000,
+    });
+    const duplicate = await workerFetchWithoutWaitingForBackground(
+      `http://example.com/api/videos/${videoId}/transcript/retry`,
+      { method: "POST" },
+    );
+    expect([200, 202]).toContain(duplicate.response.status);
+    const ready = await waitForTranscript(videoId);
+    expect(ready.status).toBe(200);
+    expect(await getSourceTranscriptAttempts(videoId)).toBe(1);
+  });
+
   it("deletes a retained transcript with its video", async () => {
     const videoId = crypto.randomUUID();
     await env.DB.prepare(

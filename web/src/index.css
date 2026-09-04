@@ -2419,7 +2419,7 @@ textarea {
 }
 
 .distribution-share-create select,
-.distribution-new-share input {
+.distribution-share-actions input {
   min-width: 0;
   padding: 0.625rem 0.75rem;
   color: var(--text);
@@ -2429,39 +2429,10 @@ textarea {
 }
 
 .distribution-share-create select:focus,
-.distribution-new-share input:focus {
+.distribution-share-actions input:focus {
   border-color: var(--border-focus);
   outline: 2px solid var(--accent-glow);
   outline-offset: 1px;
-}
-
-.distribution-new-share {
-  display: grid;
-  gap: 0.625rem;
-  padding: 0.875rem;
-  background: rgba(61, 214, 140, 0.08);
-  border: 1px solid rgba(61, 214, 140, 0.35);
-  border-radius: var(--radius-sm);
-}
-
-.distribution-new-share p {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 0.875rem;
-}
-
-.distribution-new-share > div {
-  display: flex;
-  gap: 0.625rem;
-}
-
-.distribution-new-share input {
-  flex: 1;
-}
-
-.distribution-new-share > span {
-  color: var(--success);
-  font-size: 0.8125rem;
 }
 
 .distribution-share-list,
@@ -2506,7 +2477,6 @@ textarea {
 
 @media (max-width: 560px) {
   .distribution-share-create,
-  .distribution-new-share > div,
   .distribution-share-list li,
   .distribution-export-list li {
     align-items: stretch;
@@ -2514,14 +2484,13 @@ textarea {
   }
 
   .distribution-share-create .btn-primary,
-  .distribution-new-share .btn-secondary,
   .distribution-export-list .btn-secondary {
     width: 100%;
   }
 }
 
 .distribution-share-create select,
-.distribution-new-share input {
+.distribution-share-actions input {
   min-height: 44px;
   border: 1px solid #505563;
   border-radius: 1px;
@@ -2540,3 +2509,21 @@ textarea {
   text-decoration-color: var(--time);
   text-underline-offset: 3px;
 }
+
+.distribution-share-list li {
+  display: grid;
+}
+
+.distribution-share-list li > .distribution-share-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+.distribution-share-actions input {
+  width: 100%;
+  flex: 1 1 100%;
+  min-width: 0;
+}
+.caption-preview-text { pointer-events: none; }

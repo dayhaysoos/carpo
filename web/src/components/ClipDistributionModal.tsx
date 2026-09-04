@@ -1,3 +1,4 @@
+import { clipDownloadUrl } from "../clip-media";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import {
@@ -62,7 +63,7 @@ function ExportAction({
 }) {
   if (item.status === "ready" && item.downloadUrl) {
     return (
-      <a className="btn-secondary" href={item.downloadUrl} download>
+      <a className="btn-secondary" href={clipDownloadUrl(item.downloadUrl)}>
         Download
       </a>
     );
@@ -90,8 +91,7 @@ export function ClipDistributionModal({
 }: ClipDistributionModalProps) {
   const queryClient = useQueryClient();
   const [expiration, setExpiration] =
-    useState<ShareExpirationPreset>("week");
-  const [newShareUrl, setNewShareUrl] = useState<string | null>(null);
+    useState<ShareExpirationPreset>("never");
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const queryKey = distributionQueryKey(clip.id);
   const query = useQuery({
@@ -105,11 +105,10 @@ export function ClipDistributionModal({
   const createShareMutation = useMutation({
     mutationFn: () => createClipShare(clip.id, expiration),
     onSuccess: (result) => {
-      setNewShareUrl(result.url);
       setCopyStatus(null);
       queryClient.setQueryData(queryKey, (current: typeof query.data) =>
         current
-          ? { ...current, shares: [result.share, ...current.shares] }
+          ? { ...current, shares: [{ ...result.share, url: result.url }, ...current.shares] }
           : current,
       );
     },
@@ -146,11 +145,10 @@ export function ClipDistributionModal({
     },
   });
 
-  const copyShareLink = async () => {
-    if (!newShareUrl) return;
+  const copyShareLink = async (url: string) => {
     try {
       if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable");
-      await navigator.clipboard.writeText(newShareUrl);
+      await navigator.clipboard.writeText(url);
       setCopyStatus("Copied");
     } catch {
       setCopyStatus("Select and copy the link manually.");
@@ -184,10 +182,9 @@ export function ClipDistributionModal({
           <section aria-labelledby="clip-share-title">
             <div className="distribution-section-heading">
               <div>
-                <h3 id="clip-share-title">Private share links</h3>
+                <h3 id="clip-share-title">Public share links</h3>
                 <p>
-                  Each link reveals only this finished clip. Revoke it whenever
-                  you want.
+                  Anyone with a link can watch and download this clip. Links stay here so you can copy them again.
                 </p>
               </div>
             </div>
@@ -218,37 +215,14 @@ export function ClipDistributionModal({
               </button>
             </div>
 
-            {newShareUrl && (
-              <div className="distribution-new-share" role="status">
-                <p>
-                  Copy this link now. Carpo stores only its secure hash, not the
-                  secret needed to reconstruct it later.
-                </p>
-                <div>
-                  <input
-                    aria-label="New share link"
-                    readOnly
-                    value={newShareUrl}
-                    onFocus={(event) => event.currentTarget.select()}
-                  />
-                  <button
-                    type="button"
-                    className="btn-secondary"
-                    onClick={() => void copyShareLink()}
-                  >
-                    Copy link
-                  </button>
-                </div>
-                {copyStatus && <span>{copyStatus}</span>}
-              </div>
-            )}
-
+            {copyStatus && <p role="status">{copyStatus}</p>}
             {query.data.shares.length === 0 ? (
               <p className="distribution-empty">No share links yet.</p>
             ) : (
               <ul className="distribution-share-list">
-                {query.data.shares.map((share) => (
-                  <li key={share.id}>
+                {query.data.shares.map((share) => {
+                  const shareUrl = new URL(share.url ?? `/share/${share.id}`, window.location.origin).href;
+                  return <li key={share.id}>
                     <div>
                       <strong>{share.status === "active" ? "Active link" : `${share.status[0].toUpperCase()}${share.status.slice(1)} link`}</strong>
                       <span>
@@ -257,6 +231,19 @@ export function ClipDistributionModal({
                       <span>{shareDescription(share)}</span>
                     </div>
                     {share.status === "active" && (
+                      <div className="distribution-share-actions">
+                        <input
+                          aria-label={`Share link ${share.id}`}
+                          readOnly
+                          value={shareUrl}
+                          onFocus={(event) => event.currentTarget.select()}
+                        />
+                        <a className="btn-secondary" href={shareUrl} target="_blank" rel="noreferrer">
+                          Open link
+                        </a>
+                        <button type="button" className="btn-secondary" onClick={() => void copyShareLink(shareUrl)}>
+                          Copy link
+                        </button>
                       <button
                         type="button"
                         className="btn-ghost distribution-revoke"
@@ -271,9 +258,10 @@ export function ClipDistributionModal({
                           ? "Revoking…"
                           : "Revoke"}
                       </button>
+                      </div>
                     )}
-                  </li>
-                ))}
+                  </li>;
+                })}
               </ul>
             )}
           </section>

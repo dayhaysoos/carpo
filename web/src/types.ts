@@ -66,6 +66,7 @@ export interface CreateClipRequest {
 }
 
 export interface ClipOutputs {
+  captionedMp4?: string | null;
   mp4: string | null;
   thumbnail: string | null;
   gif: string | null;
@@ -264,6 +265,7 @@ export type ClipExportStatus =
   | "failed";
 
 export interface ClipShareSummary {
+  url?: string;
   id: string;
   status: ClipShareStatus;
   createdAt: string;

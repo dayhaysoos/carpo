@@ -271,6 +271,7 @@ function transcriptPreparationError(
 export async function requestVideoTranscript(
   env: Env,
   videoId: string,
+  options: { retryFailed?: boolean } = {},
 ): Promise<TranscriptDocumentResult | TranscriptPreparationResult> {
   const video = await getSourceVideoById(env.DB, videoId);
   if (!video) {
@@ -281,7 +282,7 @@ export async function requestVideoTranscript(
     return transcriptDocument(cached, true);
   }
   const preparationError = transcriptPreparationError(video);
-  if (preparationError) throw new Error(preparationError);
+  if (preparationError && !options.retryFailed) throw new Error(preparationError);
 
   await dispatchTranscriptPreparation(env, videoId);
   return { transcriptStatus: "checking", retryAfterMs: 1_000 };
